@@ -303,4 +303,43 @@ d('A2 reviews + agents (Testcontainers pg)', () => {
     expect(body.runs.length).toBeGreaterThanOrEqual(2);
     await app.close();
   });
+
+  it("the PR list's cost is the SUM of every run, not just the latest review's", async () => {
+    const app = await appWith(REVIEW_FIXTURE);
+    const { repo, pr } = await setupRepoAndPr(pg.handle.db, workspaceId);
+
+    // Two agents on the MOCKED provider, reviewed one after the other. Explicit
+    // agentIds rather than {all:true}: the seeded agents run on 'openrouter',
+    // which appWith does not mock, so a fan-out would price an unpredictable
+    // subset and make this assertion depend on test order.
+    const agentIds: string[] = [];
+    for (const name of ['Cost A', 'Cost B']) {
+      const created = (
+        await app.inject({
+          method: 'POST',
+          url: '/agents',
+          payload: { name, provider: 'openai', model: 'gpt-4.1', system_prompt: 'rev' },
+        })
+      ).json();
+      agentIds.push(created.id);
+    }
+    for (const agentId of agentIds) {
+      await app.inject({ method: 'POST', url: `/pulls/${pr.id}/review`, payload: { agentId } });
+    }
+    await waitForPrRuns(pg.handle.db, pr.id, { expected: agentIds.length });
+
+    const runs = await pg.handle.db.select().from(t.agentRuns).where(eq(t.agentRuns.prId, pr.id));
+    const costs = runs.map((r) => r.costUsd).filter((c): c is number => c != null);
+    expect(costs).toHaveLength(2);
+    const total = costs.reduce((a, b) => a + b, 0);
+
+    const list = (await app.inject({ method: 'GET', url: `/repos/${repo.id}/pulls` })).json();
+    const row = list.find((p: { number: number }) => p.number === pr.number);
+    expect(row.cost_usd).toBeCloseTo(total, 10);
+    // The regression this guards: fanning out to N agents must not report one
+    // agent's spend. The sum strictly exceeds the largest single run.
+    expect(row.cost_usd).toBeGreaterThan(Math.max(...costs));
+
+    await app.close();
+  });
 });

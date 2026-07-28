@@ -170,8 +170,9 @@ export const PrMeta = z.object({
   updated_at: z.string().nullish(),
   // Latest-review score (list endpoint only; null/absent until reviewed).
   score: z.number().int().nullish(),
-  // USD cost of the run behind that same latest review (list endpoint only).
-  // Null/absent until reviewed, or when the run's model carries no price.
+  // TOTAL USD spent on this PR — every agent run summed (list endpoint only).
+  // Unlike `score`, this is cumulative, not latest-wins: "Review all" fans out
+  // to every enabled agent. Null/absent until a run records a cost.
   cost_usd: z.number().nullish(),
 });
 export type PrMeta = z.infer<typeof PrMeta>;
