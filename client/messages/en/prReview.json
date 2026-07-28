@@ -26,6 +26,12 @@
     "blockers": " · {count} blockers",
     "prScore": "PR SCORE"
   },
+  "severityFilter": {
+    "groupLabel": "Filter findings by severity",
+    "hint": "Show only {severity} findings",
+    "clearHint": "Show findings of every severity",
+    "hiddenRuns": "{count} run(s) with no {severity} findings hidden"
+  },
   "panel": {
     "hideLowConfidence": "Hide low confidence",
     "noMatchTitle": "No findings match",

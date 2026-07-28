@@ -9,6 +9,7 @@ import React from "react";
 import { Icon, Badge } from "@devdigest/ui";
 import type { ReviewRecord, RunSummary, Verdict } from "@devdigest/shared";
 import { FindingsPanel } from "../FindingsPanel";
+import type { SeverityLevel } from "../SeverityFilterBar";
 import { VerdictBanner } from "../VerdictBanner";
 import { useDeleteReview } from "../../../../../../../lib/hooks/reviews";
 
@@ -32,6 +33,7 @@ export function ReviewRunAccordion({
   headSha,
   targetRunId = null,
   targetNonce = 0,
+  severity = null,
 }: {
   review: ReviewRecord;
   /** The agent_runs row behind this review — carries cost + token counts. */
@@ -44,6 +46,8 @@ export function ReviewRunAccordion({
    *  (driven from the Timeline: clicking an agent name navigates here). */
   targetRunId?: string | null;
   targetNonce?: number;
+  /** PR-level severity filter — narrows this run's findings list. */
+  severity?: SeverityLevel | null;
 }) {
   const [open, setOpen] = React.useState(defaultOpen);
   const rootRef = React.useRef<HTMLDivElement | null>(null);
@@ -54,6 +58,11 @@ export function ReviewRunAccordion({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetRunId, targetNonce, review.run_id]);
+  // A collapsed accordion would make the severity filter look inert — the run
+  // is only still on screen because it holds a finding at that level.
+  React.useEffect(() => {
+    if (severity) setOpen(true);
+  }, [severity]);
   const del = useDeleteReview(prId);
   const findings = review.findings;
   const blockers = findings.filter((f) => f.severity === "CRITICAL" && !f.dismissed_at).length;
@@ -158,6 +167,7 @@ export function ReviewRunAccordion({
             prId={prId}
             repoFullName={repoFullName}
             headSha={headSha}
+            severity={severity}
           />
         </div>
       )}

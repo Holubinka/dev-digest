@@ -8,7 +8,24 @@ Failures and surprises specific to the web app. Repo-wide ones live in the root
 
 ## What Works
 
-_Nothing recorded yet._
+### A filter above collapsible accordions needs two extra behaviours or it reads as broken
+
+A control that narrows the findings lists — the severity bar added on 2026-07-28 in
+`_components/SeverityFilterBar/` — sits above `ReviewRunAccordion`s that are collapsed by
+default (only the first run opens). Filtering alone changes nothing the reviewer can see.
+
+Two additions make it legible, both cheap:
+
+1. **Auto-open on an active filter.** A three-line `useEffect` in
+   `ReviewRunAccordion.tsx` (`if (severity) setOpen(true)`), mirroring the existing
+   `targetRunId` effect right above it.
+2. **Hide runs with no match, and say so.** `runsWithSeverity` in
+   `_components/FindingsTab/helpers.ts` drops them, and a muted line reports the count —
+   a run vanishing with no explanation reads as a bug.
+
+The filter state itself belongs in the URL via the page's existing `setParam` helper
+(`page.tsx:62`), next to `?tab` and `?trace`, so a reload keeps it. Reuse this shape for
+the next cross-run control rather than adding per-accordion state.
 
 ## What Doesn't Work
 
@@ -92,10 +109,43 @@ enforces this on every change to either copy.
 Read the diff before overwriting — last time, this package held the better version of
 `contracts/trace.ts`, and a blind copy would have thrown it away.
 
+### The `borderColor` / `borderLeftColor` console error on the PR page is not yours
+
+**Symptom.** Working anywhere near the findings list, the console shows: *"Updating a
+style property during rerender (borderColor) when a conflicting property is set
+(borderLeftColor) can lead to styling bugs."* It appears without any interaction on a
+page with several findings, so it looks like whatever you just added caused it.
+
+**Cause.** `_components/FindingCard/styles.ts:10-13` sets `borderColor` **and**
+`borderLeftColor` on the same element. The comment above them says the `border` shorthand
+was deliberately avoided, which is true but not sufficient — `borderColor` is itself a
+shorthand for the four side colours, so React still warns whenever the value changes.
+`borderColor` changes on every focus move, i.e. every `j`/`k` press in `FindingsPanel`.
+
+**Fix.** Nothing to fix in your change. Confirmed pre-existing on 2026-07-28 by stashing
+the whole feature (`git stash push -u -- client/`), reloading, pressing `j`, and watching
+the same error appear. If you do want it gone, replace `borderColor` with the three
+explicit sides (`borderTopColor` / `borderRightColor` / `borderBottomColor`).
+
 ## Session Notes
 
-_Nothing recorded yet._
+### 2026-07-28
+
+- Added the PR-level severity counter bar (`3 CRITICAL · 5 WARNING · 2 SUGGESTION`) that
+  doubles as a filter: `_components/SeverityFilterBar/`, wired through `FindingsTab` →
+  `ReviewRunAccordion` → `FindingsPanel`, state in `?sev=`. Client-only — `severity` was
+  already on the `Finding` contract, so no server or vendored-`shared` change (verified
+  with `diff -r ../server/src/vendor/shared src/vendor/shared`).
+- `visibleFindings` in `_components/FindingsPanel/helpers.ts` took a third parameter
+  rather than gaining a second filter function; severity and hide-low-confidence compose.
+- The `FindingsPanel` toolbar's unused `divider` style and its "Adjust the filters above"
+  empty state are leftovers from the original design port, not a removed feature —
+  checked the history, `FindingsPanel/` arrives complete in the `587c46a` snapshot. The
+  new bar deliberately sits above **Review runs** instead, so the counts are per PR.
 
 ## Open Questions
 
-_Nothing recorded yet._
+- Should the accordion header keep showing the run's own totals (`5 findings`) while a
+  severity filter is active, or switch to `2 of 5`? Left as totals on 2026-07-28 — the
+  header describes the run, not the current view — but it does read oddly next to a
+  shorter list.

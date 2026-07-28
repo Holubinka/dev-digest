@@ -1,6 +1,10 @@
 # L03 — findings severity counters and filter on the PR page
 
-**Status:** in progress, 2026-07-28.
+**Status:** implemented 2026-07-28.
+
+Implemented as specified, with one addition found during the build: an accordion holding a
+match opens itself while a filter is active, because a collapsed one made the filter look
+inert.
 
 ## Problem
 

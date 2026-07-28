@@ -35,6 +35,29 @@ what the staged docs name against the index rather than the working tree —
 `git ls-files --error-unmatch <path> …` fails loudly for anything untracked. On 2026-07-28
 the remaining 21 files were landed together in `7914c18`.
 
+### Running a real review on the seeded PR to generate demo findings
+
+**Symptom.** You need findings on `acme/payments-api` #482 for a screenshot, so you press
+**Run Review** (or `POST /pulls/:id/review {"all":true}`). All three agents finish `done`
+in seconds, bill real tokens, and produce nothing: `agent_runs.findings_count = 0`,
+`grounding = '0/0 passed'`. The run trace's `raw_output` is a genuine
+`{"verdict":"approve","findings":[]}` whose summary says *"No code diff was provided to
+review."*
+
+**Cause.** The seed ships the PR's file list without content — every
+`pr_files.patch` on #482 is the empty string (`select length(patch) from pr_files` returns
+0 for all four rows), so the reviewer assembles a prompt with no diff in it. The seeded
+findings on that PR were inserted directly by `server/src/db/seed.ts`; they were never
+produced by a run. Nothing in the UI reveals this — the diff tab renders the same empty
+patches as "no changes".
+
+**Fix.** Don't spend model calls on #482. For UI work that needs a spread of findings,
+insert rows into `findings` against an existing `reviews.id` (only `CRITICAL`, `WARNING`,
+`SUGGESTION`, `INFO` — see `client/INSIGHTS.md`), and keep them tagged so they can be
+removed: `delete from findings where title like 'DEMO:%'`. For a genuine end-to-end run,
+use a repo imported through repo-intel, where the patches are real — on 2026-07-28
+`Holubinka/dev-digest` #1 carried 112 KB of patch across 64 files.
+
 ## Codebase Patterns
 
 ### The two `docker-compose.yml` files are byte-identical duplicates
