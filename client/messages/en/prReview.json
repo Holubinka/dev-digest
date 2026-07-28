@@ -97,11 +97,15 @@
       "author": "Author",
       "size": "Size",
       "score": "Score",
+      "findings": "Findings",
       "status": "Status",
       "cost": "Cost",
       "updated": "Updated"
     },
     "costHint": "Total spent by every agent run on this PR",
+    "findings": {
+      "total": "{count} finding(s)"
+    },
     "filesCount": "{count} files",
     "errorTitle": "Couldn’t load pull requests",
     "errorBody": "The engine returned an error.",

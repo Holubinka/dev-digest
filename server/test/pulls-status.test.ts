@@ -6,7 +6,12 @@
  * + age, so it gets unit coverage independent of the route's queries.
  */
 import { describe, it, expect } from 'vitest';
-import { deriveReviewStatus, rollupSeverities, STALE_DAYS } from '../src/modules/pulls/status.js';
+import {
+  deriveReviewStatus,
+  rollupSeverities,
+  topFindings,
+  STALE_DAYS,
+} from '../src/modules/pulls/status.js';
 
 const DAY = 86_400_000;
 const now = Date.UTC(2026, 5, 11);
@@ -64,5 +69,50 @@ describe('rollupSeverities', () => {
 
   it('is all-zero for no findings', () => {
     expect(rollupSeverities([])).toEqual({ critical: 0, warning: 0, suggestion: 0 });
+  });
+});
+
+describe('topFindings', () => {
+  /** A finding carrying only what the list's hover card ranks on. */
+  const f = (id: string, severity: string, confidence: number) => ({
+    id,
+    severity,
+    category: 'bug',
+    title: `finding ${id}`,
+    file: 'src/index.ts',
+    startLine: 1,
+    endLine: 1,
+    confidence,
+    rationale: 'because',
+  });
+
+  it('ranks worst severity first, then highest confidence', () => {
+    const picked = topFindings(
+      [f('a', 'SUGGESTION', 0.9), f('b', 'CRITICAL', 0.5), f('c', 'WARNING', 0.7), f('d', 'CRITICAL', 0.8)],
+      4,
+    );
+    expect(picked.map((p) => p.id)).toEqual(['d', 'b', 'c', 'a']);
+  });
+
+  it('keeps at most `limit` findings', () => {
+    const picked = topFindings(
+      [f('a', 'CRITICAL', 0.9), f('b', 'CRITICAL', 0.8), f('c', 'WARNING', 0.7), f('d', 'SUGGESTION', 0.6)],
+      3,
+    );
+    expect(picked.map((p) => p.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('drops a severity the contract does not define', () => {
+    expect(topFindings([f('a', 'WEIRD', 0.9), f('b', 'WARNING', 0.1)], 3).map((p) => p.id)).toEqual(['b']);
+  });
+
+  it('truncates a long rationale so the list payload stays bounded', () => {
+    const [only] = topFindings([{ ...f('a', 'WARNING', 0.9), rationale: 'x'.repeat(500) }], 3);
+    expect(only!.rationale.length).toBeLessThanOrEqual(201);
+    expect(only!.rationale.endsWith('…')).toBe(true);
+  });
+
+  it('is empty for no findings', () => {
+    expect(topFindings([], 3)).toEqual([]);
   });
 });

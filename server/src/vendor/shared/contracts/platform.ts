@@ -154,6 +154,23 @@ export type Repo = z.infer<typeof Repo>;
 export const PrStatus = z.enum(['needs_review', 'reviewed', 'stale', 'open', 'closed', 'merged']);
 export type PrStatus = z.infer<typeof PrStatus>;
 
+/**
+ * A finding as the PR LIST carries it — the subset a hover card needs. The full
+ * record (`FindingRecord` in `review-api`) stays on the PR detail endpoints.
+ */
+export const ListFinding = z.object({
+  id: z.string(),
+  severity: z.string(),
+  category: z.string(),
+  title: z.string(),
+  file: z.string(),
+  start_line: z.number().int(),
+  end_line: z.number().int(),
+  confidence: z.number(),
+  rationale: z.string(),
+});
+export type ListFinding = z.infer<typeof ListFinding>;
+
 export const PrMeta = z.object({
   id: z.string().nullish(),
   number: z.number().int(),
@@ -174,6 +191,17 @@ export const PrMeta = z.object({
   // Unlike `score`, this is cumulative, not latest-wins: "Review all" fans out
   // to every enabled agent. Null/absent until a run records a cost.
   cost_usd: z.number().nullish(),
+  // FINDINGS breakdown across EVERY review on the PR, not just the latest one,
+  // so the list and the PR page's severity bar can never disagree (list
+  // endpoint only). Zero means reviewed-and-clean; null means never reviewed —
+  // the UI renders those differently and must be able to tell them apart.
+  findings_critical: z.number().int().nullish(),
+  findings_warning: z.number().int().nullish(),
+  findings_suggestion: z.number().int().nullish(),
+  // The worst few findings behind those counts, for the list's hover card:
+  // worst severity first, then most confident, rationale truncated. Capped so
+  // the list payload stays bounded no matter how noisy a review was.
+  findings_top: z.array(ListFinding).nullish(),
 });
 export type PrMeta = z.infer<typeof PrMeta>;
 

@@ -1,6 +1,6 @@
 # L04 — findings on the Pull Requests list
 
-**Status:** in progress, 2026-07-28. Follow-up to
+**Status:** implemented 2026-07-28. Follow-up to
 [`../client/specs/L03-findings-severity-filter.md`](../client/specs/L03-findings-severity-filter.md),
 which put the same counts on the PR detail page.
 

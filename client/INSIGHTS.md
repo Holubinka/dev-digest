@@ -29,7 +29,32 @@ the next cross-run control rather than adding per-accordion state.
 
 ## What Doesn't Work
 
-_Nothing recorded yet._
+### A popover anchored inside a PR-list row gets clipped
+
+**Symptom.** A hover card positioned with `position: absolute` inside a table row is cut off
+— worst on the last row, which is where a long list is read.
+
+**Cause.** `vendor/ui/shell/AppFrame.tsx:29` gives `<main>` `overflow: auto`, so it is the
+scroll container and clips descendants at its box.
+
+**Fix.** Position the card `fixed` and compute `top`/`left` from the trigger's
+`getBoundingClientRect()` on open, flipping above the row when
+`rect.bottom + cardHeight > window.innerHeight`. `_components/FindingsCell/FindingsCell.tsx`
+does this in ~10 lines and needs no portal.
+
+### Adding a column to the PR list without re-cutting the others
+
+**Symptom.** The PULL REQUEST title collapses to `A…` at a 1200px window after a new column
+lands, even though every other cell looks fine.
+
+**Cause.** `GRID` in `pulls/constants.ts` gives the title `1fr` and everything else a fixed
+width, so a new fixed column is paid for entirely by the title. Adding 124px took it from
+192px to 104px — measured, not guessed:
+`[...row.children].map(k => k.getBoundingClientRect().width)`.
+
+**Fix.** Re-cut the fixed columns to their content when adding one. The 2026-07-28 pass took
+the gap from 14 to 12 (now `GRID_GAP`, shared by `row` and `headRow`) and trimmed five
+columns, which bought the title back to 160px on the same window.
 
 ## Codebase Patterns
 
@@ -146,6 +171,13 @@ explicit sides (`borderTopColor` / `borderRightColor` / `borderBottomColor`).
   free: the bar reads `1 CRITICAL · 1 WARNING · 0 SUGGESTION` and the empty chip is dimmed
   and unclickable. Freshly generated findings were not available — see the root
   `INSIGHTS.md` on reviews that approve everything.
+- Same counts then went onto the PR list as a `FINDINGS` column with a hover card
+  (`_components/FindingsCell/`, spec `specs/L04-findings-on-the-pr-list.md`). That half
+  needed the server: `PrMeta` gained `findings_critical/warning/suggestion` plus a 3-item
+  `findings_top`, mirrored into both vendored `shared/` copies.
+- The column's normal state on this workspace is `0 · 0 · 0`, because the agents approve
+  everything they are pointed at. Zero and "never reviewed" are rendered differently on
+  purpose — treat a row of zeros as a working column, not a broken one.
 
 ## Open Questions
 

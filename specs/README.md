@@ -21,4 +21,4 @@ implementation; note the divergence instead.
 |---|---|
 | [`L01-context-layering.md`](L01-context-layering.md) | Implemented 2026-07-27 |
 | [`L02-engineering-insights.md`](L02-engineering-insights.md) | Implemented 2026-07-27 |
-| [`L04-findings-on-the-pr-list.md`](L04-findings-on-the-pr-list.md) | In progress 2026-07-28 |
+| [`L04-findings-on-the-pr-list.md`](L04-findings-on-the-pr-list.md) | Implemented 2026-07-28 |
