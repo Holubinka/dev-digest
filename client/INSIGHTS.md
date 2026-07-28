@@ -142,6 +142,10 @@ explicit sides (`borderTopColor` / `borderRightColor` / `borderBottomColor`).
   empty state are leftovers from the original design port, not a removed feature —
   checked the history, `FindingsPanel/` arrives complete in the `587c46a` snapshot. The
   new bar deliberately sits above **Review runs** instead, so the counts are per PR.
+- Verified against the two seeded findings on #482, so the zero state got exercised for
+  free: the bar reads `1 CRITICAL · 1 WARNING · 0 SUGGESTION` and the empty chip is dimmed
+  and unclickable. Freshly generated findings were not available — see the root
+  `INSIGHTS.md` on reviews that approve everything.
 
 ## Open Questions
 
