@@ -202,12 +202,16 @@ d('A2 reviews + agents (Testcontainers pg)', () => {
     expect(trace.config.model).toBe('gpt-4.1');
     expect(trace.stats.grounding).toBe('1/2 passed');
     expect(trace.log.length).toBeGreaterThan(0);
+    // Cost rides along on the trace — no extra call, just the usage the
+    // completion already reported (MockLLMProvider: $0.001 per call).
+    expect(trace.stats.cost_usd).toBeGreaterThan(0);
 
     // agent_runs row populated for A5 to aggregate
     const [run] = await pg.handle.db.select().from(t.agentRuns).where(eq(t.agentRuns.id, runId));
     expect(run!.status).toBe('done');
     expect(run!.findingsCount).toBe(1);
     expect(run!.grounding).toBe('1/2 passed');
+    expect(run!.costUsd).toBe(trace.stats.cost_usd);
 
     await app.close();
   });

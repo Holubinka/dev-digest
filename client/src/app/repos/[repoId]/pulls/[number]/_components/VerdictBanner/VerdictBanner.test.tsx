@@ -30,4 +30,29 @@ describe("VerdictBanner (smoke)", () => {
     expect(screen.getByText("42")).toBeInTheDocument();
     expect(screen.getByText(/1 findings · 1 blockers/)).toBeInTheDocument();
   });
+
+  it("carries the run's cost and token flow when they are known", () => {
+    renderWithIntl(
+      <VerdictBanner
+        verdict="approve"
+        summary={null}
+        score={90}
+        findingsCount={0}
+        blockers={0}
+        costUsd={0.014}
+        tokensIn={8200}
+        tokensOut={1300}
+      />,
+    );
+    expect(screen.getByText("$0.014")).toBeInTheDocument();
+    expect(screen.getByText("8k→1.3k")).toBeInTheDocument();
+  });
+
+  it("omits the cost row entirely when no run cost is known", () => {
+    renderWithIntl(
+      <VerdictBanner verdict="approve" summary={null} score={90} findingsCount={0} blockers={0} />,
+    );
+    expect(screen.queryByText("—")).not.toBeInTheDocument();
+    expect(screen.queryByText(/\$/)).not.toBeInTheDocument();
+  });
 });

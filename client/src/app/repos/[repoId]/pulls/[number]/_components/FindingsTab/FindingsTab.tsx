@@ -63,6 +63,14 @@ export function FindingsTab({
     [onDelete],
   );
 
+  // A review carries no cost of its own — that lives on the agent_runs row the
+  // timeline already renders. Both arrive here, so match them up by run_id
+  // rather than widening the review contract.
+  const runById = React.useMemo(
+    () => new Map((prRuns ?? []).map((r) => [r.run_id, r])),
+    [prRuns],
+  );
+
   // Timeline → Review-runs navigation: clicking an agent name in the timeline
   // opens + scrolls to that run's accordion below. The nonce re-triggers the
   // scroll even when the same run is clicked twice.
@@ -158,6 +166,7 @@ export function FindingsTab({
           <ReviewRunAccordion
             key={review.id}
             review={review}
+            run={review.run_id ? runById.get(review.run_id) ?? null : null}
             prId={prId}
             defaultOpen={i === 0}
             repoFullName={repoFullName}
