@@ -13,4 +13,6 @@ and [`../README.md`](../README.md)), or post-mortems (that is
 
 Naming: `LNN-topic.md` for course lessons, `NN-topic.md` otherwise.
 
-Empty for now — the first client-scoped spec goes here.
+| Spec | Status |
+|---|---|
+| [`L03-findings-severity-filter.md`](L03-findings-severity-filter.md) | In progress 2026-07-28 |
