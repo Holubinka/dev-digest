@@ -92,8 +92,10 @@
       "size": "Size",
       "score": "Score",
       "status": "Status",
+      "cost": "Cost",
       "updated": "Updated"
     },
+    "costHint": "Total spent by every agent run on this PR",
     "filesCount": "{count} files",
     "errorTitle": "Couldn’t load pull requests",
     "errorBody": "The engine returned an error.",

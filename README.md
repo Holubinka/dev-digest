@@ -24,30 +24,8 @@ project context into reviews) lives inside the server at
 
 ## Architecture
 
-```mermaid
-flowchart LR
-  subgraph Studio["Local studio (your machine)"]
-    WEB["client/<br/>Next.js · :3000"]
-    API["server/<br/>Fastify · :3001"]
-    PG[("Postgres<br/>pgvector")]
-    WEB -->|"REST /repos /pulls /agents /runs …"| API
-    API --> PG
-  end
-
-  CLONE["git clone (add repo)"] --> INDEX["repo-intel<br/>index symbols + import graph<br/>→ repo map"]
-  API --> CLONE
-  INDEX -->|"repo map = review context"| ENGINE
-
-  ENGINE["reviewer-core/<br/>diff + repo map → prompt → LLM<br/>→ structured findings → grounding gate"]
-  LLM["LLM<br/>OpenAI · Anthropic · OpenRouter"]
-  API -->|"run review"| ENGINE
-  ENGINE --> LLM
-
-  SHARED["@devdigest/shared<br/>Zod contracts"]
-  SHARED -.->|"one schema, every package"| WEB
-  SHARED -.-> API
-  SHARED -.-> ENGINE
-```
+Diagrams — package topology and the review request sequence — live in
+**[`docs/architecture.md`](docs/architecture.md)**.
 
 The review flow end to end: **add a repo** → server clones it and `repo-intel`
 indexes it (the **Indexed** badge) → **import PRs** from GitHub → open a PR and
@@ -62,6 +40,10 @@ Each package has its own README with deeper diagrams:
 [`server`](server/README.md) (API map) ·
 [`reviewer-core`](reviewer-core/README.md) (review pipeline) ·
 [`e2e`](e2e/README.md).
+
+Working with an AI agent? Start at **[`CLAUDE.md`](CLAUDE.md)** — it is the map of
+conventions, gotchas and do-not-touch zones, and it points at everything else. Each
+package has its own `CLAUDE.md` and `INSIGHTS.md` (accumulated debugging knowledge).
 
 ## What works on day 1
 

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { PrMeta, PrDetail, GitHubClient, PrReviewComment } from '@devdigest/shared';
 import { PrCommentInput } from '@devdigest/shared';
 import * as t from '../../db/schema.js';
@@ -129,6 +129,32 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
       }
     }
 
+    // TOTAL cost per PR — every agent run it ever paid for, summed.
+    //
+    // Deliberately NOT the latest review's cost, unlike SCORE above: "Review
+    // all" fans out to every enabled agent, so a PR reviewed by three agents
+    // would report a third of what it actually cost. Score is a state (the
+    // newest one wins); spend is cumulative.
+    //
+    // SQL SUM skips NULLs, so failed runs — which never priced anything —
+    // contribute nothing, and a PR whose runs ALL lack a cost sums to NULL and
+    // renders as "—" rather than a misleading $0.00. No status filter: a run
+    // that failed after billable calls still cost real money.
+    const totalCostByPr = new Map<string, number | null>();
+    if (prIds.length > 0) {
+      const costRows = await container.db
+        .select({
+          prId: t.agentRuns.prId,
+          total: sql<number | null>`sum(${t.agentRuns.costUsd})`,
+        })
+        .from(t.agentRuns)
+        .where(inArray(t.agentRuns.prId, prIds))
+        .groupBy(t.agentRuns.prId);
+      for (const c of costRows) {
+        if (c.prId) totalCostByPr.set(c.prId, c.total == null ? null : Number(c.total));
+      }
+    }
+
     const now = Date.now();
     return rows.map((r) => {
       const review = latestReviewByPr.get(r.id);
@@ -153,6 +179,7 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
         opened_at: r.openedAt?.toISOString() ?? null,
         updated_at: r.updatedAt?.toISOString() ?? null,
         score: review ? review.score : null,
+        cost_usd: totalCostByPr.get(r.id) ?? null,
       };
     });
   });
