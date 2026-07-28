@@ -42,6 +42,23 @@ scroll container and clips descendants at its box.
 `rect.bottom + cardHeight > window.innerHeight`. `_components/FindingsCell/FindingsCell.tsx`
 does this in ~10 lines and needs no portal.
 
+### A repo path in a fixed-width card pierces its border
+
+**Symptom.** A file citation runs straight through the right edge of the findings hover
+card — reported on 2026-07-28 for
+`client/src/app/repos/[repoId]/pulls/[number]/_components/FindingsPanel/FindingsPanel.tsx`.
+
+**Cause.** Two things at once. A flex item will not shrink below its content unless
+`min-width: 0` is set on it *and* its container, so `text-overflow: ellipsis` never engages.
+And even once it does, CSS elides from the **right**, throwing away the filename — the only
+part of a path worth reading in a preview.
+
+**Fix.** `_components/FindingsCell/`: `minWidth: 0` on the meta row and the path span, then
+`shortPath()` in `helpers.ts` elides from the left at a folder boundary
+(`…/_components/FindingsPanel/FindingsPanel.tsx`). Keep `:30-45` in its own
+`flexShrink: 0` span or it is the first thing CSS eats, and put the untruncated path in
+`title` so it stays reachable.
+
 ### Adding a column to the PR list without re-cutting the others
 
 **Symptom.** The PULL REQUEST title collapses to `A…` at a 1200px window after a new column
@@ -178,6 +195,13 @@ explicit sides (`borderTopColor` / `borderRightColor` / `borderBottomColor`).
 - The column's normal state on this workspace is `0 · 0 · 0`, because the agents approve
   everything they are pointed at. Zero and "never reviewed" are rendered differently on
   purpose — treat a row of zeros as a working column, not a broken one.
+- Then DevDigest reviewed its own PR #2 and returned three real findings, the first
+  non-empty run on this workspace (see the root `INSIGHTS.md` correction). Two were worth
+  acting on and are fixed in this branch: `focusIdx` in `FindingsPanel` now clamps when a
+  filter shrinks the list, and the list's findings query no longer narrows by
+  `reviews.kind`. The third (surrogate pairs in the server-side rationale truncation) was
+  also real and fixed. The reviewer's claim that `shown[focusIdx]` would *crash* was wrong
+  — `FindingsPanel.tsx:47` already guards it — but the stale index was real.
 
 ## Open Questions
 

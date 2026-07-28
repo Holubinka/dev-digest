@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import type { FindingRecord } from "@devdigest/shared";
 import messages from "../../../../../../../../messages/en/prReview.json";
@@ -75,6 +75,23 @@ describe("FindingsPanel (smoke)", () => {
     renderWithIntl(<FindingsPanel findings={FINDINGS} prId="pr1" severity="WARNING" />);
     expect(screen.getByText("N+1 query in user list")).toBeInTheDocument();
     expect(screen.queryByText("Hardcoded secret")).not.toBeInTheDocument();
+  });
+
+  it("keeps the keyboard focus inside the list when a filter shrinks it", () => {
+    // Focus the second card with `j`, then narrow to a single-item list: the
+    // focused index must clamp back, or nothing is focused and `k` has to be
+    // pressed several times before anything responds.
+    const { rerender } = renderWithIntl(<FindingsPanel findings={FINDINGS} prId="pr1" />);
+    fireEvent.keyDown(window, { key: "j" });
+    rerender(
+      <NextIntlClientProvider locale="en" messages={{ prReview: messages }}>
+        <FindingsPanel findings={FINDINGS} prId="pr1" severity="CRITICAL" />
+      </NextIntlClientProvider>,
+    );
+    const cards = document.querySelectorAll<HTMLElement>("[data-finding-id]");
+    expect(cards).toHaveLength(1);
+    // FindingCard marks the focused card with a ring; "none" means nothing is.
+    expect(cards[0]!.style.boxShadow).not.toBe("none");
   });
 
   it("renders every severity when no filter is set", () => {

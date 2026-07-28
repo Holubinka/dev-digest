@@ -53,6 +53,8 @@ export const s = {
     alignItems: "center",
     gap: 8,
     minWidth: 0,
+    // Without this the category tag is squeezed to nothing by a long title.
+    flexWrap: "nowrap",
   } satisfies CSSProperties,
   itemTitle: {
     fontSize: 13,
@@ -67,7 +69,25 @@ export const s = {
     alignItems: "center",
     gap: 10,
     margin: "4px 0 0",
+    // A flex item will not shrink below its content unless min-width is 0, so a
+    // long repo path would otherwise push straight through the card's edge.
+    minWidth: 0,
   } satisfies CSSProperties,
+  itemFile: {
+    display: "inline-flex",
+    fontSize: 12,
+    color: "var(--accent-text)",
+    minWidth: 0,
+  } satisfies CSSProperties,
+  /** Only the folders give way — the filename is elided in `shortPath` first. */
+  itemPath: {
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  } satisfies CSSProperties,
+  /** `:45-52` is the actionable half of a citation; it never shrinks. */
+  itemLine: { flexShrink: 0 } satisfies CSSProperties,
+  itemConfidence: { flexShrink: 0 } satisfies CSSProperties,
   itemRationale: {
     margin: "5px 0 0",
     fontSize: 12,

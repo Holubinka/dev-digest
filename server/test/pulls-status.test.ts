@@ -112,6 +112,15 @@ describe('topFindings', () => {
     expect(only!.rationale.endsWith('…')).toBe(true);
   });
 
+  it('truncates by code point, never splitting a surrogate pair', () => {
+    // 250 astral chars = 500 UTF-16 units, so a unit-wise slice at 200 lands
+    // mid-pair (unit 200 is the low half of char 100) and emits a lone surrogate.
+    const [only] = topFindings([{ ...f('a', 'WARNING', 0.9), rationale: '😀'.repeat(250) }], 3);
+    expect(only!.rationale).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+    expect(only!.rationale).not.toMatch(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+    expect([...only!.rationale].length).toBe(201); // 200 code points + the ellipsis
+  });
+
   it('is empty for no findings', () => {
     expect(topFindings([], 3)).toEqual([]);
   });

@@ -78,6 +78,13 @@ PR that genuinely contains a problem. Check `tokens_in` first: a value near 1.5k
 diff never reached the prompt (empty patches), while 15k+ means the model saw the code and
 had nothing to say.
 
+**Correction, 2026-07-28 (later the same day).** The agents are not incapable of finding
+things — a run on `Holubinka/dev-digest` #2 returned three findings (2 WARNING, 1
+SUGGESTION), all real, all about code written that day. The pattern is narrower than this
+entry first suggested: they approve *reviewed-and-merged* work and speak up on fresh code.
+Re-running on a PR whose diff the model has not seen before is worth a try; re-running on
+#1 or #482 is not.
+
 ## Codebase Patterns
 
 ### The two `docker-compose.yml` files are byte-identical duplicates

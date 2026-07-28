@@ -50,6 +50,16 @@ export interface ListFinding {
 }
 
 /**
+ * Cut a string to `max` CODE POINTS, not UTF-16 units: `String.slice` counts
+ * units, so a boundary inside an astral character (emoji, and anything else
+ * outside the BMP) leaves an orphaned surrogate in the JSON response.
+ */
+function truncateChars(text: string, max: number): string {
+  const chars = [...text];
+  return chars.length > max ? `${chars.slice(0, max).join('')}…` : text;
+}
+
+/**
  * The `limit` findings worth previewing on the PR list: worst severity first,
  * then most confident. Severities outside the contract are dropped rather than
  * ranked last — the client maps severity to an icon with no fallback.
@@ -89,10 +99,7 @@ export function topFindings(
       start_line: r.startLine,
       end_line: r.endLine,
       confidence: r.confidence,
-      rationale:
-        r.rationale.length > LIST_RATIONALE_CHARS
-          ? `${r.rationale.slice(0, LIST_RATIONALE_CHARS)}…`
-          : r.rationale,
+      rationale: truncateChars(r.rationale, LIST_RATIONALE_CHARS),
     }));
 }
 

@@ -125,15 +125,21 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
     // grouping is cheap.
     const prIds = rows.map((r) => r.id);
     const latestReviewByPr = new Map<string, { score: number | null }>();
+    // Every PR carrying ANY review, whatever its kind — this is what separates
+    // "reviewed and clean" from "never reviewed" for the FINDINGS column below.
+    const reviewedPrIds = new Set<string>();
     if (prIds.length > 0) {
       const reviewRows = await container.db
-        .select({ prId: t.reviews.prId, score: t.reviews.score })
+        .select({ prId: t.reviews.prId, score: t.reviews.score, kind: t.reviews.kind })
         .from(t.reviews)
-        .where(and(inArray(t.reviews.prId, prIds), eq(t.reviews.kind, 'review')))
+        .where(inArray(t.reviews.prId, prIds))
         .orderBy(desc(t.reviews.createdAt));
       // Rows are newest-first → first seen per PR is the latest review.
       for (const rv of reviewRows) {
-        if (!latestReviewByPr.has(rv.prId)) latestReviewByPr.set(rv.prId, { score: rv.score });
+        reviewedPrIds.add(rv.prId);
+        if (rv.kind === 'review' && !latestReviewByPr.has(rv.prId)) {
+          latestReviewByPr.set(rv.prId, { score: rv.score });
+        }
       }
     }
 
@@ -169,6 +175,12 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
     // agent, and the PR page's severity bar counts all of them, so a
     // latest-review-only tally here would contradict the page it links to.
     //
+    // Counted across EVERY review kind, because the PR detail page's own list
+    // (`review.repo.ts`, filtered by pr_id alone) does too — narrowing to
+    // kind='review' here would let the two disagree the moment anything else
+    // carries findings. SCORE above keeps its kind filter: that one is defined
+    // as the latest *review's* score, not a tally.
+    //
     // A PR with reviews but no findings maps to zeros (reviewed and clean); a
     // PR absent from this map has never been reviewed and reports null. The two
     // render differently, so they must stay distinguishable all the way down.
@@ -189,7 +201,7 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
         })
         .from(t.findings)
         .innerJoin(t.reviews, eq(t.reviews.id, t.findings.reviewId))
-        .where(and(inArray(t.reviews.prId, prIds), eq(t.reviews.kind, 'review')));
+        .where(inArray(t.reviews.prId, prIds));
       const byPr = new Map<string, typeof findingRows>();
       for (const f of findingRows) {
         const list = byPr.get(f.prId) ?? [];
@@ -198,7 +210,7 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
       }
       // Reviewed PRs with zero findings still need an entry, or they would be
       // indistinguishable from never-reviewed ones.
-      for (const prId of latestReviewByPr.keys()) {
+      for (const prId of reviewedPrIds) {
         const list = byPr.get(prId) ?? [];
         findingsByPr.set(prId, {
           counts: rollupSeverities(list),

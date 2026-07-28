@@ -37,6 +37,13 @@ export function FindingsPanel({
     [findings, hideLow, severity],
   );
 
+  // Both filters can shrink the list under a focus that has already moved. Clamp
+  // it, or nothing is focused and `k` has to be pressed as many times as the
+  // list lost entries before anything responds again.
+  React.useEffect(() => {
+    setFocusIdx((i) => Math.min(i, Math.max(0, shown.length - 1)));
+  }, [shown.length]);
+
   // j/k navigation + a/d shortcuts on the focused finding (keyboard).
   React.useEffect(() => {
     const handler = (e: KeyboardEvent) => {

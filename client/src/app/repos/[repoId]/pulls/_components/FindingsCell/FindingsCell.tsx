@@ -8,6 +8,7 @@ import { useTranslations } from "next-intl";
 import { Icon, SEV, SeverityBadge, CategoryTag, ConfidenceNum, type Severity, type Category } from "@devdigest/ui";
 import type { PrMeta } from "@/lib/types";
 import { FINDINGS_FIELDS } from "../../constants";
+import { lineRef, shortPath } from "./helpers";
 import { s } from "./styles";
 
 /** Gap between the row and the card, and the margin kept from the viewport edge. */
@@ -75,10 +76,13 @@ export function FindingsCell({ pr }: { pr: PrMeta }) {
                 <CategoryTag category={f.category as Category} />
               </div>
               <div style={s.itemMetaRow}>
-                <span className="mono" style={{ fontSize: 12, color: "var(--accent-text)" }}>
-                  {f.file}:{f.start_line === f.end_line ? f.start_line : `${f.start_line}-${f.end_line}`}
+                <span className="mono" style={s.itemFile} title={`${f.file}:${lineRef(f.start_line, f.end_line)}`}>
+                  <span style={s.itemPath}>{shortPath(f.file)}</span>
+                  <span style={s.itemLine}>:{lineRef(f.start_line, f.end_line)}</span>
                 </span>
-                <ConfidenceNum value={f.confidence} />
+                <span style={s.itemConfidence}>
+                  <ConfidenceNum value={f.confidence} />
+                </span>
               </div>
               <p style={s.itemRationale}>{f.rationale}</p>
             </div>
