@@ -6,6 +6,9 @@ Implemented as specified, with one addition found during the build: an accordion
 match opens itself while a filter is active, because a collapsed one made the filter look
 inert.
 
+The same counts on the Pull Requests list are a separate, cross-package spec:
+[`../../specs/L04-findings-on-the-pr-list.md`](../../specs/L04-findings-on-the-pr-list.md).
+
 ## Problem
 
 The PR-detail "Agent runs" tab lists findings grouped by review run —
