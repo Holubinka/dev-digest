@@ -1,0 +1,76 @@
+# shared-sync gate — the two vendored copies of @devdigest/shared must stay equal.
+#
+# @devdigest/shared is vendored into both server/ and client/ rather than being a
+# workspace package, so nothing at type-check time can notice when the copies drift:
+# each package compiles happily against its own copy. They diverged once already
+# (five files, resynced 2026-07-27), which is why this gate exists.
+#
+# server/src/vendor/shared/ is the source of truth — reviewer-core aliases it.
+# No dependencies, no build: this is a directory comparison and takes seconds.
+name: shared-sync
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server/src/vendor/shared/**'
+      - 'client/src/vendor/shared/**'
+      - '.github/workflows/shared-sync.yml'
+  pull_request:
+    paths:
+      - 'server/src/vendor/shared/**'
+      - 'client/src/vendor/shared/**'
+      - '.github/workflows/shared-sync.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shared-sync-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    name: vendored copies match
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare vendored @devdigest/shared copies
+        run: |
+          if diff -r server/src/vendor/shared client/src/vendor/shared; then
+            echo "Vendored @devdigest/shared copies are identical."
+            exit 0
+          fi
+
+          echo "::error title=Vendored @devdigest/shared copies diverged::server/src/vendor/shared and client/src/vendor/shared are not identical. The diff is printed above."
+          cat <<'MSG'
+
+          ------------------------------------------------------------------
+          The two vendored copies of @devdigest/shared have drifted.
+
+          server/src/vendor/shared/ is the source of truth — reviewer-core
+          aliases it at type-check time.
+
+          To fix, from the repo root:
+
+            diff -r server/src/vendor/shared client/src/vendor/shared
+
+          Read that diff before copying anything. The client copy is not
+          always the stale one: when this last happened, client/ held the
+          better version of contracts/trace.ts and a blind overwrite would
+          have thrown it away.
+
+          Once you have decided which side is correct for each file, mirror
+          it and confirm the gate passes locally:
+
+            diff -r server/src/vendor/shared client/src/vendor/shared && echo OK
+
+          Then re-run the typechecks the copies feed:
+
+            cd server        && pnpm typecheck
+            cd client        && pnpm typecheck
+            cd reviewer-core && npm run typecheck
+          ------------------------------------------------------------------
+          MSG
+          exit 1

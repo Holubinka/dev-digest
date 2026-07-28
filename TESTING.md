@@ -31,6 +31,7 @@ If a test wouldn't catch a class of regression we care about, we don't write it.
 | server-integration | `server/` | integration (real Postgres) | vitest | `server-integration.yml` | **yes** |
 | reviewer-core | `reviewer-core/` | unit (engine) | vitest | `reviewer-core.yml` | no |
 | e2e web | `e2e/` | browser e2e (deterministic) | agent-browser + `run.ts` | `e2e-web.yml` | yes (stack) |
+| shared-sync | `server/` + `client/` | consistency gate (not a test) | `diff -r` | `shared-sync.yml` | no |
 
 ## What each suite covers
 
@@ -56,6 +57,15 @@ and a `run` with a stubbed model → grounded findings. No DB / GitHub / FS.
 main journeys (boot → PR list → PR detail; agents) against a real seeded stack.
 No `chat`, no model key.
 
+**shared-sync** — not a test suite but a consistency gate. `@devdigest/shared` is
+vendored into both `server/` and `client/` instead of being a workspace package,
+so each side type-checks against its own copy and nothing notices when the two
+drift. The gate is a plain `diff -r` between them, path-filtered to run only when
+a vendored copy changes. It fires on content changes and on added or deleted
+files. `server/src/vendor/shared/` is the source of truth (`reviewer-core`
+aliases it), but read the diff before overwriting — the copies have drifted in
+both directions before.
+
 ## Running locally
 
 ```sh
@@ -80,10 +90,11 @@ cd e2e && npm install && npm test
   (`vitest run --exclude '**/*.it.test.ts'`); the integration lane selects only
   it (`vitest run .it.test`). A DB-backed test that imports `test/helpers/pg.ts`
   must use the `.it.test.ts` suffix.
-- **`server/package.json` is `skip-worktree`** (a local variant diverges from the
-  committed file). CI therefore invokes the split with
-  `pnpm exec vitest run …` rather than relying on committed `test:unit` /
-  `test:integration` scripts.
+- **`server/package.json` may be held under `skip-worktree` locally** (a local variant
+  diverges from the committed file). That is a per-clone git flag — it is not committed
+  and a fresh clone will not have it (`git ls-files -v` shows no `S`). Either way, do
+  not rely on committed `test:unit` / `test:integration` scripts existing: CI invokes
+  the split with `pnpm exec vitest run …` directly.
 - **Hermetic by default.** Reach for `src/adapters/mocks.ts` (MockLLMProvider,
   MockGitClient) rather than real network/keys.
 - **E2E specs are deterministic batch JSON** (`e2e/specs/*.flow.json`) using
