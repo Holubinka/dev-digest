@@ -203,6 +203,23 @@ the whole feature (`git stash push -u -- client/`), reloading, pressing `j`, and
 the same error appear. If you do want it gone, replace `borderColor` with the three
 explicit sides (`borderTopColor` / `borderRightColor` / `borderBottomColor`).
 
+**Correction, 2026-07-30 — this is now fixed; the entry above stands as the diagnosis.**
+`s.card` sets all four colours and all four widths per side. `borderWidth` went too: it is
+the same shorthand/longhand mix as `borderColor`, silent only because neither width ever
+changed — making one conditional would have brought the warning straight back.
+`borderStyle` stayed, because no per-side style longhand is set for it to conflict with.
+Guarded by four tests in `FindingCard.test.tsx` asserting the style object carries no
+`border`, `borderColor` or `borderWidth` key.
+
+Reproduce it (it does **not** fire on load — the shorthand has to *change*): open an
+accordion holding two or more findings, then press `j`. One finding is not enough —
+`focusIdx` is clamped to `shown.length - 1`, so it never moves and nothing rerenders.
+
+Note when checking the fix in DevTools: the serialized `style` attribute reads
+`border-width: 1px 1px 1px 3px`. That is the browser's CSSOM collapsing four longhands
+back into a shorthand for display — not React writing one. Read the style object, not the
+attribute.
+
 ## Session Notes
 
 ### 2026-07-28

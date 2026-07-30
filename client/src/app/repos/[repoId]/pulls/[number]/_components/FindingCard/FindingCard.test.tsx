@@ -4,6 +4,7 @@ import { NextIntlClientProvider } from "next-intl";
 import type { FindingRecord } from "@devdigest/shared";
 import messages from "../../../../../../../../messages/en/prReview.json";
 import { FindingCard } from "./FindingCard";
+import { s } from "./styles";
 
 afterEach(cleanup);
 
@@ -56,5 +57,48 @@ describe("FindingCard (smoke, both themes)", () => {
     expect(onAction).toHaveBeenCalledWith("accept");
     fireEvent.click(screen.getByText("Dismiss"));
     expect(onAction).toHaveBeenCalledWith("dismiss");
+  });
+});
+
+describe("FindingCard card style — no border shorthand", () => {
+  /**
+   * React warns "Updating a style property during rerender (borderColor) when a
+   * conflicting property is set (borderLeftColor)" whenever a shorthand and a
+   * per-side longhand for the same property live on one element and the
+   * shorthand changes. `focused` flips on every j/k press in FindingsPanel, so
+   * the card hit this on every keyboard move. Keep every border property
+   * per-side.
+   */
+  it("sets no border shorthand alongside the per-side longhands", () => {
+    const style = s.card(true, "var(--crit)", false);
+    expect(style).not.toHaveProperty("border");
+    expect(style).not.toHaveProperty("borderColor");
+    expect(style).not.toHaveProperty("borderWidth");
+  });
+
+  it("keeps the severity accent on the left edge in both focus states", () => {
+    expect(s.card(true, "var(--crit)", false).borderLeftColor).toBe("var(--crit)");
+    expect(s.card(false, "var(--crit)", false).borderLeftColor).toBe("var(--crit)");
+  });
+
+  it("paints the other three sides with the focus colour only when focused", () => {
+    const focused = s.card(true, "var(--crit)", false);
+    expect([focused.borderTopColor, focused.borderRightColor, focused.borderBottomColor]).toEqual([
+      "var(--crit)",
+      "var(--crit)",
+      "var(--crit)",
+    ]);
+    const idle = s.card(false, "var(--crit)", false);
+    expect([idle.borderTopColor, idle.borderRightColor, idle.borderBottomColor]).toEqual([
+      "var(--border)",
+      "var(--border)",
+      "var(--border)",
+    ]);
+  });
+
+  it("keeps the left edge thicker than the other three", () => {
+    const style = s.card(false, "var(--crit)", false);
+    expect(style.borderLeftWidth).toBe(3);
+    expect(style.borderTopWidth).toBe(1);
   });
 });
