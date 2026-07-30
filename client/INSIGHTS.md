@@ -90,6 +90,30 @@ deliberately carries no run telemetry.
 how the verdict plaque got its cost badge on 2026-07-28 — zero server changes, zero
 contract churn. Check that map before touching `server/src/vendor/shared`.
 
+### `blockers` on a run is not a severity bucket and cannot be derived on the client
+
+**Symptom.** You are building a severity readout for a run and it looks like `blockers`
+is redundant — surely it is just the CRITICAL count, or CRITICAL + WARNING.
+
+**Cause.** The server computes it as `countBlockers(keptFindings, agent.ciFailOn)`
+(`server/src/modules/reviews/run-executor.ts:240`). It is the agent's own CI gate
+threshold, configured per agent, denormalized onto the run row at completion. Two runs
+over the same PR with identical severity counts can report different `blockers`.
+
+**Fix.** Show it as its own thing, sourced from `RunSummary.blockers` — never recompute it
+from findings. `RunFindings` (2026-07-30) renders it as a separate chip behind a divider
+for exactly this reason.
+
+### `FindingRecord` is structurally a superset of `ListFinding`, so one card renders both
+
+`ListFinding` (`vendor/shared/contracts/platform.ts:161`) is the trimmed, rationale-
+truncated shape the PR *list* ships; `FindingRecord` extends `Finding`, the full record the
+PR *detail* endpoints ship. Every `ListFinding` field exists on `FindingRecord` with a
+narrower or equal type (`severity` is a literal union where the other is `string`), so a
+component typed against `ListFinding[]` accepts `FindingRecord[]` with no cast and no
+contract change. This is what let `FindingsPreview` serve both the list column and the
+timeline's run row on 2026-07-30. Check this before widening either contract to match.
+
 ## Tool & Library Notes
 
 ### A component test fails on `ResizeObserver is not defined`
@@ -100,6 +124,16 @@ contract churn. Check that map before touching `server/src/vendor/shared`.
 
 **Fix.** The polyfill is already registered in `src/test/setup.ts`. If a new test file
 misses it, confirm the setup file is still wired through `vitest.config.ts`.
+
+### The editor's `Cannot find module './X'` under a bracketed route path can be a lie
+
+Seen twice on 2026-07-30: the TS language server flagged
+`Cannot find module './FindingsCell'` in
+`src/app/repos/[repoId]/pulls/_components/FindingsCell/FindingsCell.test.tsx` while both
+`pnpm exec vitest run` and `pnpm exec tsc --noEmit -p tsconfig.json` were clean, on a file
+that had not been touched. Do not start deleting imports or adding path aliases over it.
+`tsc` is the arbiter here; run it before believing a resolve error under `[repoId]` or
+`[number]`.
 
 ## Recurring Errors & Fixes
 
@@ -202,6 +236,30 @@ explicit sides (`borderTopColor` / `borderRightColor` / `borderBottomColor`).
   `reviews.kind`. The third (surrogate pairs in the server-side rationale truncation) was
   also real and fixed. The reviewer's claim that `shown[focusIdx]` would *crash* was wrong
   — `FindingsPanel.tsx:47` already guards it — but the stale index was real.
+
+### 2026-07-30
+
+- The timeline's run row now shows severity chips plus a hover/focus card scoped to that
+  one run (`_components/RunFindings/`, spec `specs/L05-findings-on-the-run-row.md`).
+  Client-only: `FindingsTab` already had the reviews and already joined them to runs by
+  `run_id`, so the map that feeds it is the mirror image of the run→review map recorded
+  above under Codebase Patterns. No endpoint, contract or vendored-`shared` change.
+- The chips + hover card were lifted out of `FindingsCell` into
+  `src/components/findings-preview/` rather than copied. The extraction removed 221 lines
+  and added 22. What made it safe to do to two-day-old code was that `FindingsCell` had
+  eight behaviour tests — they passed byte-identical and are what proves the list did not
+  change. Only the four `shortPath` unit tests moved, because the function did.
+- Kept `FindingsPreview` free of `next-intl`: it takes already-translated `header` and
+  `ariaLabel` strings. Its test needs no `NextIntlClientProvider`, and the two consumers
+  can word the card header differently ("2 finding(s)" vs "4 finding(s) in this run").
+- A settled run whose review is missing from the payload keeps the old plain-text count
+  instead of rendering `0 · 0 · 0`. `findings_count` lives on the run, the per-severity
+  split only on the review — zeros there would assert the run was clean rather than admit
+  the breakdown is unknown. The pre-existing `RunHistory` tests, which render without the
+  new prop, exercise that fallback for free.
+- `RunFindings` reuses `countBySeverity` from `SeverityFilterBar/helpers.ts` rather than
+  tallying its own. That is not tidiness: a private tally would reintroduce the crash in
+  Recurring Errors & Fixes above, because `SEV` still has no fallback.
 
 ## Open Questions
 
