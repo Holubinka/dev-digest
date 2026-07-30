@@ -16,3 +16,4 @@ Naming: `LNN-topic.md` for course lessons, `NN-topic.md` otherwise.
 | Spec | Status |
 |---|---|
 | [`L03-findings-severity-filter.md`](L03-findings-severity-filter.md) | Implemented 2026-07-28 |
+| [`L05-findings-on-the-run-row.md`](L05-findings-on-the-run-row.md) | Implemented 2026-07-30 |
