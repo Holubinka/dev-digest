@@ -1,6 +1,11 @@
 # L05 — findings by severity on the timeline's run row
 
-**Status:** proposed 2026-07-30.
+**Status:** implemented 2026-07-30.
+
+Implemented as specified. One adjustment surfaced while writing the plan: `FindingsCell`'s
+four `shortPath` unit tests moved to the shared helper's own file, because the function
+moved with it — the eight behaviour tests that actually guard the refactor are unchanged.
+The extraction removed 221 lines and added 22.
 
 Completes the pair started by
 [`L03-findings-severity-filter.md`](L03-findings-severity-filter.md) (severity on the PR
@@ -150,7 +155,9 @@ a provider wrapper.
 - A settled run whose review is not in the payload keeps the old text line instead of
   showing zeros.
 - A finding with a severity outside the three levels is not counted and does not throw.
-- `FindingsCell.test.tsx` passes without modification.
+- The eight `FindingsCell` behaviour tests pass byte-identical — they are the refactor's
+  guard. Its four `shortPath` unit tests move to the shared helper's own test file,
+  because the function moves with it; that is the only edit the file may receive.
 - New unit tests cover `FindingsPreview` (chips, dimmed zeros, focus/blur, empty preview,
   `extra` slot), `RunFindings` (derived counts, blockers threshold, preview order) and the
   four `RunHistory` row states above.
