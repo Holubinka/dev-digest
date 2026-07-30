@@ -23,8 +23,26 @@ export const SIZE_COLOR: Record<string, string> = {
   L: "var(--crit)",
 };
 
-/** Grid template for both the header row and PR rows. */
-export const GRID = "1fr 132px 92px 60px 118px 74px 78px";
+/**
+ * Grid template for both the header row and PR rows. The title takes what is
+ * left, so every fixed column is sized to its content and no wider — adding
+ * FINDINGS cost the title 100px and it truncates first on a narrow window.
+ */
+export const GRID = "1fr 104px 84px 56px 96px 108px 68px 70px";
+
+/** Column gap, shared by the header row and the PR rows. */
+export const GRID_GAP = 12;
+
+/**
+ * The FINDINGS column, worst severity first: which `PrMeta` count feeds each
+ * chip. Typed against `PrMeta` so a contract rename breaks the build here
+ * rather than rendering `undefined` in the browser.
+ */
+export const FINDINGS_FIELDS = [
+  { sev: "CRITICAL", field: "findings_critical" },
+  { sev: "WARNING", field: "findings_warning" },
+  { sev: "SUGGESTION", field: "findings_suggestion" },
+] as const satisfies readonly { sev: string; field: keyof PrMeta }[];
 
 /** Line-count thresholds for the S/M/L size bucket. */
 export const SIZE_SMALL_MAX = 100;
@@ -44,6 +62,7 @@ export const COLUMN_KEYS: string[] = [
   "author",
   "size",
   "score",
+  "findings",
   "status",
   "cost",
   "updated",

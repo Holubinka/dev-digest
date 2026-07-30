@@ -16,7 +16,38 @@ _Nothing recorded yet._
 
 ## Codebase Patterns
 
-_Nothing recorded yet._
+### Rollups on `GET /repos/:id/pulls` are read-time maps, and null ≠ zero
+
+The list endpoint denormalises nothing. Each rollup is its own `inArray` query over the
+page's PR ids, grouped in JS into a `Map`, then read in the final `rows.map`:
+`latestReviewByPr` (score, latest-wins), `totalCostByPr` (cost, summed over runs) and, since
+2026-07-28, `findingsByPr` (severity counts + a 3-item preview, summed over runs like cost).
+Follow that shape for the next one rather than adding a join or a denormalised column.
+
+The subtlety is the empty case. A PR with reviews but no findings must land in the map with
+zeros, while a PR never reviewed must be absent and serialise as `null` — the UI renders
+`0 · 0 · 0` and `—` differently, and collapsing them loses the distinction. `findingsByPr`
+is therefore seeded from `latestReviewByPr.keys()`, not from the findings rows.
+
+### Truncating text for an API response with `String.slice` corrupts emoji
+
+**Symptom.** A truncated string arrives at the client with `�` at the end, or a JSON
+consumer chokes on an unpaired surrogate.
+
+**Cause.** `slice` counts UTF-16 code units. Anything outside the BMP — every emoji — is two
+units, so a cut at a fixed offset can land between the halves and leave a lone surrogate.
+Reviewer-written rationales routinely contain emoji.
+
+**Fix.** Cut by code point: `[...text].slice(0, max).join('')`. `truncateChars` in
+`modules/pulls/status.ts` does this for the PR list's rationale preview, with a test that
+feeds it 250 astral characters.
+
+### The severity vocabulary is enforced in `topFindings`, not at the DB
+
+`findings.severity` is plain `text`. `topFindings` in `modules/pulls/status.ts` drops
+anything outside CRITICAL / WARNING / SUGGESTION instead of ranking it last, because the
+client maps severity to an icon through a lookup with no fallback (see
+`client/INSIGHTS.md`). A bad row costs one missing preview entry, never a broken page.
 
 ## Tool & Library Notes
 

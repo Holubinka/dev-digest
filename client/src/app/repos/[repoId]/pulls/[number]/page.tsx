@@ -14,6 +14,7 @@ import { PrDetailHeader } from "./_components/PrDetailHeader";
 import { OverviewTab } from "./_components/OverviewTab";
 import { FindingsTab } from "./_components/FindingsTab";
 import { DiffTab } from "./_components/DiffTab";
+import { isSeverityLevel, type SeverityLevel } from "./_components/SeverityFilterBar";
 import RunTraceDrawer from "./_components/RunTraceDrawer";
 import { usePullDetail, usePulls } from "../../../../../lib/hooks";
 import { useQueryClient } from "@tanstack/react-query";
@@ -66,6 +67,12 @@ export default function PRDetailPage() {
     router.replace(`/repos/${repoId}/pulls/${number}${sp.toString() ? `?${sp.toString()}` : ""}`);
   };
   const setTab = (t: string) => setParam("tab", t);
+  // The severity filter rides in the URL like ?tab and ?trace, so a filtered
+  // view survives a reload and can be handed to someone else. An unknown value
+  // is ignored rather than trusted — see SeverityFilterBar/helpers.ts.
+  const sevParam = search.get("sev");
+  const severity = isSeverityLevel(sevParam) ? sevParam : null;
+  const setSeverity = (next: SeverityLevel | null) => setParam("sev", next);
 
   // Reviews come newest-first; each is its own run (grouped into accordions).
   const runs = reviews ?? [];
@@ -147,6 +154,8 @@ export default function PRDetailPage() {
             prCommits={pr.commits}
             repoFullName={repoFullName}
             headSha={pr.head_sha}
+            severity={severity}
+            onSeverityChange={setSeverity}
             cancelMutation={cancel}
             onOpenTrace={(id) => setParam("trace", id)}
             onDelete={(id) => {

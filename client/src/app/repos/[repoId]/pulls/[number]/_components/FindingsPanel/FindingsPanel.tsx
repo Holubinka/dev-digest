@@ -7,6 +7,7 @@ import { useTranslations } from "next-intl";
 import { Toggle, EmptyState } from "@devdigest/ui";
 import type { FindingRecord } from "@devdigest/shared";
 import { FindingCard } from "../FindingCard";
+import type { SeverityLevel } from "../SeverityFilterBar";
 import { useFindingAction } from "../../../../../../../lib/hooks/reviews";
 import { KEY_TO_ACTION } from "./constants";
 import { visibleFindings } from "./helpers";
@@ -17,18 +18,31 @@ export function FindingsPanel({
   prId,
   repoFullName,
   headSha,
+  severity = null,
 }: {
   findings: FindingRecord[];
   prId: string;
   repoFullName?: string | null;
   headSha?: string | null;
+  /** Set from the PR-level severity bar — show only findings at this level. */
+  severity?: SeverityLevel | null;
 }) {
   const t = useTranslations("prReview");
   const action = useFindingAction();
   const [hideLow, setHideLow] = React.useState(false);
   const [focusIdx, setFocusIdx] = React.useState(0);
 
-  const shown = React.useMemo(() => visibleFindings(findings, hideLow), [findings, hideLow]);
+  const shown = React.useMemo(
+    () => visibleFindings(findings, hideLow, severity),
+    [findings, hideLow, severity],
+  );
+
+  // Both filters can shrink the list under a focus that has already moved. Clamp
+  // it, or nothing is focused and `k` has to be pressed as many times as the
+  // list lost entries before anything responds again.
+  React.useEffect(() => {
+    setFocusIdx((i) => Math.min(i, Math.max(0, shown.length - 1)));
+  }, [shown.length]);
 
   // j/k navigation + a/d shortcuts on the focused finding (keyboard).
   React.useEffect(() => {

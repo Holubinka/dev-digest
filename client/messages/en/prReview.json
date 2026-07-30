@@ -26,6 +26,12 @@
     "blockers": " · {count} blockers",
     "prScore": "PR SCORE"
   },
+  "severityFilter": {
+    "groupLabel": "Filter findings by severity",
+    "hint": "Show only {severity} findings",
+    "clearHint": "Show findings of every severity",
+    "hiddenRuns": "{count} run(s) with no {severity} findings hidden"
+  },
   "panel": {
     "hideLowConfidence": "Hide low confidence",
     "noMatchTitle": "No findings match",
@@ -91,11 +97,15 @@
       "author": "Author",
       "size": "Size",
       "score": "Score",
+      "findings": "Findings",
       "status": "Status",
       "cost": "Cost",
       "updated": "Updated"
     },
     "costHint": "Total spent by every agent run on this PR",
+    "findings": {
+      "total": "{count} finding(s)"
+    },
     "filesCount": "{count} files",
     "errorTitle": "Couldn’t load pull requests",
     "errorBody": "The engine returned an error.",

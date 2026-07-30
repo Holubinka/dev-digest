@@ -35,6 +35,56 @@ what the staged docs name against the index rather than the working tree —
 `git ls-files --error-unmatch <path> …` fails loudly for anything untracked. On 2026-07-28
 the remaining 21 files were landed together in `7914c18`.
 
+### Running a real review on the seeded PR to generate demo findings
+
+**Symptom.** You need findings on `acme/payments-api` #482 for a screenshot, so you press
+**Run Review** (or `POST /pulls/:id/review {"all":true}`). All three agents finish `done`
+in seconds, bill real tokens, and produce nothing: `agent_runs.findings_count = 0`,
+`grounding = '0/0 passed'`. The run trace's `raw_output` is a genuine
+`{"verdict":"approve","findings":[]}` whose summary says *"No code diff was provided to
+review."*
+
+**Cause.** The seed ships the PR's file list without content — every
+`pr_files.patch` on #482 is the empty string (`select length(patch) from pr_files` returns
+0 for all four rows), so the reviewer assembles a prompt with no diff in it. The seeded
+findings on that PR were inserted directly by `server/src/db/seed.ts`; they were never
+produced by a run. Nothing in the UI reveals this — the diff tab renders the same empty
+patches as "no changes".
+
+**Fix.** Don't spend model calls on #482. For a genuine end-to-end run, use a repo
+imported through repo-intel, where the patches are real — on 2026-07-28
+`Holubinka/dev-digest` #1 carried 112 KB of patch across 64 files.
+
+**Correction, 2026-07-28.** This entry originally also suggested inserting `DEMO:`-tagged
+rows into `findings` to fill a screenshot. Don't. Fabricated findings describe code the PR
+does not contain, and the rows outlive the screenshot. Demo whatever the PR actually has —
+#482 ships two seeded findings (1 CRITICAL + 1 WARNING), which is enough to exercise any
+per-severity UI, including its zero state.
+
+### Expecting a fresh review run to produce findings for a demo
+
+**Symptom.** You need findings, so you run the three seeded agents on a PR with a real
+diff. Every run finishes `done`, `score = 100`, `verdict = approve`, `findings_count = 0`.
+
+**Cause.** Not a plumbing failure — the model reads the diff and approves it. Measured on
+2026-07-28 with `deepseek/deepseek-v4-flash` and the prompts calibrated in `602e370`:
+`Holubinka/dev-digest` #1 (64 files, ~40k prompt tokens, reviewed twice) and #2 (20 files,
+~16k tokens) both came back with zero findings from all three agents, at roughly $0.005 a
+sweep. `tokens_out` was 82–209, i.e. a bare approve envelope.
+
+**Fix.** Don't build a demo, a screenshot or a test fixture around findings you plan to
+generate — you may get none. Use the seeded findings on #482, or point the reviewer at a
+PR that genuinely contains a problem. Check `tokens_in` first: a value near 1.5k means the
+diff never reached the prompt (empty patches), while 15k+ means the model saw the code and
+had nothing to say.
+
+**Correction, 2026-07-28 (later the same day).** The agents are not incapable of finding
+things — a run on `Holubinka/dev-digest` #2 returned three findings (2 WARNING, 1
+SUGGESTION), all real, all about code written that day. The pattern is narrower than this
+entry first suggested: they approve *reviewed-and-merged* work and speak up on fresh code.
+Re-running on a PR whose diff the model has not seen before is worth a try; re-running on
+#1 or #482 is not.
+
 ## Codebase Patterns
 
 ### The two `docker-compose.yml` files are byte-identical duplicates

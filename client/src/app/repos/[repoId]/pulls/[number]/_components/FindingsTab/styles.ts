@@ -45,4 +45,9 @@ export const s = {
     display: "flex",
     gap: 8,
   } satisfies CSSProperties,
+  hiddenRuns: {
+    fontSize: 12.5,
+    color: "var(--text-muted)",
+    padding: "2px 2px 6px",
+  } satisfies CSSProperties,
 } as const;

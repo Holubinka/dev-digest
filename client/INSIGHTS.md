@@ -8,11 +8,70 @@ Failures and surprises specific to the web app. Repo-wide ones live in the root
 
 ## What Works
 
-_Nothing recorded yet._
+### A filter above collapsible accordions needs two extra behaviours or it reads as broken
+
+A control that narrows the findings lists — the severity bar added on 2026-07-28 in
+`_components/SeverityFilterBar/` — sits above `ReviewRunAccordion`s that are collapsed by
+default (only the first run opens). Filtering alone changes nothing the reviewer can see.
+
+Two additions make it legible, both cheap:
+
+1. **Auto-open on an active filter.** A three-line `useEffect` in
+   `ReviewRunAccordion.tsx` (`if (severity) setOpen(true)`), mirroring the existing
+   `targetRunId` effect right above it.
+2. **Hide runs with no match, and say so.** `runsWithSeverity` in
+   `_components/FindingsTab/helpers.ts` drops them, and a muted line reports the count —
+   a run vanishing with no explanation reads as a bug.
+
+The filter state itself belongs in the URL via the page's existing `setParam` helper
+(`page.tsx:62`), next to `?tab` and `?trace`, so a reload keeps it. Reuse this shape for
+the next cross-run control rather than adding per-accordion state.
 
 ## What Doesn't Work
 
-_Nothing recorded yet._
+### A popover anchored inside a PR-list row gets clipped
+
+**Symptom.** A hover card positioned with `position: absolute` inside a table row is cut off
+— worst on the last row, which is where a long list is read.
+
+**Cause.** `vendor/ui/shell/AppFrame.tsx:29` gives `<main>` `overflow: auto`, so it is the
+scroll container and clips descendants at its box.
+
+**Fix.** Position the card `fixed` and compute `top`/`left` from the trigger's
+`getBoundingClientRect()` on open, flipping above the row when
+`rect.bottom + cardHeight > window.innerHeight`. `_components/FindingsCell/FindingsCell.tsx`
+does this in ~10 lines and needs no portal.
+
+### A repo path in a fixed-width card pierces its border
+
+**Symptom.** A file citation runs straight through the right edge of the findings hover
+card — reported on 2026-07-28 for
+`client/src/app/repos/[repoId]/pulls/[number]/_components/FindingsPanel/FindingsPanel.tsx`.
+
+**Cause.** Two things at once. A flex item will not shrink below its content unless
+`min-width: 0` is set on it *and* its container, so `text-overflow: ellipsis` never engages.
+And even once it does, CSS elides from the **right**, throwing away the filename — the only
+part of a path worth reading in a preview.
+
+**Fix.** `_components/FindingsCell/`: `minWidth: 0` on the meta row and the path span, then
+`shortPath()` in `helpers.ts` elides from the left at a folder boundary
+(`…/_components/FindingsPanel/FindingsPanel.tsx`). Keep `:30-45` in its own
+`flexShrink: 0` span or it is the first thing CSS eats, and put the untruncated path in
+`title` so it stays reachable.
+
+### Adding a column to the PR list without re-cutting the others
+
+**Symptom.** The PULL REQUEST title collapses to `A…` at a 1200px window after a new column
+lands, even though every other cell looks fine.
+
+**Cause.** `GRID` in `pulls/constants.ts` gives the title `1fr` and everything else a fixed
+width, so a new fixed column is paid for entirely by the title. Adding 124px took it from
+192px to 104px — measured, not guessed:
+`[...row.children].map(k => k.getBoundingClientRect().width)`.
+
+**Fix.** Re-cut the fixed columns to their content when adding one. The 2026-07-28 pass took
+the gap from 14 to 12 (now `GRID_GAP`, shared by `row` and `headRow`) and trimmed five
+columns, which bought the title back to 160px on the same window.
 
 ## Codebase Patterns
 
@@ -92,10 +151,61 @@ enforces this on every change to either copy.
 Read the diff before overwriting — last time, this package held the better version of
 `contracts/trace.ts`, and a blind copy would have thrown it away.
 
+### The `borderColor` / `borderLeftColor` console error on the PR page is not yours
+
+**Symptom.** Working anywhere near the findings list, the console shows: *"Updating a
+style property during rerender (borderColor) when a conflicting property is set
+(borderLeftColor) can lead to styling bugs."* It appears without any interaction on a
+page with several findings, so it looks like whatever you just added caused it.
+
+**Cause.** `_components/FindingCard/styles.ts:10-13` sets `borderColor` **and**
+`borderLeftColor` on the same element. The comment above them says the `border` shorthand
+was deliberately avoided, which is true but not sufficient — `borderColor` is itself a
+shorthand for the four side colours, so React still warns whenever the value changes.
+`borderColor` changes on every focus move, i.e. every `j`/`k` press in `FindingsPanel`.
+
+**Fix.** Nothing to fix in your change. Confirmed pre-existing on 2026-07-28 by stashing
+the whole feature (`git stash push -u -- client/`), reloading, pressing `j`, and watching
+the same error appear. If you do want it gone, replace `borderColor` with the three
+explicit sides (`borderTopColor` / `borderRightColor` / `borderBottomColor`).
+
 ## Session Notes
 
-_Nothing recorded yet._
+### 2026-07-28
+
+- Added the PR-level severity counter bar (`3 CRITICAL · 5 WARNING · 2 SUGGESTION`) that
+  doubles as a filter: `_components/SeverityFilterBar/`, wired through `FindingsTab` →
+  `ReviewRunAccordion` → `FindingsPanel`, state in `?sev=`. Client-only — `severity` was
+  already on the `Finding` contract, so no server or vendored-`shared` change (verified
+  with `diff -r ../server/src/vendor/shared src/vendor/shared`).
+- `visibleFindings` in `_components/FindingsPanel/helpers.ts` took a third parameter
+  rather than gaining a second filter function; severity and hide-low-confidence compose.
+- The `FindingsPanel` toolbar's unused `divider` style and its "Adjust the filters above"
+  empty state are leftovers from the original design port, not a removed feature —
+  checked the history, `FindingsPanel/` arrives complete in the `587c46a` snapshot. The
+  new bar deliberately sits above **Review runs** instead, so the counts are per PR.
+- Verified against the two seeded findings on #482, so the zero state got exercised for
+  free: the bar reads `1 CRITICAL · 1 WARNING · 0 SUGGESTION` and the empty chip is dimmed
+  and unclickable. Freshly generated findings were not available — see the root
+  `INSIGHTS.md` on reviews that approve everything.
+- Same counts then went onto the PR list as a `FINDINGS` column with a hover card
+  (`_components/FindingsCell/`, spec `specs/L04-findings-on-the-pr-list.md`). That half
+  needed the server: `PrMeta` gained `findings_critical/warning/suggestion` plus a 3-item
+  `findings_top`, mirrored into both vendored `shared/` copies.
+- The column's normal state on this workspace is `0 · 0 · 0`, because the agents approve
+  everything they are pointed at. Zero and "never reviewed" are rendered differently on
+  purpose — treat a row of zeros as a working column, not a broken one.
+- Then DevDigest reviewed its own PR #2 and returned three real findings, the first
+  non-empty run on this workspace (see the root `INSIGHTS.md` correction). Two were worth
+  acting on and are fixed in this branch: `focusIdx` in `FindingsPanel` now clamps when a
+  filter shrinks the list, and the list's findings query no longer narrows by
+  `reviews.kind`. The third (surrogate pairs in the server-side rationale truncation) was
+  also real and fixed. The reviewer's claim that `shown[focusIdx]` would *crash* was wrong
+  — `FindingsPanel.tsx:47` already guards it — but the stale index was real.
 
 ## Open Questions
 
-_Nothing recorded yet._
+- Should the accordion header keep showing the run's own totals (`5 findings`) while a
+  severity filter is active, or switch to `2 of 5`? Left as totals on 2026-07-28 — the
+  header describes the run, not the current view — but it does read oddly next to a
+  shorter list.

@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { GRID } from "./constants";
+import { GRID, GRID_GAP } from "./constants";
 
 /** Co-located styles for the PR list page (extracted from inline styles). */
 export const s = {
@@ -7,7 +7,7 @@ export const s = {
     display: "grid",
     gridTemplateColumns: GRID,
     alignItems: "center",
-    gap: 14,
+    gap: GRID_GAP,
     padding: "12px 20px",
     borderBottom: "1px solid var(--border)",
     cursor: "pointer",
@@ -94,7 +94,7 @@ export const s = {
   headRow: {
     display: "grid",
     gridTemplateColumns: GRID,
-    gap: 14,
+    gap: GRID_GAP,
     padding: "10px 20px",
     borderBottom: "1px solid var(--border)",
     background: "var(--bg-surface)",

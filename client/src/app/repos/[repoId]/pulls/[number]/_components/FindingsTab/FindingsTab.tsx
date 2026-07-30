@@ -1,10 +1,13 @@
 "use client";
 
 import React, { useCallback } from "react";
+import { useTranslations } from "next-intl";
 import { Icon, Badge, Button, SectionLabel, EmptyState } from "@devdigest/ui";
 import { RunStatus } from "../RunStatus";
 import { RunHistory } from "../RunHistory/RunHistory";
 import { ReviewRunAccordion } from "../ReviewRunAccordion";
+import { SeverityFilterBar, type SeverityLevel } from "../SeverityFilterBar";
+import { runsWithSeverity } from "./helpers";
 import { s } from "./styles";
 import type { FindingRecord, ReviewRecord, RunSummary, PrCommit } from "@devdigest/shared";
 import type { UseMutationResult } from "@tanstack/react-query";
@@ -21,6 +24,9 @@ interface FindingsTabProps {
   /** owner/repo + head sha — used to deep-link a finding's file:line to GitHub. */
   repoFullName?: string | null;
   headSha?: string | null;
+  /** Severity the findings lists are narrowed to; null shows every level. */
+  severity: SeverityLevel | null;
+  onSeverityChange: (next: SeverityLevel | null) => void;
   onOpenTrace: (id: string) => void;
   onDelete: (id: string) => void;
   onRunDone: () => void;
@@ -37,10 +43,13 @@ export function FindingsTab({
   cancelMutation,
   repoFullName,
   headSha,
+  severity,
+  onSeverityChange,
   onOpenTrace,
   onDelete,
   onRunDone,
 }: FindingsTabProps) {
+  const t = useTranslations("prReview");
   const handleCancelAll = useCallback(() => {
     liveRunIds.forEach((id) => cancelMutation.mutate(id));
   }, [liveRunIds, cancelMutation]);
@@ -78,6 +87,12 @@ export function FindingsTab({
   const handleGoToReview = useCallback((runId: string) => {
     setTarget((p) => ({ runId, n: (p?.n ?? 0) + 1 }));
   }, []);
+
+  // The severity bar counts the whole PR, so it reads across every run; the
+  // accordions below it drop to those that hold a finding at the chosen level.
+  const allFindings = React.useMemo(() => runs.flatMap((r) => r.findings), [runs]);
+  const shownRuns = React.useMemo(() => runsWithSeverity(runs, severity), [runs, severity]);
+  const hiddenRuns = runs.length - shownRuns.length;
 
   return (
     <section>
@@ -152,6 +167,13 @@ export function FindingsTab({
       >
         Review runs
       </SectionLabel>
+      {allFindings.length > 0 && (
+        <SeverityFilterBar
+          findings={allFindings}
+          active={severity}
+          onChange={onSeverityChange}
+        />
+      )}
       {runs.length === 0 ? (
         reviewRunning || liveRunIds.length > 0 ? null : (
           <EmptyState
@@ -161,20 +183,29 @@ export function FindingsTab({
           />
         )
       ) : (
-        prId &&
-        runs.map((review, i) => (
-          <ReviewRunAccordion
-            key={review.id}
-            review={review}
-            run={review.run_id ? runById.get(review.run_id) ?? null : null}
-            prId={prId}
-            defaultOpen={i === 0}
-            repoFullName={repoFullName}
-            headSha={headSha}
-            targetRunId={target?.runId ?? null}
-            targetNonce={target?.n ?? 0}
-          />
-        ))
+        prId && (
+          <>
+            {shownRuns.map((review, i) => (
+              <ReviewRunAccordion
+                key={review.id}
+                review={review}
+                run={review.run_id ? runById.get(review.run_id) ?? null : null}
+                prId={prId}
+                defaultOpen={i === 0}
+                repoFullName={repoFullName}
+                headSha={headSha}
+                targetRunId={target?.runId ?? null}
+                targetNonce={target?.n ?? 0}
+                severity={severity}
+              />
+            ))}
+            {severity && hiddenRuns > 0 && (
+              <div style={s.hiddenRuns}>
+                {t("severityFilter.hiddenRuns", { count: hiddenRuns, severity })}
+              </div>
+            )}
+          </>
+        )
       )}
     </section>
   );

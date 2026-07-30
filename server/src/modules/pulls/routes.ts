@@ -7,7 +7,16 @@ import * as t from '../../db/schema.js';
 import { getContext } from '../_shared/context.js';
 import { IdParams } from '../_shared/schemas.js';
 import { AppError, NotFoundError } from '../../platform/errors.js';
-import { deriveReviewStatus } from './status.js';
+import {
+  deriveReviewStatus,
+  rollupSeverities,
+  topFindings,
+  type ListFinding,
+  type SeverityCounts,
+} from './status.js';
+
+/** How many findings the list previews per PR in its hover card. */
+const LIST_FINDINGS_PREVIEW = 3;
 
 /**
  * F1 — pulls module. PR import via Octokit (list + per-PR detail).
@@ -113,19 +122,24 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
 
     // Latest-review SCORE per PR for the list's score ring. Computed on read
     // from reviews (no FK denorm); the list is small, so one IN-query + JS
-    // grouping is cheap. (The per-severity FINDINGS breakdown is intentionally
-    // not surfaced on the list — findings live on the PR detail page.)
+    // grouping is cheap.
     const prIds = rows.map((r) => r.id);
     const latestReviewByPr = new Map<string, { score: number | null }>();
+    // Every PR carrying ANY review, whatever its kind — this is what separates
+    // "reviewed and clean" from "never reviewed" for the FINDINGS column below.
+    const reviewedPrIds = new Set<string>();
     if (prIds.length > 0) {
       const reviewRows = await container.db
-        .select({ prId: t.reviews.prId, score: t.reviews.score })
+        .select({ prId: t.reviews.prId, score: t.reviews.score, kind: t.reviews.kind })
         .from(t.reviews)
-        .where(and(inArray(t.reviews.prId, prIds), eq(t.reviews.kind, 'review')))
+        .where(inArray(t.reviews.prId, prIds))
         .orderBy(desc(t.reviews.createdAt));
       // Rows are newest-first → first seen per PR is the latest review.
       for (const rv of reviewRows) {
-        if (!latestReviewByPr.has(rv.prId)) latestReviewByPr.set(rv.prId, { score: rv.score });
+        reviewedPrIds.add(rv.prId);
+        if (rv.kind === 'review' && !latestReviewByPr.has(rv.prId)) {
+          latestReviewByPr.set(rv.prId, { score: rv.score });
+        }
       }
     }
 
@@ -155,9 +169,60 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
       }
     }
 
+    // FINDINGS per PR — every review's findings, not just the latest run's.
+    //
+    // Follows COST rather than SCORE: "Review all" fans out to every enabled
+    // agent, and the PR page's severity bar counts all of them, so a
+    // latest-review-only tally here would contradict the page it links to.
+    //
+    // Counted across EVERY review kind, because the PR detail page's own list
+    // (`review.repo.ts`, filtered by pr_id alone) does too — narrowing to
+    // kind='review' here would let the two disagree the moment anything else
+    // carries findings. SCORE above keeps its kind filter: that one is defined
+    // as the latest *review's* score, not a tally.
+    //
+    // A PR with reviews but no findings maps to zeros (reviewed and clean); a
+    // PR absent from this map has never been reviewed and reports null. The two
+    // render differently, so they must stay distinguishable all the way down.
+    const findingsByPr = new Map<string, { counts: SeverityCounts; top: ListFinding[] }>();
+    if (prIds.length > 0) {
+      const findingRows = await container.db
+        .select({
+          prId: t.reviews.prId,
+          id: t.findings.id,
+          severity: t.findings.severity,
+          category: t.findings.category,
+          title: t.findings.title,
+          file: t.findings.file,
+          startLine: t.findings.startLine,
+          endLine: t.findings.endLine,
+          confidence: t.findings.confidence,
+          rationale: t.findings.rationale,
+        })
+        .from(t.findings)
+        .innerJoin(t.reviews, eq(t.reviews.id, t.findings.reviewId))
+        .where(inArray(t.reviews.prId, prIds));
+      const byPr = new Map<string, typeof findingRows>();
+      for (const f of findingRows) {
+        const list = byPr.get(f.prId) ?? [];
+        list.push(f);
+        byPr.set(f.prId, list);
+      }
+      // Reviewed PRs with zero findings still need an entry, or they would be
+      // indistinguishable from never-reviewed ones.
+      for (const prId of reviewedPrIds) {
+        const list = byPr.get(prId) ?? [];
+        findingsByPr.set(prId, {
+          counts: rollupSeverities(list),
+          top: topFindings(list, LIST_FINDINGS_PREVIEW),
+        });
+      }
+    }
+
     const now = Date.now();
     return rows.map((r) => {
       const review = latestReviewByPr.get(r.id);
+      const findings = findingsByPr.get(r.id);
       return {
         id: r.id,
         number: r.number,
@@ -180,6 +245,10 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
         updated_at: r.updatedAt?.toISOString() ?? null,
         score: review ? review.score : null,
         cost_usd: totalCostByPr.get(r.id) ?? null,
+        findings_critical: findings ? findings.counts.critical : null,
+        findings_warning: findings ? findings.counts.warning : null,
+        findings_suggestion: findings ? findings.counts.suggestion : null,
+        findings_top: findings ? findings.top : null,
       };
     });
   });
