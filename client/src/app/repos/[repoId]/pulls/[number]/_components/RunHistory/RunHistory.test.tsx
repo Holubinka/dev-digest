@@ -7,7 +7,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
-import type { RunSummary } from "@devdigest/shared";
+import type { RunSummary, FindingRecord } from "@devdigest/shared";
 import messages from "../../../../../../../../messages/en/prReview.json";
 import { RunHistory } from "./RunHistory";
 
@@ -93,5 +93,55 @@ describe("RunHistory — cost badge", () => {
   it("an unsettled run shows no cost at all — it hasn't finished spending", () => {
     renderRuns([run({ status: "running", cost_usd: null, score: null, blockers: null })]);
     expect(screen.queryByText("—")).not.toBeInTheDocument();
+  });
+});
+
+describe("RunHistory — per-run findings", () => {
+  const finding = (id: string, severity: string): FindingRecord =>
+    ({
+      id,
+      severity,
+      category: "security",
+      title: `Finding ${id}`,
+      file: "src/config.ts",
+      start_line: 12,
+      end_line: 12,
+      rationale: "why",
+      confidence: 0.9,
+    }) as FindingRecord;
+
+  function renderWithFindings(runs: RunSummary[], findingsByRun: Map<string, FindingRecord[]>) {
+    return render(
+      <NextIntlClientProvider locale="en" messages={{ prReview: messages }}>
+        <RunHistory runs={runs} findingsByRun={findingsByRun} onOpenTrace={() => {}} />
+      </NextIntlClientProvider>,
+    );
+  }
+
+  it("shows severity chips for a settled run whose review is on the page", () => {
+    renderWithFindings(
+      [run({ status: "done", findings_count: 2, blockers: 0, score: 61 })],
+      new Map([["run-1", [finding("a", "CRITICAL"), finding("b", "WARNING")]]]),
+    );
+    expect(screen.getByLabelText("1 critical, 1 warning, 0 suggestion")).toBeInTheDocument();
+    expect(screen.queryByText("2 finding(s)")).not.toBeInTheDocument();
+  });
+
+  it("keeps the plain count when the run's review is not in the payload", () => {
+    renderWithFindings(
+      [run({ status: "done", findings_count: 2, blockers: 0, score: 61 })],
+      new Map(),
+    );
+    // Zeros would claim the run was clean; the count is all we actually know.
+    expect(screen.getByText("2 finding(s)")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/critical/)).not.toBeInTheDocument();
+  });
+
+  it("shows no chips on a run that has not settled", () => {
+    renderWithFindings(
+      [run({ status: "running", score: null, blockers: null })],
+      new Map([["run-1", [finding("a", "CRITICAL")]]]),
+    );
+    expect(screen.queryByLabelText(/critical/)).not.toBeInTheDocument();
   });
 });
