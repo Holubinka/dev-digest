@@ -232,6 +232,27 @@ catching content edits as well as added or deleted files. Locally, verify with
 `server/src/vendor/shared/` is the source of truth (`reviewer-core` aliases it), but read
 the diff before overwriting — the client copy is not always the stale one.
 
+### The two findings rankers must sort identically, and nothing checks that they do
+
+**Symptom.** Findings reorder on screen while you are reading them. Nothing throws, no test
+fails, and neither package's typecheck notices.
+
+**Cause.** The same findings get ranked twice, in two packages, by two functions written to
+mirror each other: `topFindings` in `server/src/modules/pulls/status.ts` builds the PR
+list's `findings_top`, and `rankFindings` in
+`client/src/components/findings-preview/helpers.ts` re-ranks the full set the hover card
+fetches on open. Both sorted by severity then confidence with no third key. Confidence ties
+constantly (models emit `0.9` and `0.8` over and over) and the server's source query has no
+`ORDER BY` at all, so the first rows swapped places the instant the full set replaced the
+payload's slice.
+
+**Fix.** Both now end with `a.id.localeCompare(b.id)`, making the order total on either
+side. There is a tie test in `server/test/pulls-status.test.ts` and one in
+`client/src/components/findings-preview/helpers.test.ts`, but they are separate suites —
+nothing mechanically enforces the mirror, the way `shared-sync` does for the vendored
+contracts. Changing the ordering in one file means changing it in the other by hand; the
+doc comment on each names its counterpart.
+
 ### A push is rejected for the whole branch when a commit adds a workflow file
 
 **Symptom.** `! [remote rejected] … (refusing to allow a Personal Access Token to create or
@@ -293,6 +314,14 @@ only with a registered key: `ssh -T git@github.com` answered `Permission denied
 - Historical files kept the old name deliberately: `specs/L01`, `specs/L02`, this file's
   earlier entries and the plan under `docs/superpowers/plans/`. The symlink keeps every
   path in them resolvable, and `specs/README.md` forbids rewriting a record.
+- Made the findings card interactive (scroll + GitHub links) on both the PR list and the
+  timeline. Almost entirely client work — see `client/INSIGHTS.md` — but it needed one
+  server line: a tie-breaking `id` in `topFindings`, because the browser now re-ranks the
+  same findings. That mirror is the new entry under Recurring Errors & Fixes.
+- The design deliberately added no endpoint. `GET /pulls/:id/reviews` already returns every
+  finding on a PR, so the card reuses it instead of introducing the codebase's first
+  `querystring` route, first keyset cursor and first `useInfiniteQuery`. Worth checking what
+  an existing route already returns before specifying a paginated one.
 
 ## Open Questions
 

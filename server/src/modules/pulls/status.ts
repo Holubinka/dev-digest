@@ -61,8 +61,15 @@ function truncateChars(text: string, max: number): string {
 
 /**
  * The `limit` findings worth previewing on the PR list: worst severity first,
- * then most confident. Severities outside the contract are dropped rather than
- * ranked last — the client maps severity to an icon with no fallback.
+ * then most confident, then by id. Severities outside the contract are dropped
+ * rather than ranked last — the client maps severity to an icon with no fallback.
+ *
+ * The id breaks ties because the browser re-ranks. The list card opens on this
+ * slice and swaps in the PR's full findings a moment later; the source query has
+ * no ORDER BY and equal confidences are common, so without a total order those
+ * rows reshuffle on screen. `rankFindings` in
+ * `client/src/components/findings-preview/helpers.ts` sorts identically — change
+ * one and the other has to follow.
  *
  * Rationales are truncated here, not in the browser: the list ships one payload
  * for every PR in the repo, and a few hundred findings' worth of markdown would
@@ -87,7 +94,8 @@ export function topFindings(
     .sort(
       (a, b) =>
         (SEVERITY_RANK[a.severity] ?? 9) - (SEVERITY_RANK[b.severity] ?? 9) ||
-        b.confidence - a.confidence,
+        b.confidence - a.confidence ||
+        a.id.localeCompare(b.id),
     )
     .slice(0, limit)
     .map((r) => ({

@@ -1,5 +1,46 @@
 import { describe, it, expect } from "vitest";
-import { shortPath } from "./helpers";
+import type { ListFinding } from "@devdigest/shared";
+import { rankFindings, shortPath } from "./helpers";
+
+function finding(over: Partial<ListFinding> = {}): ListFinding {
+  return {
+    id: "f1",
+    severity: "CRITICAL",
+    category: "security",
+    title: "Hardcoded Stripe secret key",
+    file: "src/config.ts",
+    start_line: 12,
+    end_line: 12,
+    confidence: 0.9,
+    rationale: "Line 12 contains a literal sk_live_ Stripe key.",
+    ...over,
+  };
+}
+
+describe("rankFindings", () => {
+  it("ranks worst severity first, then most confident", () => {
+    const out = rankFindings([
+      finding({ id: "sugg", severity: "SUGGESTION", confidence: 0.99 }),
+      finding({ id: "warn-low", severity: "WARNING", confidence: 0.2 }),
+      finding({ id: "warn-high", severity: "WARNING", confidence: 0.8 }),
+      finding({ id: "crit", severity: "CRITICAL", confidence: 0.1 }),
+    ]);
+    expect(out.map((f) => f.id)).toEqual(["crit", "warn-high", "warn-low", "sugg"]);
+  });
+
+  // The list card re-ranks when the full set replaces the payload's worst three,
+  // so an equal-confidence pair must not swap places on screen.
+  it("breaks a severity+confidence tie by id, whichever order it arrives in", () => {
+    const a = finding({ id: "aaa", confidence: 0.9 });
+    const b = finding({ id: "bbb", confidence: 0.9 });
+    expect(rankFindings([b, a]).map((f) => f.id)).toEqual(["aaa", "bbb"]);
+    expect(rankFindings([a, b]).map((f) => f.id)).toEqual(["aaa", "bbb"]);
+  });
+
+  it("drops a severity outside the contract rather than ranking it last", () => {
+    expect(rankFindings([finding({ id: "bad", severity: "BOGUS" })])).toEqual([]);
+  });
+});
 
 describe("shortPath", () => {
   it("leaves a path that already fits", () => {

@@ -73,6 +73,42 @@ width, so a new fixed column is paid for entirely by the title. Adding 124px too
 the gap from 14 to 12 (now `GRID_GAP`, shared by `row` and `headRow`) and trimmed five
 columns, which bought the title back to 160px on the same window.
 
+### Turning a hover card interactive needs four changes, not one
+
+**Symptom.** Dropping `pointerEvents: "none"` from the findings card on 2026-08-01 was not
+enough to make it scrollable and clickable — it still vanished the moment the cursor tried
+to reach it, and clicking inside it navigated the PR list row underneath.
+
+**Cause.** Four independent things, each of which alone keeps the card unusable:
+the trigger closes on `mouseleave`, and the 8px gap between the chips and the card counts
+as leaving; `onBlur` fires when focus moves to a link *inside* the card, because the card
+is a DOM descendant of the trigger; the card is `position: fixed`, so a page scroll leaves
+it floating beside a row that has moved on; and `PRRow.tsx:26` navigates on click, which a
+click anywhere in the card bubbles up to.
+
+**Fix.** All four, in `components/findings-preview/FindingsPreview.tsx`: close on a 150ms
+timer that the card's own `onMouseEnter` cancels; in `onBlur`, bail out when
+`e.currentTarget.contains(e.relatedTarget)`; a capture-phase `window` scroll listener that
+closes unless the event came from inside the card; and `onClick={(e) => e.stopPropagation()}`
+on the card. Note that once the cursor is *inside* the card no `mouseleave` fires on the
+trigger at all — React's enter/leave are containment-based — so only the gap needs the timer.
+
+### `Node.contains` throws on a non-Node and silently kills the handler around it
+
+**Symptom.** The findings card was supposed to close on page scroll and did so in jsdom, but
+in Chrome a `window.dispatchEvent(new Event("scroll"))` left it open with no console error
+visible in the test output.
+
+**Cause.** The guard read `cardRef.current?.contains(e.target)`. A scroll event dispatched
+straight at `window` has `e.target === window`, and `contains` takes a WebIDL `Node?` — a
+non-Node argument throws `TypeError`, aborting the listener before it ever called `close()`.
+A real viewport scroll targets `document` or the scrolling element, so the jsdom test using
+`fireEvent.scroll(document)` passed and hid it.
+
+**Fix.** Guard with `e.target instanceof Node` before calling `contains`. There is a
+regression test for the `window`-dispatched case in `FindingsPreview.test.tsx`; a test that
+only fires at `document` will not catch this.
+
 ## Codebase Patterns
 
 ### Run-level data reaches the PR-detail subtree by joining in `FindingsTab`, not by widening `ReviewRecord`
@@ -113,6 +149,21 @@ narrower or equal type (`severity` is a literal union where the other is `string
 component typed against `ListFinding[]` accepts `FindingRecord[]` with no cast and no
 contract change. This is what let `FindingsPreview` serve both the list column and the
 timeline's run row on 2026-07-30. Check this before widening either contract to match.
+
+### The findings card's two surfaces get their depth from different places
+
+Both the PR list and the timeline run row drive `components/findings-preview`, but only one
+of them pays for the findings. The timeline already holds every finding in memory —
+`FindingsTab.tsx` keys `ReviewRecord.findings` by `run_id` — so `RunFindings` passes the
+whole ranked list and caps nothing. The list ships only `findings_top` (3, capped by
+`LIST_FINDINGS_PREVIEW` in `server/src/modules/pulls/routes.ts:19`), so `FindingsCell`
+latches a flag on the card's first open and calls `usePrReviews(pr.id)` from there, swapping
+the payload's slice for the full set when it lands. That is the same `["reviews", prId]`
+query the detail page reads, so the click that usually follows a hover is already warm.
+
+Two consequences worth knowing before changing either: adding a per-PR findings endpoint is
+unnecessary — `GET /pulls/:id/reviews` already returns all of them — and `FindingsCell` no
+longer holds to "hovering costs no request", so a change there is a change to list traffic.
 
 ## Tool & Library Notes
 
@@ -277,6 +328,31 @@ attribute.
 - `RunFindings` reuses `countBySeverity` from `SeverityFilterBar/helpers.ts` rather than
   tallying its own. That is not tidiness: a private tally would reintroduce the crash in
   Recurring Errors & Fixes above, because `SEV` still has no fallback.
+
+### 2026-08-01
+
+- The findings card became interactive on both surfaces: it scrolls, it stays open while
+  hovered, and every `file:line` links to that file on GitHub at the PR's head sha. Four
+  coupled changes were needed, not the one obvious `pointerEvents` removal — see What
+  Doesn't Work above.
+- `MonoLink` from `@devdigest/ui` was the obvious primitive for the link and the wrong one:
+  it hardcodes `fontSize: 13` and takes no `style`, so it cannot carry the card's two-span
+  elision layout (`itemPath` ellipsis + `itemLine` `flexShrink: 0`). A local `FileRef.tsx`
+  renders the anchor with the card's own styles and keeps `stopPropagation` + `_blank`.
+- "Infinite scroll" is progressive rendering, not pagination: `FindingsPreview` renders 10
+  at a time and grows by 10 from an `onScroll` handler firing ~160px (two items) early.
+  Deliberately a scroll handler rather than `IntersectionObserver` — jsdom ships no
+  `IntersectionObserver`, and the suite mocks nothing of the sort. Testing it does need the
+  geometry asserted onto the element by hand (`Object.defineProperty` for `scrollHeight` /
+  `clientHeight` / `scrollTop`), since jsdom lays nothing out.
+- The severity order and the ranking moved into `components/findings-preview/helpers.ts` as
+  `SEVERITY_LEVELS` + `rankFindings`; `SeverityFilterBar/constants.ts` now re-exports the
+  list and `RunFindings/helpers.ts` is gone. The list cell would otherwise have had to
+  import from the detail route's `_components/`, which is backwards. Ranking now breaks ties
+  by `id` — see the root `INSIGHTS.md` for why that matters across the two packages.
+- Verified against real data only: the largest PR in this workspace carries 3 findings, so
+  the >10 scroll path is covered by tests and not by the browser. No rows were seeded to
+  make the card look fuller.
 
 ## Open Questions
 

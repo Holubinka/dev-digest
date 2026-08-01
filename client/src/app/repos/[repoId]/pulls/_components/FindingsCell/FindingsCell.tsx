@@ -1,6 +1,12 @@
 /* FindingsCell — the list's FINDINGS column: one count per severity, plus a
-   read-only card on hover/focus previewing the worst few findings behind them.
-   Everything comes from the list payload, so hovering costs no request.
+   scrollable card on hover/focus listing the findings behind them, each linked
+   to its file on GitHub.
+
+   The counts and the worst three findings ride along on the list payload, so the
+   column paints and the card opens without a request. Opening it then fetches
+   that PR's full review history once, so the card can scroll past those three —
+   and it is the same query the detail page reads, so the click that usually
+   follows lands on a warm cache.
 
    The widget itself is shared with the PR timeline's run row; this file is only
    the adapter from `PrMeta` to it. */
@@ -8,13 +14,41 @@
 
 import React from "react";
 import { useTranslations } from "next-intl";
-import { FindingsPreview, type SeverityCount } from "@/components/findings-preview";
+import {
+  FindingsPreview,
+  rankFindings,
+  type SeverityCount,
+} from "@/components/findings-preview";
+import { usePrReviews } from "@/lib/hooks";
 import type { PrMeta } from "@/lib/types";
 import { FINDINGS_FIELDS } from "../../constants";
 import { s } from "./styles";
 
-export function FindingsCell({ pr }: { pr: PrMeta }) {
+export function FindingsCell({
+  pr,
+  repoFullName,
+}: {
+  pr: PrMeta;
+  /** `owner/repo`, so each finding in the card can link to its file. */
+  repoFullName?: string | null;
+}) {
   const t = useTranslations("prReview");
+
+  // Latches on the first open. Re-arming it on close would re-run the query
+  // every time the cursor crossed the row.
+  const [opened, setOpened] = React.useState(false);
+  const handleOpenChange = React.useCallback((open: boolean) => {
+    if (open) setOpened(true);
+  }, []);
+  const { data: reviews } = usePrReviews(opened ? pr.id : null);
+
+  const findings = React.useMemo(
+    () =>
+      rankFindings(
+        reviews ? reviews.flatMap((r) => r.findings) : (pr.findings_top ?? []),
+      ),
+    [reviews, pr.findings_top],
+  );
 
   const counts: SeverityCount[] = FINDINGS_FIELDS.map(({ sev, field }) => ({
     sev,
@@ -30,9 +64,12 @@ export function FindingsCell({ pr }: { pr: PrMeta }) {
   return (
     <FindingsPreview
       counts={counts}
-      findings={pr.findings_top ?? []}
+      findings={findings}
       header={t("list.findings.total", { count: total })}
       ariaLabel={counts.map(({ sev, n }) => `${n ?? 0} ${sev.toLowerCase()}`).join(", ")}
+      repoFullName={repoFullName}
+      headSha={pr.head_sha}
+      onOpenChange={handleOpenChange}
     />
   );
 }
