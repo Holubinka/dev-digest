@@ -34,6 +34,8 @@ export function ReviewRunAccordion({
   targetRunId = null,
   targetNonce = 0,
   severity = null,
+  active = true,
+  onActivate,
 }: {
   review: ReviewRecord;
   /** The agent_runs row behind this review — carries cost + token counts. */
@@ -48,6 +50,10 @@ export function ReviewRunAccordion({
   targetNonce?: number;
   /** PR-level severity filter — narrows this run's findings list. */
   severity?: SeverityLevel | null;
+  /** Whether this run's findings list owns the j/k/a/d shortcuts. */
+  active?: boolean;
+  /** Fired when the reader interacts here, making this the active run. */
+  onActivate?: () => void;
 }) {
   const [open, setOpen] = React.useState(defaultOpen);
   const rootRef = React.useRef<HTMLDivElement | null>(null);
@@ -56,7 +62,8 @@ export function ReviewRunAccordion({
       setOpen(true);
       rootRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // `targetNonce` is deliberately a dependency the body never reads — it is
+    // what re-fires the scroll when the same run is clicked twice.
   }, [targetRunId, targetNonce, review.run_id]);
   // A collapsed accordion would make the severity filter look inert — the run
   // is only still on screen because it holds a finding at that level.
@@ -72,6 +79,10 @@ export function ReviewRunAccordion({
     <div
       ref={rootRef}
       id={review.run_id ? `review-run-${review.run_id}` : undefined}
+      // Capture phase: touching a finding's Accept button inside also claims
+      // the shortcuts, before the click does its own work.
+      onPointerDownCapture={onActivate}
+      onFocusCapture={onActivate}
       style={{
         border: "1px solid var(--border)",
         borderRadius: 10,
@@ -168,6 +179,7 @@ export function ReviewRunAccordion({
             repoFullName={repoFullName}
             headSha={headSha}
             severity={severity}
+            active={active}
           />
         </div>
       )}
