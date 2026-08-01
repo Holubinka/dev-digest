@@ -193,6 +193,20 @@ describe("FindingsPreview", () => {
     expect(screen.getByTitle("src/config.ts:12").tagName).toBe("SPAN");
   });
 
+  // `findings.file` is agent-written text. A path that would resolve out of the
+  // repo gets no link rather than a link the citation does not describe.
+  it("shows an unlinkable path as plain text, still citing it in full", () => {
+    renderPreview({
+      repoFullName: "acme/dev-digest",
+      headSha: "abc123",
+      findings: [{ ...FINDING, file: "../../../../attacker/repo/blob/main/README.md" }],
+    });
+    fireEvent.mouseEnter(screen.getByLabelText(LABEL));
+    const cited = screen.getByTitle("../../../../attacker/repo/blob/main/README.md:12");
+    expect(cited.tagName).toBe("SPAN");
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+  });
+
   it("tells the caller when the card opens, so it can load the rest", () => {
     const onOpenChange = vi.fn();
     renderPreview({ onOpenChange });

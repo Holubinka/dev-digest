@@ -93,6 +93,32 @@ closes unless the event came from inside the card; and `onClick={(e) => e.stopPr
 on the card. Note that once the cursor is *inside* the card no `mouseleave` fires on the
 trigger at all — React's enter/leave are containment-based — so only the gap needs the timer.
 
+### Appending untrusted text to an absolute URL cannot change its origin — dot segments are the exception
+
+**Symptom.** A 2026-08-01 review flagged the finding citation links as an open redirect:
+`findings.file` is agent-written text, so a value like `//evil.com` or `https://phishing.com`
+was said to send the reader off-site.
+
+**Cause.** It does not, and the reason is worth keeping. `githubBlobUrl` interpolates into
+`` `https://github.com/${repo}/blob/${sha}/${encPath(file)}` `` — the origin is a literal
+*prefix*, and `file` lands at the end of an already-absolute URL. Appending cannot introduce
+an origin, and `encPath` percent-encodes each segment, so a scheme colon survives only as
+`https%3A`. All three payloads resolve to origin `https://github.com`. Verify a claim like
+this with `new URL(built).origin` before changing anything.
+
+What encoding does **not** neutralise is `.` and `..`: `encodeURIComponent` returns both
+unchanged, and the browser resolves them before it sends the request. A `file` of
+`../../../../attacker/repo/blob/main/README.md` turned the link into
+`https://github.com/attacker/repo/…` — still github.com, so not an open redirect, but the
+citation read as one repo and opened another.
+
+**Fix.** `lib/github-urls.ts` rejects any component carrying a whole `.`/`..` segment and
+returns `undefined`; `FileRef` already renders an unlinked citation when it has no href, so
+this degrades to plain text instead of to a misleading link. Repo-relative diff paths never
+contain dot segments, so there are no false positives. Tests in `lib/github-urls.test.ts`
+cover both halves — the payloads that are safe *because* of encoding, and the ones that are
+not.
+
 ### `Node.contains` throws on a non-Node and silently kills the handler around it
 
 **Symptom.** The findings card was supposed to close on page scroll and did so in jsdom, but
