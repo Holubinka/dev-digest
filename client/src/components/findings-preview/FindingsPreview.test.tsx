@@ -97,6 +97,20 @@ describe("FindingsPreview", () => {
     expect(screen.getByText("Hardcoded Stripe secret key")).toBeInTheDocument();
   });
 
+  // The pending close is a `setTimeout`, so unmounting mid-grace-period must not
+  // leave it armed to fire against a dead instance.
+  it("disarms a pending close when it unmounts", () => {
+    vi.useFakeTimers();
+    const { unmount } = renderPreview();
+    const group = screen.getByLabelText(LABEL);
+    fireEvent.mouseEnter(group);
+    fireEvent.mouseLeave(group);
+    expect(vi.getTimerCount()).toBe(1);
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(() => settleClose()).not.toThrow();
+  });
+
   it("closes once the cursor leaves the card itself", () => {
     vi.useFakeTimers();
     renderPreview();
