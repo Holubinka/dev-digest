@@ -204,6 +204,26 @@ unstaged. Prose counts as part of the change — `CLAUDE.md`, `e2e/CLAUDE.md` an
 `e2e/INSIGHTS.md` each named 5434 and had to be corrected, or the commit would have
 documented a port the committed `docker-compose.yml` does not publish.
 
+### Killing the web server takes the API down with it — `dev.sh` traps EXIT
+
+**Symptom.** On 2026-08-01, restarting only the Next.js server on :3000 left
+`curl localhost:3001/health` refusing connections a few minutes later, with nothing in the
+API's own output to explain it. The browser then showed six `ERR_CONNECTION_REFUSED`.
+
+**Cause.** `scripts/dev.sh:97-113` starts the API as `SERVER_PID`, installs
+`trap cleanup EXIT INT TERM`, and then blocks on the web server in the foreground. Kill the
+web process and the script's foreground command returns, the EXIT trap fires, and `cleanup`
+kills the API. The two look independent — different ports, different package managers — but
+one `trap` binds them.
+
+**Fix.** Restart the API explicitly after touching :3000:
+`cd server && pnpm exec tsx src/server.ts` (not `pnpm start`, which wants a build first).
+Better, do not kill the web server under `dev.sh` at all — stop the script and re-run it, or
+start a standalone `pnpm start` on another port. Related: deleting `client/.next` while a
+`next start` is serving from it leaves the process alive but returning 500 for every route
+with `Cannot find module './vendor-chunks/*.js'` — rebuild *and* restart, and free the port
+before rebuilding or `next start` dies on `EADDRINUSE`.
+
 ## Recurring Errors & Fixes
 
 ### The two vendored `shared/` copies drift silently
