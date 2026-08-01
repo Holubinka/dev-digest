@@ -12,7 +12,23 @@ what has gone stale is a separate, deliberate pass.
 
 ## What Works
 
-_Nothing recorded yet._
+### Proving an agent actually loaded an instruction file, instead of assuming it
+
+Ask a headless session for a fact that exists in exactly one file and nowhere else in the
+repo. `claude -p --model claude-haiku-4-5-20251001 "Reply with ONLY the first heading line
+of the project instructions you were given."` returns `# DevDigest` when the root file
+loaded. For a module file, pipe a prompt that first reads a source file in that folder:
+`echo "Read server/src/platform/config.ts. Then answer: do migrations run on boot?" |
+claude -p --model claude-haiku-4-5-20251001 --allowedTools Read`. A correct quote of
+"Migrations do not run on boot" can only come from `server/AGENTS.md`.
+
+Two flags matter. The prompt must go through stdin when `--allowedTools` is present —
+`claude -p --allowedTools Read "prompt"` fails with *"Input must be provided either through
+stdin or as a prompt argument"* because the tool list swallows the positional argument.
+And `--model claude-haiku-4-5-20251001` keeps the probe cheap; memory discovery does not
+depend on the model.
+
+Used on 2026-08-01 to gate the `AGENTS.md` migration before renaming all five files.
 
 ## What Doesn't Work
 
@@ -141,6 +157,24 @@ easy to miss.
 
 **Fix.** Use pnpm in `server/` and `client/`, npm in `reviewer-core/` and `e2e/`.
 
+### Claude Code discovers `CLAUDE.md` only — never `AGENTS.md`
+
+**Symptom.** Renaming the instruction files to `AGENTS.md` for cross-tool portability
+switches the whole L01 context layer off for Claude Code. Nothing errors; the agent simply
+stops knowing the conventions.
+
+**Cause.** The loader in 2.1.220 reads exactly `<dir>/CLAUDE.md`, `<dir>/.claude/CLAUDE.md`,
+`<dir>/CLAUDE.local.md` and `<dir>/.claude/rules/`, and filters nested module files by
+basename against `["CLAUDE.md", "CLAUDE.local.md"]`. The binary's only other mention of
+`AGENTS.md` belongs to the Codex-config importer, which copies `AGENTS.md` *into*
+`CLAUDE.md`. Confirm on any version with
+`strings -a "$(readlink -f "$(which claude)")" | grep -oE '.{200}CLAUDE\.local\.md.{200}'`.
+
+**Fix.** Keep `AGENTS.md` as the real file and commit `CLAUDE.md` beside it as a symlink
+(`ln -s AGENTS.md CLAUDE.md`, git mode `120000`). The loader follows it, in the root and in
+nested modules alike — both verified 2026-08-01. Do not replace the symlink with a regular
+file; see [`specs/01-agents-md-migration.md`](specs/01-agents-md-migration.md).
+
 ### Staging part of a file is unavailable to an agent — edit the unwanted line instead
 
 **Symptom.** One file carries both a change that must ship and one that must not.
@@ -231,6 +265,22 @@ only with a registered key: `ssh -T git@github.com` answered `Permission denied
   5432, and four doc lines were corrected to match. The push then failed on token scope
   before going through; see Recurring Errors & Fixes.
 
+### 2026-08-01
+
+- Migrated the five instruction files to `AGENTS.md`, each shadowed by a committed
+  `CLAUDE.md` symlink. The symlink was proven to resolve — root and nested — before the
+  other four files were touched, because the failure mode is silent.
+- `git add -A server` swept five pre-existing unrelated modifications into the index
+  (`server/.env.example`, `server/README.md`, `server/docker-compose.yml`,
+  `server/drizzle.config.ts`, `server/src/platform/config.ts`). `git restore --staged` on
+  each put them back. Stage by explicit path when the tree already carries unrelated work —
+  the same hazard the staging entry under Tool & Library Notes describes.
+- Historical files kept the old name deliberately: `specs/L01`, `specs/L02`, this file's
+  earlier entries and the plan under `docs/superpowers/plans/`. The symlink keeps every
+  path in them resolvable, and `specs/README.md` forbids rewriting a record.
+
 ## Open Questions
 
-_Nothing recorded yet._
+- `AGENTS.md` standardises instructions but not capabilities. `.claude/skills/*` and the
+  `engineering-insights` skill stay Claude-only, so a Codex or Cursor session in this repo
+  gets the conventions without the tooling built on them. No portable format exists yet.

@@ -2,8 +2,8 @@
 
 How the packages talk to each other, and how a review is produced end to end.
 
-For the conventions that govern editing each package, read its `CLAUDE.md` (start at
-[`../CLAUDE.md`](../CLAUDE.md)). This file explains the *shape* of the system; it is not
+For the conventions that govern editing each package, read its `AGENTS.md` (start at
+[`../AGENTS.md`](../AGENTS.md)). This file explains the *shape* of the system; it is not
 a place for rules.
 
 ## Package topology

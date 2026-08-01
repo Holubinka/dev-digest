@@ -41,9 +41,11 @@ Each package has its own README with deeper diagrams:
 [`reviewer-core`](reviewer-core/README.md) (review pipeline) ·
 [`e2e`](e2e/README.md).
 
-Working with an AI agent? Start at **[`CLAUDE.md`](CLAUDE.md)** — it is the map of
+Working with an AI agent? Start at **[`AGENTS.md`](AGENTS.md)** — it is the map of
 conventions, gotchas and do-not-touch zones, and it points at everything else. Each
-package has its own `CLAUDE.md` and `INSIGHTS.md` (accumulated debugging knowledge).
+package has its own `AGENTS.md` and `INSIGHTS.md` (accumulated debugging knowledge).
+Every `AGENTS.md` is shadowed by a `CLAUDE.md` symlink, so Claude Code — which discovers
+only `CLAUDE.md` — reads the same file as every other tool.
 
 ## What works on day 1
 
