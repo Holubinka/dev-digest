@@ -69,6 +69,10 @@ tool gets the conventions but not the tooling built on top of them. Windows cont
 would need `core.symlinks=true` for the shim to materialise as a link rather than a text
 file — no concern while development is macOS with Linux CI.
 
+The shim also does not survive a ZIP export: `git archive --format=zip` writes the link
+target as file content, so GitHub's "Download ZIP" yields a nine-byte `CLAUDE.md` reading
+`AGENTS.md`. Tar archives and real checkouts keep the link. Clone, do not download.
+
 ## Acceptance
 
 - `git ls-files -s` reports mode `120000` for all five `CLAUDE.md` entries.

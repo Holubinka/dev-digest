@@ -146,6 +146,21 @@ placeholder.
 
 ## Tool & Library Notes
 
+### GitHub's "Download ZIP" flattens the `CLAUDE.md` symlinks into 9-byte text files
+
+**Symptom.** Someone who took the repository as a ZIP instead of cloning it gets a
+`CLAUDE.md` whose entire content is the string `AGENTS.md`. Claude Code loads those nine
+bytes as the project instructions and behaves as if the repo had none.
+
+**Cause.** `git archive --format=zip` has no symlink representation, so it writes the link
+target as file content. `git archive` to **tar** keeps the link (`lrwxrwxrwx`), and so does
+any real checkout — verified 2026-08-01 on macOS and in a Linux container
+(`docker run --entrypoint sh alpine/git -c 'git clone /src /tmp/c && ls -l /tmp/c/CLAUDE.md'`).
+
+**Fix.** Clone, do not download. If a ZIP path ever has to be supported, drop the symlinks
+and switch to the pointer-stub variant in
+[`specs/01-agents-md-migration.md`](specs/01-agents-md-migration.md).
+
 ### Mixed package managers across packages
 
 **Symptom.** `pnpm install` in `reviewer-core/` or `e2e/` produces a lockfile the repo
