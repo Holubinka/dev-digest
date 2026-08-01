@@ -8,19 +8,17 @@ import React from "react";
 import { useTranslations } from "next-intl";
 import {
   Icon,
-  SeverityBadge,
   CategoryTag,
   MonoLink,
   ConfidenceNum,
   Button,
   Markdown,
-  type Severity,
   type Category,
 } from "@devdigest/ui";
 import type { FindingRecord, FindingActionKind } from "@devdigest/shared";
-import { SEV_COLOR, SEV_COLOR_FALLBACK } from "./constants";
+import { FindingSeverityBadge, severityColor } from "@/components/severity-badge";
 import { lineLabel } from "./helpers";
-import { githubBlobUrl } from "../../../../../../../lib/github-urls";
+import { githubBlobUrl } from "@/lib/github-urls";
 import { s } from "./styles";
 
 export function FindingCard({
@@ -42,7 +40,7 @@ export function FindingCard({
 }) {
   const t = useTranslations("prReview");
   const [expanded, setExpanded] = React.useState(defaultExpanded ?? false);
-  const sevColor = SEV_COLOR[f.severity] ?? SEV_COLOR_FALLBACK;
+  const sevColor = severityColor(f.severity);
   const fileHref =
     repoFullName && headSha
       ? githubBlobUrl(repoFullName, headSha, f.file, f.start_line, f.end_line)
@@ -55,7 +53,7 @@ export function FindingCard({
     <div data-finding-id={f.id} style={s.card(!!focused, sevColor, muted)}>
       <div onClick={() => setExpanded((e) => !e)} style={s.header}>
         <div style={s.badgeWrap}>
-          <SeverityBadge severity={f.severity as Severity} compact />
+          <FindingSeverityBadge severity={f.severity} compact />
         </div>
         <div style={s.headerMain}>
           <div style={s.titleRow}>
