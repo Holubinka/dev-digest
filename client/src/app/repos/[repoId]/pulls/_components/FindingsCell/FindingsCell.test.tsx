@@ -1,11 +1,29 @@
-import { describe, it, expect, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import React from "react";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
+import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { PrMeta } from "@devdigest/shared";
 import messages from "../../../../../../../messages/en/prReview.json";
 import { FindingsCell } from "./FindingsCell";
 
-afterEach(cleanup);
+const fetchMock = vi.fn();
+
+beforeEach(() => {
+  fetchMock.mockReset();
+  fetchMock.mockResolvedValue({
+    ok: true,
+    status: 200,
+    json: async () => [],
+    text: async () => "[]",
+  });
+  vi.stubGlobal("fetch", fetchMock);
+});
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 const BASE: PrMeta = {
   id: "pr1",
@@ -62,12 +80,20 @@ const CLEAN: PrMeta = {
   findings_top: [],
 };
 
-function renderCell(pr: PrMeta) {
+function renderCell(pr: PrMeta, repoFullName?: string) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <NextIntlClientProvider locale="en" messages={{ prReview: messages }}>
-      <FindingsCell pr={pr} />
-    </NextIntlClientProvider>,
+    <QueryClientProvider client={qc}>
+      <NextIntlClientProvider locale="en" messages={{ prReview: messages }}>
+        <FindingsCell pr={pr} repoFullName={repoFullName} />
+      </NextIntlClientProvider>
+    </QueryClientProvider>,
   );
+}
+
+/** The paths this cell fetches, ignoring anything else the tree asks for. */
+function reviewRequests() {
+  return fetchMock.mock.calls.filter(([url]) => String(url).includes("/reviews"));
 }
 
 describe("FindingsCell", () => {
@@ -101,11 +127,11 @@ describe("FindingsCell", () => {
     expect(screen.getByText("Hardcoded Stripe secret key")).toBeInTheDocument();
   });
 
-  it("hides the card again on mouse leave", () => {
+  it("hides the card again on blur", () => {
     renderCell(REVIEWED);
     const cell = screen.getByLabelText("1 critical, 1 warning, 0 suggestion");
-    fireEvent.mouseEnter(cell);
-    fireEvent.mouseLeave(cell);
+    fireEvent.focus(cell);
+    fireEvent.blur(cell);
     expect(screen.queryByText("Hardcoded Stripe secret key")).not.toBeInTheDocument();
   });
 
@@ -127,5 +153,64 @@ describe("FindingsCell", () => {
     const shown = screen.getByTitle(`${long}:30-45`);
     expect(shown.textContent).toBe("…/_components/FindingsPanel/FindingsPanel.tsx:30-45");
     expect(shown.textContent!.length).toBeLessThan(long.length);
+  });
+
+  it("links a finding to its file when the repo is known", () => {
+    renderCell(REVIEWED, "acme/dev-digest");
+    fireEvent.mouseEnter(screen.getByLabelText("1 critical, 1 warning, 0 suggestion"));
+    expect(screen.getAllByTitle("src/config.ts:12")[0]).toHaveAttribute(
+      "href",
+      "https://github.com/acme/dev-digest/blob/a1b2c3d/src/config.ts#L12",
+    );
+  });
+
+  describe("the rest of the findings", () => {
+    it("costs no request until the card is opened", () => {
+      renderCell(REVIEWED);
+      expect(reviewRequests()).toHaveLength(0);
+    });
+
+    it("is fetched once the card opens, and the payload's slice holds until then", async () => {
+      renderCell(REVIEWED);
+      fireEvent.mouseEnter(screen.getByLabelText("1 critical, 1 warning, 0 suggestion"));
+      // The card is already useful — the list payload carried the worst few.
+      expect(screen.getByText("Hardcoded Stripe secret key")).toBeInTheDocument();
+      await waitFor(() => expect(reviewRequests()).toHaveLength(1));
+      expect(String(reviewRequests()[0]![0])).toContain("/pulls/pr1/reviews");
+    });
+
+    it("replaces the slice with every finding on the PR", async () => {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => [
+          {
+            id: "rev1",
+            findings: [
+              finding("f1", "CRITICAL", "Hardcoded Stripe secret key"),
+              finding("f2", "WARNING", "N+1 query in user list endpoint"),
+              finding("f3", "SUGGESTION", "Extract the retry policy"),
+            ],
+          },
+        ],
+        text: async () => "",
+      });
+      renderCell(REVIEWED);
+      fireEvent.mouseEnter(screen.getByLabelText("1 critical, 1 warning, 0 suggestion"));
+      await waitFor(() =>
+        expect(screen.getByText("Extract the retry policy")).toBeInTheDocument(),
+      );
+      expect(screen.getAllByRole("listitem")).toHaveLength(3);
+    });
+
+    it("is not re-requested every time the cursor crosses the row", async () => {
+      renderCell(REVIEWED);
+      const cell = screen.getByLabelText("1 critical, 1 warning, 0 suggestion");
+      fireEvent.mouseEnter(cell);
+      await waitFor(() => expect(reviewRequests()).toHaveLength(1));
+      fireEvent.blur(cell);
+      fireEvent.mouseEnter(cell);
+      expect(reviewRequests()).toHaveLength(1);
+    });
   });
 });

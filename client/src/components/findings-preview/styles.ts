@@ -3,6 +3,21 @@ import type { CSSProperties } from "react";
 /** Card width, shared with the component's viewport-edge calculation. */
 export const CARD_WIDTH = 380;
 
+/**
+ * Tallest the card ever gets. Load-bearing twice over: it caps the scroll body
+ * below, and the component subtracts it from the trigger's top to decide whether
+ * the card still fits below. One number, or the placement lies about the height.
+ */
+export const CARD_MAX_HEIGHT = 320;
+
+/** The `path:line` citation, shared by the inert and linked spellings. */
+const itemFile: CSSProperties = {
+  display: "inline-flex",
+  fontSize: 12,
+  color: "var(--accent-text)",
+  minWidth: 0,
+};
+
 /** Co-located styles for the severity chips and their hover card. */
 export const s = {
   cell: {
@@ -28,13 +43,17 @@ export const s = {
     top,
     left,
     zIndex: 60,
+    display: "flex",
+    flexDirection: "column",
     width: CARD_WIDTH,
+    maxHeight: CARD_MAX_HEIGHT,
     padding: "10px 0 4px",
     borderRadius: 10,
     border: "1px solid var(--border-strong)",
     background: "var(--bg-elevated)",
     boxShadow: "0 12px 32px rgba(0,0,0,.28)",
-    pointerEvents: "none",
+    // Keeps the scrolling body inside the rounded corners.
+    overflow: "hidden",
   }),
   cardHeader: {
     display: "flex",
@@ -46,6 +65,16 @@ export const s = {
     letterSpacing: "0.06em",
     textTransform: "uppercase",
     color: "var(--text-muted)",
+    // The list below scrolls under it; the header stays put.
+    flexShrink: 0,
+  } satisfies CSSProperties,
+  cardBody: {
+    overflowY: "auto",
+    // A flex child will not shrink below its content, so without this the body
+    // grows past the card's max-height instead of scrolling inside it.
+    minHeight: 0,
+    // Hitting the end of the list must not hand the scroll to the page behind.
+    overscrollBehavior: "contain",
   } satisfies CSSProperties,
   item: (first: boolean): CSSProperties => ({
     padding: "9px 14px",
@@ -76,12 +105,15 @@ export const s = {
     // long repo path would otherwise push straight through the card's edge.
     minWidth: 0,
   } satisfies CSSProperties,
-  itemFile: {
-    display: "inline-flex",
-    fontSize: 12,
-    color: "var(--accent-text)",
-    minWidth: 0,
-  } satisfies CSSProperties,
+  itemFile,
+  /** The same citation as an anchor. Underlines on hover — inline styles have no
+      `:hover`, so the caller tracks it. */
+  itemFileLink: (hover: boolean): CSSProperties => ({
+    ...itemFile,
+    cursor: "pointer",
+    textDecoration: hover ? "underline" : "none",
+    textUnderlineOffset: 2,
+  }),
   /** Only the folders give way — the filename is elided in `shortPath` first. */
   itemPath: {
     overflow: "hidden",

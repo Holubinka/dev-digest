@@ -1,13 +1,13 @@
 # docs/ — repo-wide
 
 Deep explanations of how things work, written for a human reader and linked from
-[`../CLAUDE.md`](../CLAUDE.md) rather than inlined into it.
+[`../AGENTS.md`](../AGENTS.md) rather than inlined into it.
 
 **Goes here:** cross-package architecture, end-to-end flows, decision records, guides
 that outlive a single change.
 
 **Does not go here:** module-specific detail (use `<module>/docs/`), agent conventions
-(use [`../CLAUDE.md`](../CLAUDE.md)), debugging war stories (use
+(use [`../AGENTS.md`](../AGENTS.md)), debugging war stories (use
 [`../INSIGHTS.md`](../INSIGHTS.md)), or anything already explained in a package
 README — link to it instead of copying it.
 

@@ -90,6 +90,8 @@ export function RunHistory({
   runs,
   commits = [],
   findingsByRun,
+  repoFullName,
+  headSha,
   onOpenTrace,
   onGoToReview,
   onDelete,
@@ -102,6 +104,10 @@ export function RunHistory({
    * zeros would claim the run was clean rather than admit we do not know.
    */
   findingsByRun?: Map<string, FindingRecord[]>;
+  /** `owner/repo`, so a finding in the card can link to its file. */
+  repoFullName?: string | null;
+  /** The PR's head sha, so a linked line number still points at the right line. */
+  headSha?: string | null;
   /** Open the trace + log drawer for a run (the logs icon). */
   onOpenTrace: (runId: string) => void;
   /** Jump to this run's inline review accordion below (clicking the agent name). */
@@ -199,7 +205,12 @@ export function RunHistory({
               )}
               {settled &&
                 (findingsByRun?.has(r.run_id) ? (
-                  <RunFindings findings={findingsByRun.get(r.run_id) ?? []} blockers={r.blockers} />
+                  <RunFindings
+                    findings={findingsByRun.get(r.run_id) ?? []}
+                    blockers={r.blockers}
+                    repoFullName={repoFullName}
+                    headSha={headSha}
+                  />
                 ) : (
                   <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
                     {t("runStatus.findings", { count: r.findings_count ?? 0 })}

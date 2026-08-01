@@ -8,7 +8,7 @@ acceptance criteria.
 
 **Does not go here:** how the system already works (that is
 [`../docs/`](../docs/README.md)), agent conventions (that is
-[`../CLAUDE.md`](../CLAUDE.md)), or post-mortems (that is
+[`../AGENTS.md`](../AGENTS.md)), or post-mortems (that is
 [`../INSIGHTS.md`](../INSIGHTS.md)).
 
 Naming: `LNN-topic.md` for course lessons, `NN-topic.md` otherwise.
@@ -22,3 +22,4 @@ implementation; note the divergence instead.
 | [`L01-context-layering.md`](L01-context-layering.md) | Implemented 2026-07-27 |
 | [`L02-engineering-insights.md`](L02-engineering-insights.md) | Implemented 2026-07-27 |
 | [`L04-findings-on-the-pr-list.md`](L04-findings-on-the-pr-list.md) | Implemented 2026-07-28 |
+| [`01-agents-md-migration.md`](01-agents-md-migration.md) | Implemented 2026-08-01 |

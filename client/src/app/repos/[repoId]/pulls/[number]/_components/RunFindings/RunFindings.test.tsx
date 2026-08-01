@@ -4,7 +4,6 @@ import { NextIntlClientProvider } from "next-intl";
 import type { FindingRecord } from "@devdigest/shared";
 import messages from "../../../../../../../../messages/en/prReview.json";
 import { RunFindings } from "./RunFindings";
-import { topFindings } from "./helpers";
 
 afterEach(cleanup);
 
@@ -80,32 +79,31 @@ describe("RunFindings", () => {
     ).not.toThrow();
     expect(screen.getByLabelText("0 critical, 0 warning, 0 suggestion")).toBeInTheDocument();
   });
-});
 
-describe("topFindings", () => {
-  it("ranks worst severity first, then most confident", () => {
-    const out = topFindings(
-      [
-        finding({ id: "sugg", severity: "SUGGESTION", confidence: 0.99 }),
-        finding({ id: "warn-low", severity: "WARNING", confidence: 0.2 }),
-        finding({ id: "warn-high", severity: "WARNING", confidence: 0.8 }),
-        finding({ id: "crit", severity: "CRITICAL", confidence: 0.1 }),
-      ],
-      10,
+  it("lists every finding in the run, not just the worst few", () => {
+    const many = Array.from({ length: 6 }, (_, i) =>
+      finding({ id: `f${i}`, title: `Finding ${i}`, severity: "WARNING" }),
     );
-    expect(out.map((f) => f.id)).toEqual(["crit", "warn-high", "warn-low", "sugg"]);
+    renderRunFindings(many);
+    fireEvent.mouseEnter(screen.getByLabelText("0 critical, 6 warning, 0 suggestion"));
+    expect(screen.getAllByRole("listitem")).toHaveLength(6);
   });
 
-  it("caps the list at the limit", () => {
-    const many = Array.from({ length: 9 }, (_, i) => finding({ id: `f${i}` }));
-    expect(topFindings(many, 3)).toHaveLength(3);
-  });
-
-  it("drops a severity outside the contract rather than ranking it last", () => {
-    const out = topFindings(
-      [finding({ id: "bad", severity: "BOGUS" as FindingRecord["severity"] })],
-      3,
+  it("links a finding to its file when the repo and head sha are known", () => {
+    render(
+      <NextIntlClientProvider locale="en" messages={{ prReview: messages }}>
+        <RunFindings
+          findings={[finding()]}
+          blockers={null}
+          repoFullName="acme/dev-digest"
+          headSha="abc123"
+        />
+      </NextIntlClientProvider>,
     );
-    expect(out).toEqual([]);
+    fireEvent.mouseEnter(screen.getByLabelText("1 critical, 0 warning, 0 suggestion"));
+    expect(screen.getByTitle("src/config.ts:12")).toHaveAttribute(
+      "href",
+      "https://github.com/acme/dev-digest/blob/abc123/src/config.ts#L12",
+    );
   });
 });

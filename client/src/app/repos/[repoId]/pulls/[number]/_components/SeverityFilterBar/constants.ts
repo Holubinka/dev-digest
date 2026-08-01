@@ -1,13 +1,7 @@
-import type { Severity } from "@devdigest/shared";
-
-/**
- * The severities a finding can carry, worst first. `satisfies` ties the list to
- * the shared contract — widen `Severity` there and this stops compiling.
- */
-export const SEVERITY_LEVELS = [
-  "CRITICAL",
-  "WARNING",
-  "SUGGESTION",
-] as const satisfies readonly Severity[];
-
-export type SeverityLevel = (typeof SEVERITY_LEVELS)[number];
+/* The severity order is defined beside the findings card
+   (`@/components/findings-preview`), which both this bar and the PR list rank
+   against. Re-exported here so this folder keeps its own public surface. */
+export {
+  SEVERITY_LEVELS,
+  type SeverityLevel,
+} from "@/components/findings-preview";

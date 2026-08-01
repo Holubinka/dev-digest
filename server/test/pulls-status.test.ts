@@ -102,6 +102,16 @@ describe('topFindings', () => {
     expect(picked.map((p) => p.id)).toEqual(['a', 'b', 'c']);
   });
 
+  // The source query has no ORDER BY, so equal-ranking rows can arrive in any
+  // order. The browser re-ranks the same findings when the card loads the full
+  // set; without the id they would swap places on screen.
+  it('breaks a severity+confidence tie by id, whichever order the rows arrive in', () => {
+    const forward = topFindings([f('aaa', 'WARNING', 0.9), f('bbb', 'WARNING', 0.9)], 4);
+    const reversed = topFindings([f('bbb', 'WARNING', 0.9), f('aaa', 'WARNING', 0.9)], 4);
+    expect(forward.map((p) => p.id)).toEqual(['aaa', 'bbb']);
+    expect(reversed.map((p) => p.id)).toEqual(['aaa', 'bbb']);
+  });
+
   it('drops a severity the contract does not define', () => {
     expect(topFindings([f('a', 'WEIRD', 0.9), f('b', 'WARNING', 0.1)], 3).map((p) => p.id)).toEqual(['b']);
   });

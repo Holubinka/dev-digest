@@ -12,7 +12,23 @@ what has gone stale is a separate, deliberate pass.
 
 ## What Works
 
-_Nothing recorded yet._
+### Proving an agent actually loaded an instruction file, instead of assuming it
+
+Ask a headless session for a fact that exists in exactly one file and nowhere else in the
+repo. `claude -p --model claude-haiku-4-5-20251001 "Reply with ONLY the first heading line
+of the project instructions you were given."` returns `# DevDigest` when the root file
+loaded. For a module file, pipe a prompt that first reads a source file in that folder:
+`echo "Read server/src/platform/config.ts. Then answer: do migrations run on boot?" |
+claude -p --model claude-haiku-4-5-20251001 --allowedTools Read`. A correct quote of
+"Migrations do not run on boot" can only come from `server/AGENTS.md`.
+
+Two flags matter. The prompt must go through stdin when `--allowedTools` is present —
+`claude -p --allowedTools Read "prompt"` fails with *"Input must be provided either through
+stdin or as a prompt argument"* because the tool list swallows the positional argument.
+And `--model claude-haiku-4-5-20251001` keeps the probe cheap; memory discovery does not
+depend on the model.
+
+Used on 2026-08-01 to gate the `AGENTS.md` migration before renaming all five files.
 
 ## What Doesn't Work
 
@@ -130,6 +146,21 @@ placeholder.
 
 ## Tool & Library Notes
 
+### GitHub's "Download ZIP" flattens the `CLAUDE.md` symlinks into 9-byte text files
+
+**Symptom.** Someone who took the repository as a ZIP instead of cloning it gets a
+`CLAUDE.md` whose entire content is the string `AGENTS.md`. Claude Code loads those nine
+bytes as the project instructions and behaves as if the repo had none.
+
+**Cause.** `git archive --format=zip` has no symlink representation, so it writes the link
+target as file content. `git archive` to **tar** keeps the link (`lrwxrwxrwx`), and so does
+any real checkout — verified 2026-08-01 on macOS and in a Linux container
+(`docker run --entrypoint sh alpine/git -c 'git clone /src /tmp/c && ls -l /tmp/c/CLAUDE.md'`).
+
+**Fix.** Clone, do not download. If a ZIP path ever has to be supported, drop the symlinks
+and switch to the pointer-stub variant in
+[`specs/01-agents-md-migration.md`](specs/01-agents-md-migration.md).
+
 ### Mixed package managers across packages
 
 **Symptom.** `pnpm install` in `reviewer-core/` or `e2e/` produces a lockfile the repo
@@ -140,6 +171,24 @@ ship `package-lock.json`. The root README lists only pnpm as a prerequisite, so 
 easy to miss.
 
 **Fix.** Use pnpm in `server/` and `client/`, npm in `reviewer-core/` and `e2e/`.
+
+### Claude Code discovers `CLAUDE.md` only — never `AGENTS.md`
+
+**Symptom.** Renaming the instruction files to `AGENTS.md` for cross-tool portability
+switches the whole L01 context layer off for Claude Code. Nothing errors; the agent simply
+stops knowing the conventions.
+
+**Cause.** The loader in 2.1.220 reads exactly `<dir>/CLAUDE.md`, `<dir>/.claude/CLAUDE.md`,
+`<dir>/CLAUDE.local.md` and `<dir>/.claude/rules/`, and filters nested module files by
+basename against `["CLAUDE.md", "CLAUDE.local.md"]`. The binary's only other mention of
+`AGENTS.md` belongs to the Codex-config importer, which copies `AGENTS.md` *into*
+`CLAUDE.md`. Confirm on any version with
+`strings -a "$(readlink -f "$(which claude)")" | grep -oE '.{200}CLAUDE\.local\.md.{200}'`.
+
+**Fix.** Keep `AGENTS.md` as the real file and commit `CLAUDE.md` beside it as a symlink
+(`ln -s AGENTS.md CLAUDE.md`, git mode `120000`). The loader follows it, in the root and in
+nested modules alike — both verified 2026-08-01. Do not replace the symlink with a regular
+file; see [`specs/01-agents-md-migration.md`](specs/01-agents-md-migration.md).
 
 ### Staging part of a file is unavailable to an agent — edit the unwanted line instead
 
@@ -182,6 +231,27 @@ catching content edits as well as added or deleted files. Locally, verify with
 
 `server/src/vendor/shared/` is the source of truth (`reviewer-core` aliases it), but read
 the diff before overwriting — the client copy is not always the stale one.
+
+### The two findings rankers must sort identically, and nothing checks that they do
+
+**Symptom.** Findings reorder on screen while you are reading them. Nothing throws, no test
+fails, and neither package's typecheck notices.
+
+**Cause.** The same findings get ranked twice, in two packages, by two functions written to
+mirror each other: `topFindings` in `server/src/modules/pulls/status.ts` builds the PR
+list's `findings_top`, and `rankFindings` in
+`client/src/components/findings-preview/helpers.ts` re-ranks the full set the hover card
+fetches on open. Both sorted by severity then confidence with no third key. Confidence ties
+constantly (models emit `0.9` and `0.8` over and over) and the server's source query has no
+`ORDER BY` at all, so the first rows swapped places the instant the full set replaced the
+payload's slice.
+
+**Fix.** Both now end with `a.id.localeCompare(b.id)`, making the order total on either
+side. There is a tie test in `server/test/pulls-status.test.ts` and one in
+`client/src/components/findings-preview/helpers.test.ts`, but they are separate suites —
+nothing mechanically enforces the mirror, the way `shared-sync` does for the vendored
+contracts. Changing the ordering in one file means changing it in the other by hand; the
+doc comment on each names its counterpart.
 
 ### A push is rejected for the whole branch when a commit adds a workflow file
 
@@ -231,6 +301,30 @@ only with a registered key: `ssh -T git@github.com` answered `Permission denied
   5432, and four doc lines were corrected to match. The push then failed on token scope
   before going through; see Recurring Errors & Fixes.
 
+### 2026-08-01
+
+- Migrated the five instruction files to `AGENTS.md`, each shadowed by a committed
+  `CLAUDE.md` symlink. The symlink was proven to resolve — root and nested — before the
+  other four files were touched, because the failure mode is silent.
+- `git add -A server` swept five pre-existing unrelated modifications into the index
+  (`server/.env.example`, `server/README.md`, `server/docker-compose.yml`,
+  `server/drizzle.config.ts`, `server/src/platform/config.ts`). `git restore --staged` on
+  each put them back. Stage by explicit path when the tree already carries unrelated work —
+  the same hazard the staging entry under Tool & Library Notes describes.
+- Historical files kept the old name deliberately: `specs/L01`, `specs/L02`, this file's
+  earlier entries and the plan under `docs/superpowers/plans/`. The symlink keeps every
+  path in them resolvable, and `specs/README.md` forbids rewriting a record.
+- Made the findings card interactive (scroll + GitHub links) on both the PR list and the
+  timeline. Almost entirely client work — see `client/INSIGHTS.md` — but it needed one
+  server line: a tie-breaking `id` in `topFindings`, because the browser now re-ranks the
+  same findings. That mirror is the new entry under Recurring Errors & Fixes.
+- The design deliberately added no endpoint. `GET /pulls/:id/reviews` already returns every
+  finding on a PR, so the card reuses it instead of introducing the codebase's first
+  `querystring` route, first keyset cursor and first `useInfiniteQuery`. Worth checking what
+  an existing route already returns before specifying a paginated one.
+
 ## Open Questions
 
-_Nothing recorded yet._
+- `AGENTS.md` standardises instructions but not capabilities. `.claude/skills/*` and the
+  `engineering-insights` skill stay Claude-only, so a Codex or Cursor session in this repo
+  gets the conventions without the tooling built on them. No portable format exists yet.
