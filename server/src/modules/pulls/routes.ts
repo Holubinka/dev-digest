@@ -186,22 +186,7 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
     // render differently, so they must stay distinguishable all the way down.
     const findingsByPr = new Map<string, { counts: SeverityCounts; top: ListFinding[] }>();
     if (prIds.length > 0) {
-      const findingRows = await container.db
-        .select({
-          prId: t.reviews.prId,
-          id: t.findings.id,
-          severity: t.findings.severity,
-          category: t.findings.category,
-          title: t.findings.title,
-          file: t.findings.file,
-          startLine: t.findings.startLine,
-          endLine: t.findings.endLine,
-          confidence: t.findings.confidence,
-          rationale: t.findings.rationale,
-        })
-        .from(t.findings)
-        .innerJoin(t.reviews, eq(t.reviews.id, t.findings.reviewId))
-        .where(inArray(t.reviews.prId, prIds));
+      const findingRows = await container.pullsRepo.findingsForPrs(prIds);
       const byPr = new Map<string, typeof findingRows>();
       for (const f of findingRows) {
         const list = byPr.get(f.prId) ?? [];
