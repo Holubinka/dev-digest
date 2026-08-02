@@ -123,9 +123,51 @@ assert_eq "$(run x "$repo" 'gh pr create' | cut -f1)" '0' 'a fresh full pass let
 rm -rf "$repo"
 
 # --- a blocked verdict stops both ----------------------------------------------
+# No pushBlocked key at all: an older or hand-written verdict must fail closed,
+# which is why the check below is `= false` and not `!= true`.
 repo="$(new_repo)"
 write_verdict "$repo" full blocked
 assert_eq "$(run x "$repo" 'gh pr create' | cut -f1)" '2' 'a blocked verdict stops the PR'
+assert_eq "$(run x "$repo" 'git push' | cut -f1)" '2' \
+  'and a verdict with no pushBlocked key fails closed on the push'
+rm -rf "$repo"
+
+# --- the push/PR split: a Track B critical stops the PR and not the push -------
+# severity.md §"The two sources are not equal": a Track A failure is critical by
+# definition and stops both; a Track B critical is a model's opinion that never
+# reached a `gates`-mode push, and the acceptance run had the security agent
+# grade a real path traversal `minor`, so it is not trustworthy enough to stop
+# one. report.sh decides which is which and records `pushBlocked`.
+patch_verdict() { # repo jq-expr
+  local tmp; tmp="$(mktemp)"
+  jq "$2" "$1/.pr-self-review/latest.json" >"$tmp" && mv "$tmp" "$1/.pr-self-review/latest.json"
+}
+
+repo="$(new_repo)"
+write_verdict "$repo" full blocked
+patch_verdict "$repo" '.pushBlocked = false'
+assert_eq "$(run x "$repo" 'git push' | cut -f1)" '0' \
+  'a blocked verdict whose criticals are all Track B lets the push through'
+res="$(run x "$repo" 'gh pr create')"
+assert_eq "$(printf '%s' "$res" | cut -f1)" '2' 'and still refuses the PR'
+assert_contains "$(printf '%s' "$res" | cut -f2)" 'blocked' 'naming the verdict'
+rm -rf "$repo"
+
+repo="$(new_repo)"
+write_verdict "$repo" full blocked
+patch_verdict "$repo" '.pushBlocked = true'
+assert_eq "$(run x "$repo" 'git push' | cut -f1)" '2' \
+  'a deterministic critical stops the push as well'
+rm -rf "$repo"
+
+# --- but incomplete is never negotiable ----------------------------------------
+# A crashed subagent is not a Track B opinion about a line; it is a review that
+# did not happen. pushBlocked is only ever consulted on `blocked`.
+repo="$(new_repo)"
+write_verdict "$repo" full incomplete
+patch_verdict "$repo" '.pushBlocked = false'
+assert_eq "$(run x "$repo" 'git push' | cut -f1)" '2' \
+  'incomplete blocks the push whatever pushBlocked says'
 rm -rf "$repo"
 
 # --- incomplete blocks, exactly like blocked -----------------------------------

@@ -95,6 +95,10 @@ jq -e . "$LATEST" >/dev/null 2>&1 ||
 
 verdict="$(jq -r '.verdict' "$LATEST")"
 mode="$(jq -r '.mode' "$LATEST")"
+# Fails closed by construction: anything but the literal `false` — a missing
+# key on an older verdict, a null, a string — leaves this set to something
+# other than "false" and the push is refused. Only report.sh writes it.
+push_blocked="$(jq -r '.pushBlocked' "$LATEST")"
 recorded_head="$(jq -r '.headSha' "$LATEST")"
 recorded_hash="$(jq -r '.worktreeHash' "$LATEST")"
 
@@ -133,7 +137,20 @@ if [ "$guard" = pr ] && [ "$mode" != full ]; then
 fi
 
 # --- and, mode aside, the verdict itself must be a pass ---------------------
+# One exception, and it is the whole push/PR split: `blocked` on Track B
+# criticals alone stops `gh pr create` and not `git push`. severity.md says a
+# Track B critical never stops a push — it is a model's opinion, graded by the
+# same machinery that graded a real path traversal `minor` in the acceptance
+# run, and a `gates`-mode push never sees Track B at all. A gate failure, a
+# committed secret, a registry inconsistency — anything deterministic — still
+# refuses both, and report.sh is what tells them apart via `pushBlocked`.
+# Missing or non-`false` means blocked: an older verdict fails closed.
 case "$verdict" in
-  pass)  exit 0 ;;
-  *)     refuse "the last run ended $verdict" ;;
+  pass) exit 0 ;;
+  blocked)
+    if [ "$guard" = push ] && [ "$push_blocked" = false ]; then
+      exit 0
+    fi
+    refuse "the last run ended $verdict" ;;
+  *) refuse "the last run ended $verdict" ;;
 esac

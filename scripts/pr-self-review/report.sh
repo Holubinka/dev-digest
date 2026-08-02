@@ -3,17 +3,21 @@
 # Renders the verdict. Writes .pr-self-review/latest.json for the hook and
 # .pr-self-review/report.md for people, prints the short form, exits 0.
 #
-# Six rules the output obeys:
+# Seven rules the output obeys:
 #   1. no finding without file:line and a source
 #   2. every critical carries one concrete Fix: line
 #   3. skipped files are always printed — a green report with no skipped
 #      list is lying
-#   4. a subagent that failed — or that a `full` run never dispatched over
-#      routed files at all — is visible and forces `incomplete`, which blocks
+#   4. a subagent that failed, one that a `full` run never dispatched over
+#      routed files at all, or a routed domain no agent covered, is visible
+#      and forces `incomplete`, which blocks
 #   5. the report states what it does not do: conventions, not correctness
 #   6. a payload the script cannot read — anything but an object whose
 #      .scope is an object and whose .findings, .gates, .agents and
 #      .scope.skipped are arrays of objects — is `incomplete`, never `pass`
+#   7. a failed gate is a verdict on its own. The verdict reads .gates[].status
+#      as well as .findings, so a report that prints FAIL can never record
+#      `pass` — see the block on that below.
 #
 # Rule 6 guards a whole class rather than one bug. The verdict is computed
 # from those keys, and everything upstream is a chain of jq steps over slurped
@@ -79,6 +83,29 @@
 # run is a real `full` pass. Only routed files unreviewed by any agent trips
 # it, and `mode: "gates"` never does: that mode already means "enough for a
 # push, not enough for a PR", which is exactly what this run is.
+#
+# Rule 7 exists because the verdict used to be computed from .findings alone,
+# and a finding is a droppable thing while a gate status is not. `--freeze`
+# once recorded this repo's two standing `gate registry` criticals into
+# baseline.json; baseline.sh then dropped them from every later payload, and
+# this script printed `FAIL repo registry 2 inconsistent entries` under the
+# header `PR Self-Review — PASS` and wrote `verdict: pass` to disk. Track A is
+# critical by definition and nothing may downgrade it, so the verdict now reads
+# the gate rows themselves: any `.gates[].status == "fail"` blocks, whatever
+# happened to the finding beside it. baseline.sh closes the other half by
+# refusing to freeze a deterministic finding at all.
+#
+# `pushBlocked` is the push/PR split, and it is a field rather than a verdict
+# because the two consumers ask different questions. severity.md: a Track A
+# critical stops `git push` AND `gh pr create`; a Track B critical stops only
+# the PR, because a `gates`-mode run never saw it and because Track B's grading
+# is not trustworthy enough to stop a push — the acceptance run had the
+# security agent grade a real path traversal `minor`. So `verdict` still says
+# `blocked` on any critical (gate.sh refuses a PR on any non-pass), and
+# `pushBlocked` says whether a push must be refused too: true for a broken run,
+# a failed gate, or a critical whose `source` does not begin `agent `. gate.sh
+# consults it ONLY on a `blocked` verdict and treats anything but an explicit
+# `false` as blocking, so an older or hand-written latest.json fails closed.
 #
 # Zero findings print as zero. Inventing one so the run looks worthwhile is
 # prohibited; INSIGHTS.md records that reviews here legitimately find nothing.
@@ -149,21 +176,51 @@ if [ "$input_ok" -eq 1 ]; then
   fi
 fi
 
-# gate.sh appends one line per bypass; a report consumes and clears them, so a
-# bypass is reported exactly once, on the next run after it happened.
+# --- rule 4, third half: a `full` run that covered only some of the diff -----
+# SKILL.md used to call this hole unclosable — "nothing downstream can tell
+# partial coverage from complete". It can: scope.json carries the domain set,
+# so on a `full` run every domain in .scope.routed[].domains must appear in
+# .agents[].name or some routed file was never reviewed by the agent that was
+# supposed to see it. That is the same argument as the second half, one step
+# finer, and it is the shape a real run actually fails in — a five-agent
+# dispatch where one agent was forgotten, not one where none ran.
+#
+# Skipped when `unrun` already fired: with an empty agents[] EVERY domain is
+# uncovered, and two banners saying the same thing blame the wrong step.
+uncovered='[]'
+if [ "$input_ok" -eq 1 ] && [ "$unrun" -eq 0 ]; then
+  uncovered="$(printf '%s' "$payload" | jq -c '
+    if .mode == "full"
+    then ( ([.scope.routed[]? | .domains[]? | select(type == "string")] | unique)
+           - ([.agents[]? | .name? | select(type == "string")]) )
+    else [] end' 2>/dev/null)" || uncovered='[]'
+  [ -n "$uncovered" ] || uncovered='[]'
+fi
+
+# gate.sh appends one line per bypass, scope.sh and gates.sh one per env
+# override; a report consumes and clears the file, so each is reported exactly
+# once — an override on the run it happened, a bypass on the run after.
 bypassed='[]'
 [ -f "$OUT/bypassed" ] && bypassed="$(jq -R . "$OUT/bypassed" | jq -s .)"
 
 latest="$(printf '%s' "$payload" | jq \
   --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson bypassed "$bypassed" \
-  --argjson inputOk "$input_ok" --argjson unrun "$unrun" '
+  --argjson inputOk "$input_ok" --argjson unrun "$unrun" \
+  --argjson uncovered "$uncovered" '
   ( [.findings[] | select(.severity == "critical")] | length ) as $c
+  | ( [.findings[] | select(.severity == "critical")
+       | select( ((((.source // "") | tostring) | startswith("agent ")) | not) )]
+      | length ) as $det
+  | ( [.gates[] | select(.status == "fail")] | length ) as $gatefail
   | ( [.agents[]? | select(.status != "ok")] | length ) as $broken
+  | ( $inputOk == 0 or $broken > 0 or $unrun == 1 or ($uncovered | length) > 0 ) as $incomplete
   | {
       mode: .mode,
-      verdict: (if $inputOk == 0 or $broken > 0 or $unrun == 1 then "incomplete"
-                elif $c > 0 then "blocked"
+      verdict: (if $incomplete then "incomplete"
+                elif $c > 0 or $gatefail > 0 then "blocked"
                 else "pass" end),
+      pushBlocked: ($incomplete or $gatefail > 0 or $det > 0),
+      uncovered: $uncovered,
       baseSha: .scope.base, headSha: .scope.head, worktreeHash: .scope.worktreeHash,
       branch: .scope.branch, generatedAt: $t,
       counts: {
@@ -211,6 +268,24 @@ render() {
     printf '  whole diff; this one covered Track A only, so the verdict is incomplete\n'
     printf '  rather than pass. Either dispatch step 3 and re-run, or record the run\n'
     printf '  honestly as mode "gates" — enough for a push, not enough for a PR.\n'
+  fi
+
+  # Rule 4's third half. Names the domains, because the fix is to dispatch
+  # exactly those and re-run — not to repeat the whole five-agent fan-out.
+  if [ "$(printf '%s' "$uncovered" | jq 'length')" -gt 0 ]; then
+    printf '\nPARTIAL COVERAGE — mode is "full", but %s had routed files and no\n' \
+      "$(printf '%s' "$uncovered" | jq -r 'join(", ")')"
+    printf '  agent in agents[]. A full run means both tracks covered the whole diff,\n'
+    printf '  so the verdict is incomplete rather than pass. Dispatch step 3 for those\n'
+    printf '  domains and re-run, or record the run honestly as mode "gates".\n'
+  fi
+
+  # A blocked verdict that still allows a push is the one verdict a reader can
+  # misjudge, so it says so rather than leaving the hook to surprise them.
+  if [ "$(printf '%s' "$latest" | jq -r '.verdict')" = blocked ] &&
+     [ "$(printf '%s' "$latest" | jq -r '.pushBlocked')" = false ]; then
+    printf '\nEvery critical here came from Track B, so this stops `gh pr create` and\n'
+    printf 'not `git push` — see severity.md. Fix them before opening the PR.\n'
   fi
 
   printf '\nGATES\n'

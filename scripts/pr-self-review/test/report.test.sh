@@ -60,6 +60,96 @@ assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.counts.critical' '1' 
   'and the critical is still counted, not swallowed'
 rm -rf "$repo"
 
+# --- rule 7: a printed FAIL can never be a recorded pass -----------------------
+# The C1 defect, in the shape it was measured in: a report printing
+# `FAIL repo registry 2 inconsistent entries` under the header
+# `PR Self-Review — PASS`, with `verdict: pass` on disk. The verdict was
+# computed from .findings alone, and a finding is a droppable thing — `--freeze`
+# had dropped these. A gate status is not droppable, so the verdict reads it.
+repo="$(make_repo)"
+out="$(cd "$repo" && printf '%s' "$(payload gates '[]' '[]')" |
+  jq '.gates = [{package:"repo",name:"registry",status:"fail",detail:"2 inconsistent entries"}]' |
+  bash "$REPORT")"
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'blocked' \
+  'a failed gate blocks even with no finding beside it'
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.pushBlocked' 'true' \
+  'and it stops the push, because Track A is critical by definition'
+assert_contains "$out" 'FAIL' 'the report still prints the failure'
+rm -rf "$repo"
+
+# --- the push/PR split: which critical stops which command ---------------------
+# severity.md: a Track A critical stops `git push` AND `gh pr create`; a Track B
+# critical stops only the PR. gate.sh refuses a PR on any non-pass verdict, so
+# the verdict stays `blocked` for both and `pushBlocked` is what separates them.
+# Track B's grading is not trustworthy enough to stop a push — the acceptance
+# run had the security agent grade a real path traversal `minor`.
+agentcrit='{"severity":"critical","source":"agent security · security §path traversal","file":"client/src/a.tsx","line":1,"message":"traversal","fix":"normalize the path"}'
+repo="$(make_repo)"
+out="$(cd "$repo" && printf '%s' "$(payload full "[$agentcrit]" "$okagent")" | bash "$REPORT")"
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'blocked' \
+  'a Track B critical still blocks the PR'
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.pushBlocked' 'false' \
+  'but not the push'
+assert_contains "$out" 'not `git push`' 'and the report says which command it stops'
+rm -rf "$repo"
+
+repo="$(make_repo)"
+( cd "$repo" && printf '%s' "$(payload full "[$crit]" "$okagent")" | bash "$REPORT" >/dev/null )
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.pushBlocked' 'true' \
+  'a gate-sourced critical stops the push too'
+rm -rf "$repo"
+
+repo="$(make_repo)"
+scopeflag='{"severity":"critical","source":"gate scope","file":".env","line":1,"message":"a committed .env can only be a secret","fix":"git rm --cached .env"}'
+( cd "$repo" && printf '%s' "$(payload full "[$scopeflag]" "$okagent")" | bash "$REPORT" >/dev/null )
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.pushBlocked' 'true' \
+  'and so does a committed secret, which is deterministic too'
+rm -rf "$repo"
+
+repo="$(make_repo)"
+( cd "$repo" && printf '%s' "$(payload full '[]' '[{"name":"frontend","status":"failed","files":2}]')" |
+  bash "$REPORT" >/dev/null )
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.pushBlocked' 'true' \
+  'an incomplete run stops the push whatever the findings say'
+rm -rf "$repo"
+
+# --- rule 4's third half: a full run that covered only some domains ------------
+# SKILL.md called this hole unclosable. scope.json carries the domain set, so a
+# `full` run whose .scope.routed[].domains are not all present in .agents[].name
+# reviewed some routed file with nobody. It is the shape a real dispatch fails
+# in: five agents where one was forgotten, not zero agents.
+repo="$(make_repo)"
+out="$(cd "$repo" && printf '%s' "$(payload full '[]' "$okagent")" |
+  jq '.scope.routed += [{path:"server/src/modules/x/routes.ts",domains:["backend","security"],lines:[1]}]' |
+  bash "$REPORT")"
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'incomplete' \
+  'a domain with routed files and no agent is not a pass'
+assert_contains "$out" 'PARTIAL COVERAGE' 'and the report says so'
+assert_contains "$out" 'backend' 'naming the domains that were never covered'
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.uncovered | sort | join(",")' \
+  'backend,security' 'and recording them for the next run'
+rm -rf "$repo"
+
+repo="$(make_repo)"
+out="$(cd "$repo" && printf '%s' "$(payload full '[]' "$okagent")" |
+  jq '.scope.routed += [{path:"server/src/modules/x/routes.ts",domains:["backend"],lines:[1]}]
+      | .agents += [{name:"backend",status:"ok",files:1}]' | bash "$REPORT")"
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'pass' \
+  'every routed domain covered is a pass'
+case "$out" in
+  *'PARTIAL COVERAGE'*) assert_eq 'marked' 'not marked' 'full coverage is not a coverage gap' ;;
+  *)                    assert_eq 'not marked' 'not marked' 'full coverage is not a coverage gap' ;;
+esac
+rm -rf "$repo"
+
+repo="$(make_repo)"
+out="$(cd "$repo" && printf '%s' "$(payload gates '[]' '[]')" | bash "$REPORT")"
+case "$out" in
+  *'PARTIAL COVERAGE'*) assert_eq 'marked' 'not marked' 'a gates run is never a coverage gap' ;;
+  *)                    assert_eq 'not marked' 'not marked' 'a gates run is never a coverage gap' ;;
+esac
+rm -rf "$repo"
+
 # --- a gates run records its mode, so the PR hook can refuse it ----------------
 repo="$(make_repo)"
 ( cd "$repo" && printf '%s' "$(payload gates '[]' '[]')" | bash "$REPORT" >/dev/null )

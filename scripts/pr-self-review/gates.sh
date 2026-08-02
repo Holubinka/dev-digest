@@ -9,10 +9,33 @@
 #
 set -euo pipefail
 
+# Captured before cd, exactly as gate.sh does it and for the same reason: the
+# reviewed repo need not be the repo these scripts live in. registry.sh used to
+# be resolved as "$ROOT/scripts/pr-self-review/registry.sh" — run against any
+# other repository that was `bash: ... No such file or directory`, exit 127
+# under `set -e`, and since every gate result is printed in one jq at the very
+# end, the whole of Track A vanished with ZERO output and no error the caller
+# could see. The test suite never caught it because gates.test.sh was the one
+# file that ran in the developer's own checkout.
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
 scope="$(cat)"
+
+# PR_SELF_REVIEW_RUNNER replaces every gate command with one program of the
+# caller's choosing — `PR_SELF_REVIEW_RUNNER=/usr/bin/true` turns all nine
+# package gates green. It exists for the tests, and an override that can forge
+# Track A must not be able to do it silently, so it is recorded the same way
+# PR_SELF_REVIEW_SKIP is: one line in .pr-self-review/bypassed, which report.sh
+# folds into latest.json and prints. That directory is gitignored, so writing
+# here cannot move worktreeHash.
+if [ -n "${PR_SELF_REVIEW_RUNNER:-}" ]; then
+  mkdir -p .pr-self-review
+  printf '%s PR_SELF_REVIEW_RUNNER=%s — every package gate ran this instead of its own command\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$PR_SELF_REVIEW_RUNNER" >>.pr-self-review/bypassed
+fi
 in_scope() { printf '%s' "$scope" | jq -e --arg p "$1" '.packages | index($p) != null' >/dev/null; }
 
 # package<TAB>name<TAB>command
@@ -47,6 +70,11 @@ fail() { # package name command output
 while IFS=$'\t' read -r pkg name cmd; do
   [ -n "${pkg:-}" ] || continue
 
+  # `repo` gates are not package-scoped: the vendor mirror compares the two
+  # copies of shared/, and one-sided drift is exactly the case where only one
+  # package is in the diff. Drop this condition and the mirror gate reports
+  # `skip` for every branch that does not touch a file named repo/… — which is
+  # every branch. seam.test.sh and gates.test.sh both pin that it runs.
   if [ "$pkg" != "repo" ] && ! in_scope "$pkg"; then
     record "$pkg" "$name" skip "not run — no $pkg file in the diff"
     continue
@@ -73,7 +101,7 @@ $GATES
 EOF
 
 # The registry gate is a script, not a package command, and always runs.
-registry="$(bash "$ROOT/scripts/pr-self-review/registry.sh")"
+registry="$(bash "$HERE/registry.sh")"
 reg_critical="$(printf '%s' "$registry" | jq '[.[] | select(.severity == "critical")] | length')"
 if [ "$reg_critical" -eq 0 ]; then
   record repo registry ok "lock and directories agree"

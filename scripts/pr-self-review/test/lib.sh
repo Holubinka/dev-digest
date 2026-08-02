@@ -40,7 +40,21 @@ finish() {
 }
 
 # The repository these tests live in. Never a legal target for `sgit`.
-REAL_ROOT="$(git rev-parse --show-toplevel)"
+#
+# Derived from BASH_SOURCE, not from the current directory. `git rev-parse
+# --show-toplevel` answers about wherever the suite happens to be run from, and
+# outside a git repository it fails: with no `set -e` here, REAL_ROOT was then
+# the empty string and the `[ "$top" = "$REAL_ROOT" ]` guard below could never
+# match anything — the guard silently switched itself off in exactly the
+# situation it exists for. This walk cannot fail and cannot come back empty.
+LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REAL_ROOT="$(cd "$LIB_DIR/../../.." && pwd)"
+
+# And the repository the suite was *launched* from, when that is a different
+# one — running these tests from another checkout must not make that checkout
+# a legal target either. Empty when the cwd is not a git repo, and the guard
+# treats an empty value as "no second root", never as a match.
+CWD_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || printf '')"
 
 # Run git inside a throwaway repo, and refuse anything else.
 #
@@ -62,6 +76,10 @@ sgit() {
   fi
   if [ "$top" = "$REAL_ROOT" ]; then
     printf 'sgit: refusing to mutate the real repository at %s\n' "$REAL_ROOT" >&2
+    exit 1
+  fi
+  if [ -n "$CWD_ROOT" ] && [ "$top" = "$CWD_ROOT" ]; then
+    printf 'sgit: refusing to mutate the repository the suite was launched from, at %s\n' "$CWD_ROOT" >&2
     exit 1
   fi
   git -C "$dir" "$@"

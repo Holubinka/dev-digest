@@ -52,7 +52,33 @@ assert_json "$out" '[.flagged[] | select(.file == ".env")][0].severity' 'critica
 assert_json "$out" '.routed | length' '0' 'a flagged file is never routed'
 rm -rf "$repo"
 
+# --- and so is every other .env variant, plus the conventional secret names -----
+# The pattern used to be `.env|*/.env|*.env` — the bare name and nothing else.
+# `client/.env.local` is the standard Next.js secrets file and this is a
+# Next.js app; it, `.env.production`, `client/.env.development.local`, `id_rsa`
+# and `secrets.json` all fell through to checklist[] and were handed to a
+# subagent as ordinary source files.
+repo="$(make_repo)"
+sgit "$repo" checkout -qb feat/x
+mkdir -p "$repo/client"
+for f in client/.env.local .env.production client/.env.development.local id_rsa secrets.json; do
+  printf 'OPENAI_API_KEY=sk-real\n' >"$repo/$f"
+done
+sgit "$repo" add -Af . && sgit "$repo" commit -qm "secrets"
+
+out="$(cd "$repo" && bash "$SCOPE")"
+for f in client/.env.local .env.production client/.env.development.local id_rsa secrets.json; do
+  assert_json "$out" "[.flagged[] | select(.file == \"$f\")][0].severity" 'critical' \
+    "$f is flagged critical"
+  assert_json "$out" "[.checklist[] | select(. == \"$f\")] | length" '0' \
+    "$f is never handed to a subagent as ordinary source"
+done
+rm -rf "$repo"
+
 # --- .env.example is ordinary, and lands on the checklist -----------------------
+# This also exercises the `.example` guard, which the old pattern made
+# unreachable: nothing ending in `.example` could match `.env|*/.env|*.env` in
+# the first place, so the guard protected nothing. It is live now.
 repo="$(make_repo)"
 sgit "$repo" checkout -qb feat/x
 printf 'OPENAI_API_KEY=\n' >"$repo/.env.example"
@@ -62,6 +88,27 @@ out="$(cd "$repo" && bash "$SCOPE")"
 assert_json "$out" '.flagged | length' '0' '.env.example is not a secret'
 assert_json "$out" '[.checklist[] | select(. == ".env.example")] | length' '1' \
   '.env.example is checklist-only'
+rm -rf "$repo"
+
+# --- PR_SELF_REVIEW_BASE is recorded, because it narrows what can be found ------
+# Measured on a real branch, PR_SELF_REVIEW_BASE=HEAD took routed 61 -> 1 and
+# flagged 2 -> 0: the committed-secret criticals simply stopped existing. A
+# silent narrowing is a bypass whether or not it was meant as one, so it goes
+# in the same file PR_SELF_REVIEW_SKIP does and report.sh prints it.
+repo="$(make_repo)"
+sgit "$repo" checkout -qb feat/x
+printf 'OPENAI_API_KEY=sk-real\n' >"$repo/.env"
+sgit "$repo" add -f .env && sgit "$repo" commit -qm "env"
+
+out="$(cd "$repo" && PR_SELF_REVIEW_BASE=HEAD bash "$SCOPE")"
+assert_json "$out" '.flagged | length' '0' \
+  'PR_SELF_REVIEW_BASE=HEAD really does hide the committed .env'
+assert_contains "$(cat "$repo/.pr-self-review/bypassed" 2>/dev/null || printf none)" \
+  'PR_SELF_REVIEW_BASE=HEAD' 'so the override is written down where the report will show it'
+
+out="$(cd "$repo" && bash "$SCOPE")"
+assert_json "$out" '[.flagged[] | select(.file == ".env")] | length' '1' \
+  'and without the override the same tree still flags it'
 rm -rf "$repo"
 
 # --- an uncommitted edit is in scope, and moves the worktree hash ---------------

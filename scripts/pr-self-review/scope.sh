@@ -18,12 +18,40 @@ branch="$(git rev-parse --abbrev-ref HEAD)"
 head="$(git rev-parse HEAD)"
 base="$(git merge-base "$MAIN" HEAD 2>/dev/null || git rev-list --max-parents=0 HEAD | tail -1)"
 
+# PR_SELF_REVIEW_BASE narrows what a review can possibly see, so it is recorded
+# in the same place PR_SELF_REVIEW_SKIP is: .pr-self-review/bypassed, which
+# report.sh folds into latest.json and prints. Measured on a real branch,
+# `PR_SELF_REVIEW_BASE=HEAD` took routed 61 -> 1 and flagged 2 -> 0, so a
+# committed-secret critical simply stopped existing — a silent narrowing is a
+# bypass whether or not it was meant as one. The directory is gitignored, so
+# writing here cannot move worktreeHash.
+if [ -n "${PR_SELF_REVIEW_BASE:-}" ]; then
+  mkdir -p .pr-self-review
+  printf '%s PR_SELF_REVIEW_BASE=%s — the review diffed against this instead of main\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$PR_SELF_REVIEW_BASE" >>.pr-self-review/bypassed
+fi
+
+# Bounded on purpose. This runs inside gate.sh, which runs as a PreToolUse hook,
+# and a hook that times out is a NON-blocking error in Claude Code: it degrades
+# to allow. So the slow path here is a hole in the gate, not just a slow gate.
+# The old version cat'ed every untracked file whole — one large untracked
+# artefact and the push goes through unreviewed.
+#
+# The cap keeps the hash sensitive to the changes that matter: the byte size is
+# hashed alongside the first 256 KiB, so any growth, truncation or edit within
+# that window still moves it. An edit that changes bytes past 256 KiB while
+# keeping the file exactly the same size is the one thing it can miss, and no
+# source file this review reads is that shape.
+#
+# -z / read -d '' rather than a bare line loop: a filename containing a newline
+# would otherwise be read as two paths and the second `cat` would fail.
+HASH_CAP=262144
 worktree_hash() {
   {
     git diff "$head"
-    git ls-files --others --exclude-standard | while IFS= read -r f; do
-      printf '%s\n' "$f"
-      cat "$f" 2>/dev/null
+    git ls-files --others --exclude-standard -z | while IFS= read -r -d '' f; do
+      printf '%s %s\n' "$f" "$(wc -c <"$f" 2>/dev/null || printf 0)"
+      head -c "$HASH_CAP" "$f" 2>/dev/null
     done
   } | shasum -a 256 | cut -d' ' -f1
 }
@@ -54,11 +82,31 @@ skip_reason() { # path -> reason, or empty when the file is read
 flag_for() { # path -> "severity<TAB>message<TAB>fix", or empty
   local p="$1"
   case "$p" in
-    .env|*/.env|*.env)
-      [ "${p%.example}" = "$p" ] || return 0
-      printf 'critical\ta committed .env can only be a secret\tgit rm --cached %s and move the value into ~/.devdigest/secrets.json' "$p" ;;
-    *.key|*.pem)
+    # Every .env variant, in any directory. The old pattern was `.env|*/.env|*.env`
+    # — the bare name and nothing else. `client/.env.local` is the standard
+    # Next.js secrets file and this is a Next.js app; it, `.env.production` and
+    # `client/.env.development.local` all fell through to checklist[] and were
+    # reviewed as ordinary files.
+    #
+    # The suffix guard below is what keeps `.env.example` out, and it is only
+    # reachable now: under the old pattern nothing ending in `.example` could
+    # match in the first place, so the guard was dead code protecting nothing.
+    .env|.env.*|*/.env|*/.env.*)
+      case "$p" in
+        *.example|*.sample|*.template|*.dist) return 0 ;;
+      esac
+      printf 'critical\t%s is a committed .env — it can only be a secret\tgit rm --cached %s and move the value into ~/.devdigest/secrets.json' "$p" "$p" ;;
+    *.env)
+      printf 'critical\t%s is a committed .env — it can only be a secret\tgit rm --cached %s and move the value into ~/.devdigest/secrets.json' "$p" "$p" ;;
+    # Private keys and the conventional secret filenames. id_rsa and
+    # secrets.json were measured falling through to checklist[]; the latter is
+    # the exact filename CLAUDE.md names as the store secrets belong in.
+    *.key|*.pem|*.p12|*.pfx|*.jks|*.keystore)
       printf 'critical\t%s is a private key\tgit rm --cached %s\n' "$p" "$p" ;;
+    id_rsa|*/id_rsa|id_dsa|*/id_dsa|id_ecdsa|*/id_ecdsa|id_ed25519|*/id_ed25519)
+      printf 'critical\t%s is an SSH private key\tgit rm --cached %s\n' "$p" "$p" ;;
+    secrets.json|*/secrets.json|*.secrets.json|credentials.json|*/credentials.json)
+      printf 'critical\t%s holds secrets by convention — CLAUDE.md keeps them in ~/.devdigest/secrets.json, never in the repo\tgit rm --cached %s and move the values into ~/.devdigest/secrets.json' "$p" "$p" ;;
     server/src/vendor/*|client/src/vendor/*)
       printf 'major\t%s is a vendored copy — both copies must move together\tdiff -r server/src/vendor/shared client/src/vendor/shared' "$p" ;;
     e2e/specs/*.flow.json)

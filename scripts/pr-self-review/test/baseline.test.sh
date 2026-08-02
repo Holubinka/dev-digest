@@ -131,11 +131,71 @@ assert_eq "$code" 0 'a non-string source does not abort the script either'
 assert_json "$out" '.[0].severity' 'minor' 'and it is treated as deterministic'
 rm -rf "$repo"
 
-# --- a frozen finding is dropped whatever produced it --------------------------
+# --- a deterministic finding cannot be frozen, from either side ----------------
+# The C1 defect. `--freeze` is the documented day-one remedy, and it used to
+# freeze whatever it was handed — so freezing this repo's two standing
+# `gate registry` criticals dropped them from every later payload while
+# .gates[] went on reporting `fail`, and report.sh printed
+# `FAIL repo registry 2 inconsistent entries` under the header `PASS`.
+# A Track A failure is critical by definition; a red gate is fixed, not frozen.
+#
+# Both halves are pinned: the freeze records nothing, AND a store that already
+# holds the fingerprint (written by an older freeze, or by hand) cannot drop it
+# either.
 repo="$(make_repo)"
-( cd "$repo" && printf '%s' "$(input "[$flag]")" | bash "$BASELINE" --freeze )
+( cd "$repo" && printf '%s' "$(input "[$flag]")" | bash "$BASELINE" --freeze 2>/dev/null )
+assert_json "$(cat "$repo/.pr-self-review/baseline.json")" 'length' '0' \
+  '--freeze records no deterministic finding'
 out="$(cd "$repo" && printf '%s' "$(input "[$flag]")" | bash "$BASELINE")"
-assert_json "$out" 'length' '0' 'freezing still applies to a gate source'
+assert_json "$out" 'length' '1' 'and the committed-.env critical survives the freeze'
+assert_json "$out" '.[0].severity' 'critical' 'at full severity'
+rm -rf "$repo"
+
+repo="$(make_repo)"
+mkdir -p "$repo/.pr-self-review"
+printf '[{"file":".env","line":1,"message":"a committed .env can only be a secret"}]' \
+  >"$repo/.pr-self-review/baseline.json"
+out="$(cd "$repo" && printf '%s' "$(input "[$flag]")" | bash "$BASELINE")"
+assert_json "$out" 'length' '1' 'a pre-existing baseline entry cannot silence a deterministic finding'
+assert_json "$out" '.[0].severity' 'critical' 'and it still blocks'
+rm -rf "$repo"
+
+# --- a broken payload is passed through, never turned into a clean [] ----------
+# baseline.sh:68 iterated .scope.routed blind: {"scope":null}, {"scope":{}},
+# {"scope":{"routed":"x"}} and a bare null each raised "Cannot iterate over
+# null" and exited 5 with EMPTY stdout — one station upstream of the guard that
+# catches this class. Emitting `[]` here would be worse than the crash: an
+# empty array is indistinguishable from a clean run at every later station.
+# So a findings array that survives is filtered but unanchored, and a findings
+# value that does not is handed on as-is for report.sh rule 6 to refuse.
+repo="$(make_repo)"
+for broken in '{"scope":null,"findings":[FLAG]}' '{"scope":{},"findings":[FLAG]}' \
+              '{"scope":{"routed":"x"},"findings":[FLAG]}'; do
+  payload="${broken/FLAG/$flag}"
+  out="$(cd "$repo" && printf '%s' "$payload" | bash "$BASELINE" 2>/dev/null)"; code=$?
+  assert_eq "$code" '0' "[$broken] does not crash baseline.sh"
+  assert_json "$out" 'length' '1' "[$broken] keeps the finding it was given"
+  assert_json "$out" '.[0].severity' 'critical' "[$broken] keeps it at full severity"
+done
+rm -rf "$repo"
+
+repo="$(make_repo)"
+for broken in 'null' '{"scope":{"routed":[]}}' '{"scope":{"routed":[]},"findings":null}' \
+              '{"scope":{"routed":[]},"findings":"lost"}'; do
+  out="$(cd "$repo" && printf '%s' "$broken" | bash "$BASELINE" 2>/dev/null)"; code=$?
+  assert_eq "$code" '0' "[$broken] does not crash baseline.sh"
+  assert_eq "$(printf '%s' "$out" | jq -r 'if type == "array" then "an array" else "not an array" end')" \
+    'not an array' "[$broken] hands the unreadable value on rather than inventing []"
+done
+rm -rf "$repo"
+
+# --- and a freeze on a broken payload writes nothing at all --------------------
+# The baseline only ever shrinks, so recording one from a truncated payload is
+# unrecoverable. modes.md guards this before the call; this is the second lock.
+repo="$(make_repo)"
+( cd "$repo" && printf '%s' '{"scope":{"routed":[]},"findings":null}' | bash "$BASELINE" --freeze 2>/dev/null )
+assert_eq "$([ -f "$repo/.pr-self-review/baseline.json" ] && printf yes || printf no)" no \
+  'a freeze on an unreadable payload records no baseline'
 rm -rf "$repo"
 
 # --- --freeze writes the baseline ----------------------------------------------

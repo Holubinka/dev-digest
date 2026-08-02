@@ -6,7 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/pr-self-review/gate.sh\""
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/pr-self-review/gate.sh\"",
+            "timeout": 30
           }
         ]
       }
