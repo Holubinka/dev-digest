@@ -20,6 +20,21 @@ describe("isKnownSeverity", () => {
     expect(isKnownSeverity(null)).toBe(false);
     expect(isKnownSeverity(3)).toBe(false);
   });
+
+  /**
+   * The case an ordinary "rejects an unknown string" test cannot reach. The
+   * guard used to read `value in SEV`, and `in` walks the prototype chain, so
+   * every name below answered true on a plain object literal — `SEV[value]`
+   * then resolved to a method on `Object.prototype`. Assert them by name, not
+   * via `Object.getOwnPropertyNames(Object.prototype)`, so the failure says
+   * which key leaked.
+   */
+  it.each(["toString", "constructor", "valueOf", "hasOwnProperty", "__proto__", "isPrototypeOf"])(
+    "rejects the inherited key %s, which the prototype chain answers for",
+    (key) => {
+      expect(isKnownSeverity(key)).toBe(false);
+    },
+  );
 });
 
 describe("severityColor", () => {
@@ -33,6 +48,16 @@ describe("severityColor", () => {
   it("falls back to muted for an out-of-contract severity", () => {
     expect(severityColor("NITPICK")).toBe("var(--text-muted)");
   });
+
+  // Same prototype hole as the guard it delegates to: these used to return
+  // `undefined` typed as `string`, which is worse than the fallback because
+  // nothing downstream can see it coming.
+  it.each(["toString", "constructor", "valueOf", "hasOwnProperty", "__proto__"])(
+    "falls back to muted for the inherited key %s",
+    (key) => {
+      expect(severityColor(key)).toBe("var(--text-muted)");
+    },
+  );
 });
 
 describe("FindingSeverityBadge", () => {
@@ -66,4 +91,18 @@ describe("FindingSeverityBadge", () => {
     render(<FindingSeverityBadge severity="" />);
     expect(screen.getByText("UNKNOWN")).toBeInTheDocument();
   });
+
+  /**
+   * The end-to-end version of the prototype-key case: a row with
+   * `severity='toString'` used to pass the guard, reach `SeverityBadge`, and
+   * throw `Element type is invalid` out of `Icon[undefined]` — not a bad badge,
+   * the whole route. This is the assertion the guard's fix exists for.
+   */
+  it.each(["toString", "constructor", "__proto__", "hasOwnProperty"])(
+    "renders the inherited key %s as muted text instead of taking the route down",
+    (key) => {
+      expect(() => render(<FindingSeverityBadge severity={key} />)).not.toThrow();
+      expect(screen.getByText(key).style.color).toBe("var(--text-muted)");
+    },
+  );
 });
