@@ -7,6 +7,12 @@ what it returns.
 `git push` on its own. That is why it runs first and why a failure ends the run before any
 subagent is dispatched.
 
+It also cannot be argued away downstream. `report.sh` reads `.gates[].status` directly, so a row
+that says `fail` blocks even if the finding beside it was dropped, and `baseline.sh` refuses to
+freeze a deterministic finding in the first place. Both exist because a `--freeze` of two
+`gate registry` criticals once produced a report printing `FAIL repo registry` under the header
+`PASS`. See [severity.md](severity.md).
+
 ## How the runner behaves
 
 `gates.sh` reads `.packages` from the scope object on stdin and runs a gate only when its package

@@ -14,6 +14,7 @@ from, and how it was tested.
 7. [Conflicts this skill resolves](#7-conflicts-this-skill-resolves)
 8. [Version and changelog](#8-version-and-changelog)
 9. [How this skill was tested](#9-how-this-skill-was-tested)
+10. [Environment overrides](#10-environment-overrides)
 
 ## 1. Focus
 
@@ -34,12 +35,12 @@ Scope is the whole repo: every package, every file the branch touched, committed
 
 | File | Lines | Answers |
 |---|---|---|
-| `README.md` | 403 | This card: scope, boundaries, sources, decisions, how it was tested |
-| `SKILL.md` | 351 | When does it run? What is the procedure? Which mode? What must never be reported? |
-| `modes.md` | 158 | How do `--freeze` and `--only critical` differ from a normal run? |
+| `README.md` | 427 | This card: scope, boundaries, sources, decisions, how it was tested, the environment overrides |
+| `SKILL.md` | 357 | When does it run? What is the procedure? Which mode? What must never be reported? |
+| `modes.md` | 170 | How do `--freeze` and `--only critical` differ from a normal run? |
 | `routing.md` | 166 | Which subagent opens which skill, what to look for in the ones with no checklist, what is left out on purpose |
-| `gates.md` | 181 | What is each Track A gate, what does its failure look like, what do I try first? |
-| `severity.md` | 145 | Which of the four levels is this, and what does it stop? |
+| `gates.md` | 187 | What is each Track A gate, what does its failure look like, what do I try first? |
+| `severity.md` | 171 | Which of the four levels is this, and what does it stop? |
 
 `SKILL.md` stays thin because it loads in full whenever the skill activates. The topic files load
 only when the run needs them — a `--gates` run never opens `routing.md`, and a `--full` run
@@ -99,8 +100,8 @@ specific claim taken from it.
 | `specs/03-pr-self-review-skill.md` | the whole design: two tracks, the domain table, the severity model, the verdict file as the seam, and every rejected alternative |
 | `scripts/pr-self-review/scope.sh` | the four buckets and their exact JSON — `routed` / `checklist` / `skipped` / `flagged`, and that `flagged` entries carry `line: 1` |
 | `scripts/pr-self-review/gates.sh` | the ten gates, the `skip` ≠ `ok` distinction, and that gate findings put the package name in `file` |
-| `scripts/pr-self-review/baseline.sh` | that only an `agent `-sourced finding is diff-anchored, and that the freeze fingerprint is `{file, line, message}` |
-| `scripts/pr-self-review/report.sh` | the six trustworthiness rules, that the verdict never travels by exit code, that a `full` run which dispatched no agent over routed files is `incomplete`, and that any payload it cannot read — `.scope` not an object, or `.findings` / `.gates` / `.agents` / `.scope.skipped` not each an array of objects — is `incomplete` too |
+| `scripts/pr-self-review/baseline.sh` | that only an `agent `-sourced finding is diff-anchored *or* freezable, and that the freeze fingerprint is `{file, line, message}` |
+| `scripts/pr-self-review/report.sh` | the seven trustworthiness rules, that the verdict never travels by exit code, that it is computed from `.gates[].status` as well as `.findings`, that a `full` run which dispatched no agent over routed files — or left a routed domain uncovered — is `incomplete`, and that any payload it cannot read — `.scope` not an object, or `.findings` / `.gates` / `.agents` / `.scope.skipped` not each an array of objects — is `incomplete` too |
 | `scripts/pr-self-review/gate.sh` | what the hook actually refuses, and that freshness is the load-bearing half |
 | `scripts/pr-self-review/registry.sh` | the five registry checks and their severities |
 | `.claude/skills/README.md` | the authoring standard: thin `SKILL.md`, one topic file per question, `name` matching the directory, no top-level `version` |
@@ -130,6 +131,35 @@ authoritative in the abstract. That is why a Track A critical and a Track B crit
 different objects, and why an upstream skill's CRITICAL is not ours.
 
 ## 8. Version and changelog
+
+### 1.1.0 — 2026-08-02
+
+The pre-merge review wave. Nothing here changed what the skill reviews; all of it changed what
+the verdict is allowed to say, and where the rules are written.
+
+- **A printed `FAIL` can no longer be a recorded `pass`.** The verdict is computed from
+  `.gates[].status` as well as `.findings`, and `--freeze` records model findings only. Freezing
+  this repo's two standing `gate registry` criticals used to remove them from every later run
+  while the gate row went on saying `fail`.
+- **A Track B critical stops the PR and not the push**, which is what [severity.md](severity.md)
+  always said. `report.sh` records `pushBlocked`; `gate.sh` reads it, `= false` so an older
+  verdict fails closed.
+- **Partial coverage is caught.** A `full` run whose routed domains are not all present in
+  `agents[]` is `incomplete`. §3.6 of `SKILL.md` used to call this hole unclosable.
+- **The committed-secret flag covers every `.env` variant**, plus `id_rsa` and `secrets.json`.
+  It matched the bare name `.env` only, in a Next.js app whose secrets file is
+  `client/.env.local`.
+- **[severity.md](severity.md) stopped restating domain rules.** The dependency rules, the
+  `modules/index.ts` registration rule, the `SecretsProvider` rule, the `*Row` rule and the
+  URL-state rule are now pointers to the one file each lives in — the rule §7 of this card
+  claims and [routing.md](routing.md) §"This file copies no rules" states.
+- **`PR_SELF_REVIEW_BASE` and `PR_SELF_REVIEW_RUNNER` are documented and recorded** — §10.
+- Scripts: `gates.sh` resolves `registry.sh` next to itself rather than through the reviewed
+  repo (it was `exit 127` with zero output in any other repository); `baseline.sh` no longer
+  exits 5 on a malformed `.scope`; `scope.sh`'s worktree hash is bounded, and the hook has a
+  30-second timeout in `.claude/settings.json`.
+- Tests: a seam test running the real five-script chain, and `gates.test.sh` builds a temp repo
+  like every other file. 237 → 329 assertions.
 
 ### 1.0.0 — 2026-08-02
 
@@ -255,10 +285,20 @@ run, and the ones that did not go the way the spec predicted are recorded as the
 
 ### The scripts
 
-`bash scripts/pr-self-review/test/run.sh` — **237 assertions, 0 failures** across six files
-(`baseline` 31, `gate` 28, `gates` 11, `registry` 7, `report` 137, `scope` 23). Now also a CI
-job, `.github/workflows/pr-self-review.yml`, with `fetch-depth: 0` because `scope.sh` needs a
+`bash scripts/pr-self-review/test/run.sh` — **329 assertions, 0 failures** across seven files
+(`baseline` 53, `gate` 34, `gates` 15, `registry` 7, `report` 153, `scope` 36, `seam` 31). Also a
+CI job, `.github/workflows/pr-self-review.yml`, with `fetch-depth: 0` because `scope.sh` needs a
 real merge-base and the suite builds throwaway repos with real branches.
+
+`seam.test.sh` is the newest and the only one that composes the real chain —
+`scope.sh → gates.sh → baseline.sh → report.sh → gate.sh` over a fixture repo holding a committed
+secret, a red gate and two agent findings. It exists because a 130-mutation run scored 37%: every
+other file tests one script against a hand-written fixture of what the previous one is believed to
+emit, so both sides of a contract can drift together. Three contract-breaking mutations passed all
+237 assertions at once — `scope.sh`'s `source:"gate scope"` renamed (a leaked secret comes back as
+a `note`), `report.sh`'s `headSha`/`worktreeHash` renamed (the two fields the hook reads for
+freshness), and `gates.sh`'s repo-gate guard dropped (the vendor mirror silently never runs). All
+three now fail.
 
 ### Track A — the deterministic half
 
@@ -401,3 +441,26 @@ is indistinguishable from a critical never found.
   unknown.
 - Whether Track A's `incomplete`-on-crash path fires against a genuinely crashed subagent rather
   than a hand-written `agents.json` entry.
+
+## 10. Environment overrides
+
+Three variables can weaken the gate. All three are legitimate; none of them is silent. Each
+appends one line to `.pr-self-review/bypassed`, which `report.sh` folds into `latest.json`'s
+`bypassed[]`, prints under `BYPASSED SINCE THE LAST REPORT`, and then deletes — so each is
+reported exactly once.
+
+| Variable | Read by | What it does | Recorded |
+|---|---|---|---|
+| `PR_SELF_REVIEW_SKIP=1` | `gate.sh` | lets one refused push or PR command through without a verdict | on the next run |
+| `PR_SELF_REVIEW_BASE=<ref>` | `scope.sh` | diffs against `<ref>` instead of `main` | on the run itself |
+| `PR_SELF_REVIEW_RUNNER=<prog>` | `gates.sh` | runs `<prog> <package> <gate>` instead of each gate's real command | on the run itself |
+
+`PR_SELF_REVIEW_BASE` is the sharp one, and it was undocumented until this version.
+`PR_SELF_REVIEW_BASE=HEAD` collapses the review to uncommitted changes: measured on
+`feat/findings-severity-filter` it took `routed` from 61 files to 1 and `flagged` from 2 to 0, so
+a committed-secret critical simply stopped existing. It narrows honestly when the branch really
+is based on something other than `main`; it is a bypass in every other use.
+
+`PR_SELF_REVIEW_RUNNER` exists for the test suite — `PR_SELF_REVIEW_RUNNER=/usr/bin/true` turns
+all nine package gates green. The registry gate is a script rather than a package command and
+does not go through it.

@@ -2,7 +2,7 @@
 name: pr-self-review
 description: "Reviews every open change on the branch against this repo's own skills and gates, and writes the verdict a push waits for. Use when running /pr-self-review, when a git push or gh pr create was refused by the PR Self-Review hook, before opening a PR, or when asked to check a branch against the repo conventions. Runs the deterministic gates first (arch, lint, typecheck, tests, vendor mirror, skills registry), then one subagent per domain over the routed files, verifies every critical adversarially, and records .pr-self-review/latest.json. It checks conventions, not correctness."
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   tags: pr-review, self-review, pre-push, gates, subagents, verdict, conventions, blocking-hook
 ---
 
@@ -206,11 +206,12 @@ Three things about that command are load-bearing:
 - **`scope.flagged[]` are findings.** Merge them or a committed `.env` is never reported.
 - **`gates.findings` already contains the registry findings.** Do not call `registry.sh` again.
 
-`baseline.sh` then drops anything frozen in `.pr-self-review/baseline.json`, and demotes any
-**model** finding on a line the branch did not touch to `note` with `anchored: false` — visible,
-unable to block. Deterministic findings are exempt from that rule and keep their severity, which
-is why step 3's output contract insists on the `agent ` prefix: it is the only thing telling
-`baseline.sh` which findings are a model's opinion about a diff line.
+`baseline.sh` then drops any **model** finding frozen in `.pr-self-review/baseline.json`, and
+demotes any model finding on a line the branch did not touch to `note` with `anchored: false` —
+visible, unable to block. Deterministic findings are exempt from both rules and keep their
+severity — they can be neither frozen nor demoted — which is why step 3's output contract insists
+on the `agent ` prefix: it is the only thing telling `baseline.sh` which findings are a model's
+opinion about a diff line.
 
 **6 — Render.**
 
@@ -246,10 +247,12 @@ review that dispatched no subagent at all — the one place a copy-paste defeats
 gate. Pasted the other way round it merely refuses a PR that would have been allowed, costing one
 turn. Cheap error, expensive error; pick the cheap one.
 
-`report.sh` now catches the expensive half of that mistake, but only the half it can see: `full`
-with an empty `agents[]` over a **non-empty** `.routed[]` is recorded as `incomplete` and prints
-`NO SUBAGENT RAN`. A `full` claimed after subagents ran on *some* of the diff is still yours to
-get right — nothing downstream can tell partial coverage from complete.
+`report.sh` catches both halves of that mistake. `full` with an empty `agents[]` over a
+**non-empty** `.routed[]` is recorded as `incomplete` and prints `NO SUBAGENT RAN`. And a `full`
+claimed after subagents ran on *some* of the diff is caught too: `scope.json` carries the domain
+set, so every domain in `.routed[].domains` must appear in `.agents[].name` or the run is
+`incomplete` and prints `PARTIAL COVERAGE` naming the domains that were missed. Dispatch those
+and re-run — the ones already covered do not need repeating.
 
 `report.sh` writes `.pr-self-review/latest.json` for the hook and `.pr-self-review/report.md` for
 people, prints the short form, and always exits 0. **The verdict never reaches you through an
@@ -264,7 +267,10 @@ print, and the verdict is `incomplete` rather than `pass`. Do not paper over it 
 step 6 with a hand-written array: find which step produced the bad shape and fix that.
 
 **7 — Print the report and stop.** Do not fix anything unless asked. If the verdict is `blocked`,
-say which criticals block and where; the user decides what happens next.
+say which criticals block and where, and say **which command** they stop: `latest.json`'s
+`pushBlocked` is `false` when every surviving critical came from a subagent, and that verdict
+stops `gh pr create` while still letting a push through ([severity.md](severity.md)). The user
+decides what happens next.
 
 ## 4. The two modes that needed a decision
 

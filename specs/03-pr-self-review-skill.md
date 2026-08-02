@@ -20,6 +20,29 @@
 - **The finding cache by file-content hash (§"Modes and cost control") is not built.**
   `--only critical` covers the same need with a re-run. Task 9's timing found Track A at 12–14 s
   and Track B at ~5 minutes, so if a cache is ever added it belongs on Track B.
+- **`--freeze` records model findings only, and the verdict reads `.gates[].status`.** §Baseline
+  says the baseline freezes findings, without qualification. Freezing all of them let the
+  documented day-one remedy remove this repo's two standing `gate registry` criticals from every
+  later run, and a report then printed `FAIL repo registry 2 inconsistent entries` under the
+  header `PASS`. A Track A failure is critical by definition (§Severity), so it can be neither
+  frozen nor demoted, and a failed gate row now blocks on its own.
+- **The push/PR split is a `pushBlocked` field in `latest.json`, not a fourth verdict.**
+  §Severity says a Track B critical stops only `gh pr create`; the hook used to refuse a push on
+  any non-`pass`. `verdict` still says `blocked` for both — `gate.sh` refuses a PR on anything
+  but `pass` — and `pushBlocked` is what the push consults, read as `= false` so an older
+  verdict fails closed.
+- **A `full` run must cover every routed domain.** Beyond the spec: `scope.json` carries the
+  domain set, so `.scope.routed[].domains` minus `.agents[].name` must be empty or the run is
+  `incomplete` and prints `PARTIAL COVERAGE`. A five-agent fan-out with one agent forgotten was
+  otherwise indistinguishable from complete coverage.
+- **Tier 2's secret list is wider than `.env`, `*.key`, `*.pem`.** Every `.env` variant in any
+  directory (`client/.env.local` is the standard Next.js secrets file), `id_rsa` and friends,
+  `secrets.json` / `credentials.json`. `*.example`, `*.sample`, `*.template` and `*.dist` are
+  exempt.
+- **`PR_SELF_REVIEW_BASE` and `PR_SELF_REVIEW_RUNNER` are recorded like `PR_SELF_REVIEW_SKIP`.**
+  Both can weaken a run to nothing — `BASE=HEAD` took a real branch from 61 routed files to 1 —
+  so each appends a line to `.pr-self-review/bypassed` and appears in `latest.json`. Documented
+  in the skill's `README.md` §10.
 
 **What the acceptance run measured**, in full, including the criteria that were not met:
 `.superpowers/sdd/2026-08-02-pr-self-review/task-9-report.md`, with the baseline and the GREEN

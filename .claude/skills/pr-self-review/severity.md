@@ -14,14 +14,21 @@ feeling about how bad something is; it answers one question: **what does this st
 
 **A Track A failure is critical by definition.** `pnpm arch`, `lint`, `typecheck`, the three test
 suites, the vendor mirror and the registry either exit 0 or they do not. Nothing interprets the
-result and nothing may downgrade it. It blocks `git push` as well as the PR, because
-`gate.sh` refuses a push on any non-`pass` verdict.
+result and nothing may downgrade it. It blocks `git push` as well as the PR.
 
-That "nothing may downgrade it" is enforced in `baseline.sh`, which anchors a finding to the diff
-**only** when its `source` begins `agent `. A deterministic finding was never about a diff line —
-`gate arch` carries its own known-violations file, `gate registry` is repo-wide, and a
-`gate scope` flag is about a path that is deliberately never routed — so none of them are
-anchored, and none can be quietly demoted.
+"Nothing may downgrade it" is enforced in three places, because two of them were once enough and
+were not:
+
+- `baseline.sh` anchors a finding to the diff **only** when its `source` begins `agent `. A
+  deterministic finding was never about a diff line — `gate arch` carries its own
+  known-violations file, `gate registry` is repo-wide, and a `gate scope` flag is about a path
+  that is deliberately never routed — so none of them are anchored.
+- `baseline.sh` also **freezes and drops only model findings**. `--freeze` used to record
+  whatever it was handed, so freezing this repo's two standing `gate registry` criticals removed
+  them from every later run. A red gate is fixed, not frozen.
+- `report.sh` computes the verdict from `.gates[].status` as well as `.findings`. A gate that
+  reports `fail` blocks whatever became of the finding beside it — which is what stops a report
+  from printing `FAIL repo registry` under the header `PASS`, as one did.
 
 **A Track B critical must survive an adversarial verifier.** A model finding that stops the
 user's work has to earn it, so the burden of proof sits on the finding: a second subagent is
@@ -30,49 +37,53 @@ a `verifier` line. What does not becomes `major` — visible in the report, bloc
 [SKILL.md](SKILL.md) §3.4.
 
 The consequence is worth stating plainly: a Track B critical stops only `gh pr create`, never a
-push, because a `gates`-mode run never saw it.
+push. Two reasons, and the second is the stronger: a `gates`-mode run never saw it, and Track B's
+grading is not trustworthy enough to stop work — the acceptance run had the `security` agent find
+a real path traversal and grade it `minor`. `report.sh` records which half a critical came from
+in `pushBlocked`, and `gate.sh` reads it.
 
 ## critical
 
 Track A: **any failed gate.** See [gates.md](gates.md).
 
-Track B, each subject to the verifier:
+Track B, each subject to the verifier. **This file does not restate the rules — it says what
+level they land at and where each one is written.** A third copy of a rule is a third thing to
+drift, and this repo pays that bill twice over in `vendor/shared/` already.
 
-- **A dependency-rule violation** — Drizzle outside a `repository.ts`, `container.db` in a
-  route, anything in `adapters/` importing `modules/`. `onion-architecture` §7 is the list.
-- **A secret reachable from code** — a value in `AppConfig` or `process.env` that belongs to
-  `SecretsProvider`, or a key committed in any file. `scope.sh` flags a committed `.env`, `.key`
-  or `.pem` before a subagent ever sees it.
-- **An OWASP finding**: injection, authorization bypass, path traversal, SSRF. Commit `1d5348d`
-  is this repo's own path-traversal case — a finding link whose path resolved out of the repo.
-- **One-sided drift between the two `vendor/shared` copies.** Both copies move together or
-  neither does.
-- **A Fastify module added without registration in `server/src/modules/index.ts`.** Modules are
-  registered by hand here; nothing autoloads them, so an unregistered module is a route that
-  silently does not exist.
-- **A test deleted or `skip`ped in the same change that would otherwise have failed it.** The
-  test gate cannot tell this from an honest removal — a reviewer can.
-- **A change to a skill pinned in `skills-lock.json`.** Flagged by `scope.sh`.
-- **A `CLAUDE.md` that stopped being a symlink to its folder's `AGENTS.md`.**
+| A finding of this kind | is critical because | the rule itself lives in |
+|---|---|---|
+| A dependency-rule violation | the arch gate cannot see all of them | `onion-architecture` §7 — its own list |
+| A secret reachable from code | it is the one mistake that cannot be undone by a later commit | `CLAUDE.md` §"Non-default conventions"; `scope.sh`'s `flag_for` flags the committed files before a subagent sees them |
+| An OWASP finding — injection, authorization bypass, path traversal, SSRF | it is exploitable as written | the `security` skill. Commit `1d5348d` is this repo's own path-traversal case |
+| One-sided drift between the two `vendor/shared` copies | type-checking cannot see it | `CLAUDE.md` §"Non-default conventions"; the `repo vendor` gate measures it |
+| A Fastify module added without hand-registration | nothing autoloads them here, so the route silently does not exist | `CLAUDE.md` §"Non-default conventions"; `onion-architecture` |
+| A change to a skill pinned in `skills-lock.json` | it is a pinned upstream copy | `CLAUDE.md` §"Do not touch"; flagged by `scope.sh` |
+| A `CLAUDE.md` that stopped being a symlink to its `AGENTS.md` | Claude Code discovers only `CLAUDE.md` | `CLAUDE.md` §"Do not touch" |
+
+One entry has no other home, so it is written here: **a test deleted or `skip`ped in the same
+change that would otherwise have failed it.** The test gate cannot tell that from an honest
+removal — a reviewer can.
 
 Every critical carries one concrete `fix`. "Consider reviewing this" is not a fix; `move the
 query into pulls/repository.ts` is.
 
 ## major
 
-Fix before the PR. Does not block.
+Fix before the PR. Does not block. Same rule as above: the level is decided here, the rule is
+not repeated here.
 
-- A checklist violation from `frontend-architecture` or `onion-architecture` that no gate
-  enforces — a `*Row` type leaving its module, a service building its own repository, a `'use
-  client'` on a layout instead of a leaf.
-- **New behaviour with no test.** From `superpowers:test-driven-development`.
-- Anything named `use*` that calls no hook.
-- Shareable state held in `useState` where it belongs in the URL.
-- A new route absent from the API map in `server/README.md`.
-- A `vendor/` path in the diff at all, or a changed `e2e/specs/*.flow.json` — both flagged by
-  `scope.sh` as "the change itself is the finding", so the contents are never reviewed. The
-  vendor one escalates to critical only when the mirror gate confirms the two copies disagree.
-- A `SKILL.md` over 500 lines, from the registry gate.
+| A finding of this kind | the rule itself lives in |
+|---|---|
+| A checklist violation that no gate enforces | the `Review checklist` of `frontend-architecture` or `onion-architecture` |
+| New behaviour with no test | `superpowers:test-driven-development` |
+| A hook-shaped name that uses no hook, or shareable state kept out of the URL | `react-best-practices`, `frontend-architecture` |
+| A new route absent from the API map | `server/README.md` |
+| A `SKILL.md` over 500 lines | `.claude/skills/README.md`, measured by the registry gate |
+
+One more, again with no other home: **a `vendor/` path in the diff at all, or a changed
+`e2e/specs/*.flow.json`.** Both are flagged by `scope.sh` as "the change itself is the finding",
+so the contents are never reviewed. The vendor one escalates to critical only when the mirror
+gate confirms the two copies disagree.
 
 ## minor
 
@@ -111,9 +122,14 @@ over a key prop.
 
 | Verdict | Set when | `git push` | `gh pr create` |
 |---|---|---|---|
-| `pass` | no critical, every agent ok | allowed | allowed **only if** `mode` is `full` |
-| `blocked` | one or more criticals survive | refused | refused |
-| `incomplete` | any agent status is not `ok`; **or a `full` run dispatched no agent over routed files**; **or the payload was not something `report.sh` could read** | refused | refused |
+| `pass` | no critical, no failed gate, every routed domain covered by an agent that reported `ok` | allowed | allowed **only if** `mode` is `full` |
+| `blocked`, `pushBlocked: true` | a critical from Track A — a failed gate, a `gate scope` flag, a registry inconsistency | refused | refused |
+| `blocked`, `pushBlocked: false` | every surviving critical came from a subagent | **allowed** | refused |
+| `incomplete` | any agent status is not `ok`; **or a `full` run dispatched no agent over routed files**; **or a `full` run left a routed domain with no agent**; **or the payload was not something `report.sh` could read** | refused | refused |
+
+`pushBlocked` is a field, not a fourth verdict, so that `gate.sh` keeps refusing a PR on any
+non-`pass` and only the push consults it. It is read as `= false`, never `!= true`: a verdict
+written before the field existed, or by hand, fails closed and refuses the push.
 
 `incomplete` outranks `blocked` deliberately: if a crashed subagent counted as a pass, breaking
 a subagent would be the cheapest way through the gate.
@@ -123,6 +139,12 @@ reviewed than one that crashed. `mode: "full"` with an empty `agents[]` over a *
 `.scope.routed` is Track A wearing the mode a PR requires, and `gate.sh` checks the mode and
 never the coverage. An empty `agents[]` over an empty `routed[]` is untouched — a diff of nothing
 but lockfiles routes no file, and that run really did cover everything there was.
+
+The third trigger is the same argument at the resolution a real run fails at. `scope.json`
+carries the domain set, so on a `full` run every domain in `.scope.routed[].domains` must appear
+in `.agents[].name`; the difference is recorded in `.uncovered` and printed as
+`PARTIAL COVERAGE`. A five-agent fan-out where one agent was forgotten is far likelier than one
+where none ran, and it used to be indistinguishable from complete coverage.
 
 The third is the same argument turned on the pipeline itself. `report.sh` computes the verdict
 from `.findings`, `.gates`, `.agents` and `.scope`, and everything upstream is a chain of `jq`
@@ -141,5 +163,9 @@ it.
 
 Freshness sits on top of all three. A verdict is only usable while `headSha` and `worktreeHash`
 still match the working tree, so one edit after a pass makes it stale and the hook refuses again.
-`PR_SELF_REVIEW_SKIP=1` bypasses everything and is recorded in the next report — a gate with no
-override gets deleted the first time it is wrong during an urgent push.
+
+Three environment variables can weaken all of this, and each is recorded in `latest.json`'s
+`bypassed[]` and printed in the report — `PR_SELF_REVIEW_SKIP=1` on the run after it is used,
+the other two on the run itself. A gate with no override gets deleted the first time it is wrong
+during an urgent push; an override nobody can see is worse than no gate at all. They are listed
+in [README.md](README.md) §10.

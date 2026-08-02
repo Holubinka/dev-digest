@@ -14,6 +14,13 @@
 # The suite is hermetic: every test runs inside a `mktemp -d` repository, and
 # run.sh compares this repository's HEAD and branch list before and after as a
 # canary. It once escaped for real.
+#
+# That claim was false for one round. gates.test.sh ran in the developer's own
+# checkout rather than a temp repo, and both the canary and lib.sh's guard were
+# resolved from the current directory instead of BASH_SOURCE — so the suite was
+# 0 passed, 11 failed when run from any other repository, and the canary watched
+# the wrong tree. Both are BASH_SOURCE-derived now, which is also why this job
+# passes when the runner's working directory is not what a test expects.
 name: pr-self-review scripts
 
 on:

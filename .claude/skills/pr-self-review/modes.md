@@ -27,11 +27,23 @@ jq -n --slurpfile s "$TMP/scope.json" --slurpfile g "$TMP/gates.json" \
 Then **stop**. There is no step 6: a freeze writes no `latest.json`, so it grants no verdict and
 unblocks nothing. Say what was frozen and that `/pr-self-review` must be run again for a verdict.
 
-Two things to say out loud when you do it. The fingerprint is `{file, line, message}`, and a
-Track A finding stores twenty lines of raw command output in `message` — so freezing a gate
-failure almost never re-matches on the next run. Freeze is for Track B findings and Tier-2 flags;
-a red gate gets fixed, not frozen. And the file only ever shrinks: re-freezing to clear a new
-finding is the one thing this baseline cannot survive.
+Three things to say out loud when you do it.
+
+**A freeze records model findings only** — `source` beginning `agent `. `baseline.sh` drops
+everything else on the way in, and its stderr line says how many of how many it kept, so a freeze
+that looks smaller than the run is working correctly. It refuses them because a deterministic
+finding is critical by definition and nothing may downgrade it: freezing this repo's two standing
+`gate registry` criticals is exactly how a report came to print `FAIL repo registry` under the
+header `PASS`. A red gate gets fixed, a committed secret gets removed; neither gets frozen. The
+filter side refuses the same class, so an older `baseline.json` holding such a fingerprint cannot
+silence it either.
+
+The fingerprint is `{file, line, message}`, and a Track A finding stores twenty lines of raw
+command output in `message` — so even before that rule, freezing a gate failure almost never
+re-matched on the next run.
+
+And the file only ever shrinks: re-freezing to clear a new finding is the one thing this baseline
+cannot survive.
 
 **`--only critical`.** Read the previous verdict **before** anything overwrites it:
 
