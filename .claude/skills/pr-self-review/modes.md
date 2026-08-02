@@ -78,8 +78,8 @@ payload — so `report.sh` records it and the next run reads it back. A bare
 No `latest.json` means there is no last run to narrow — say so and run `--full` instead. Then:
 
 - Steps 1 and 2 run **in full**. Track A is seconds, and it is the half that blocks a push.
-- Steps 3 and 4 cover only the routed files listed in `$TMP/recheck`, and only the domains those
-  files carry.
+- Steps 3 and 4 cover only the routed files listed in `$TMP/recheck` — both Track B agents, as
+  ever, since neither is partitioned. Narrowing a re-check narrows the files, never the roster.
 - Step 5 **carries forward** the previous run's subagent findings for every file that was *not*
   re-checked, merged with the new ones. Dropping them is how repeatedly narrowing a re-check
   turns a blocked branch green without a line being fixed. Gate and `gate scope` findings are not

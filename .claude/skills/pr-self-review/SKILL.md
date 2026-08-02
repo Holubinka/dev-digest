@@ -1,8 +1,8 @@
 ---
 name: pr-self-review
-description: "Reviews every open change on the branch against this repo's own skills and gates, and writes the verdict a push waits for. Use when running /pr-self-review, when a git push or gh pr create was refused by the PR Self-Review hook, before opening a PR, or when asked to check a branch against the repo conventions. Runs the deterministic gates first (arch, lint, typecheck, tests, vendor mirror, skills registry), then one subagent per domain over the routed files, verifies every critical adversarially, and records .pr-self-review/latest.json. It checks conventions, not correctness."
+description: "Reviews every open change on the branch against this repo's own skills and gates, and writes the verdict a push waits for. Use when running /pr-self-review, when a git push or gh pr create was refused by the PR Self-Review hook, before opening a PR, or when asked to check a branch against the repo conventions. Runs the deterministic gates first (arch, lint, typecheck, tests, vendor mirror, skills registry), then two subagents — security and conventions — over the routed files, verifies every critical adversarially, and records .pr-self-review/latest.json. It checks conventions, not correctness."
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
   tags: pr-review, self-review, pre-push, gates, subagents, verdict, conventions, blocking-hook
 ---
 
@@ -24,7 +24,7 @@ reviewed, and the verdict it wrote is stale before anyone reads it.
 |---|---|
 | **This file** | When it runs, the four modes, the seven-step procedure, the two rules that live only here |
 | [modes.md](modes.md) | The procedures for `--freeze` and `--only critical` — the freeze snippet, and the carry-forward that a narrowed re-check must not lose |
-| [routing.md](routing.md) | Which skills each domain subagent opens, what to look for in the ones with no checklist, and the skills deliberately left out |
+| [routing.md](routing.md) | Which files reach Track B at all, what each of the two agents opens, and the skills deliberately left out |
 | [gates.md](gates.md) | The ten Track A gates: the command, what a failure looks like, the first thing to try |
 | [severity.md](severity.md) | The four levels with this repo's own examples, and what each one blocks |
 | [README.md](README.md) | Scope, the boundary with `/code-review`, sources, version, how this was tested |
@@ -95,7 +95,8 @@ bash scripts/pr-self-review/scope.sh > "$TMP/scope.json"
 ```
 
 Pure function over the working tree, ~2s, always exits 0. It returns `routed[]` (files a
-subagent reviews, each with the `domains` that must see it and the `lines` the branch touched),
+subagent reviews, each with the `domains` that must see it — the Track B roster, the same on
+every entry since neither agent is partitioned — and the `lines` the branch touched),
 `checklist[]` (read, but no skill applies), `skipped[]` (never read, always reported), and
 `flagged[]` (the change itself is the finding — a committed `.env`, a one-sided `vendor/`
 edit, an edit to a `skills-lock.json`-pinned skill). If `.branch` is `main`, stop.
@@ -112,44 +113,65 @@ the push, and subagents would be paid for nothing. `--gates` skips them too. In 
 already left `findings.json` and `agents.json` as `[]`, so go straight to step 5 and change
 nothing else. Read failures with [gates.md](gates.md).
 
-**3 — One subagent per domain, in parallel.**
+**3 — Two subagents over the routed diff, in parallel.**
 
-The domains present:
+Track B is two agents. **Neither is partitioned** — both are given every file in `routed[]`.
+
+| Agent | Opens | Is there for |
+|---|---|---|
+| `security` | the `security` skill | the OWASP shapes: injection, authorization bypass, path traversal, SSRF, a secret in the diff. The only findings the severity model lets block |
+| `conventions` | the three skills that ship a real `Review checklist` — [routing.md](routing.md) §2 | running those checklists against the diff, as written |
+
+That table is the roster. Adding a third agent is a row here, a row in `routing.md` §1 and a
+name in `scope.sh`'s `TRACK_B`; nothing else in the pipeline knows an agent by name.
+
+The file list, identical for both:
 
 ```sh
-jq -r '[.routed[].domains[]] | unique[]' "$TMP/scope.json"
+jq '.routed' "$TMP/scope.json"
 ```
 
-The file list for one of them:
+There is no per-domain slice any more. `.routed[].domains` carries the same pair on every entry
+— it is the roster `report.sh` checks the run against in step 6, not a routing decision. The five
+partitioned domains that used to live there (`frontend`, `frontend-tests`, `backend`, `data`,
+`core`) were deleted after the acceptance run measured them at 509k tokens for twelve findings,
+none blocking, with the one finding worth having coming from a `Review checklist`
+([README.md](README.md) §9).
 
-```sh
-jq --arg d frontend '[.routed[] | select(.domains | index($d))]' "$TMP/scope.json"
-```
-
-Dispatch them per `superpowers:dispatching-parallel-agents` — all of them in **one** message, so
-they actually run concurrently. `security` sits on every routed file by design and is the one
-agent that is not partitioned.
+Dispatch both per `superpowers:dispatching-parallel-agents` — in **one** message, so they
+actually run concurrently.
 
 Each subagent's brief carries, and carries nothing else:
 
-- its own file list, with the `lines` array — **a finding must land on a line the branch
+- the routed file list, with the `lines` array — **a finding must land on a line the branch
   touched**, or `baseline.sh` will demote it in step 5;
 - an instruction to read the relevant `<module>/INSIGHTS.md` **first**. That file records
   failures that already cost someone time here, which no upstream skill knows;
-- the skills named for its domain in [routing.md](routing.md), and nothing else;
+- its own skills from [routing.md](routing.md), and nothing else;
 - the precedence rule and the empty-report rule from §5, quoted;
 - the output contract: **a JSON array and no prose**, each element
   `{severity, source, file, line, message, fix}`. `fix` is one concrete action;
 - **the four legal `severity` values, quoted into the brief: `critical`, `major`, `minor`,
-  `note`.** Nothing else is a severity. This has to be stated because the subagent is given
-  domain skills and nothing else — it never sees [severity.md](severity.md) — and three of the
-  skills it *is* given (`react-best-practices`, `zod`, `security`) ship CRITICAL / HIGH / MEDIUM
-  vocabularies of their own. A finding returned as `"high"` passes `baseline.sh` untouched, is
-  counted in none of `report.sh`'s four buckets and printed in none of its four sections: it
-  lands in `latest.json` and is invisible everywhere a human looks. Tell the agent to map its
-  skill's own label to one of the four before returning;
-- **`source` must begin `agent <domain> · `**, then the skill and section —
-  `agent backend · onion-architecture §3.2`, never "the architecture skill".
+  `note`** — nothing else is a severity — **and the rules for choosing between them.** Both
+  halves, because the names alone were measured and were not enough. Tell the agent to open
+  [severity.md](severity.md) before grading, and quote into the brief:
+
+  > The level is not a feeling about how bad something is. It answers one question: **what does
+  > this stop?** An OWASP finding — injection, authorization bypass, path traversal, SSRF — is
+  > `critical` here even when its blast radius looks bounded. An upstream skill's own
+  > CRITICAL / HIGH / MEDIUM label ranks a rule's importance in general; it is not this scale.
+  > Map it through `severity.md` before returning.
+
+  This is the acceptance run's most expensive defect. The `security` agent found a real path
+  traversal, described it correctly, and graded it **`minor`** — because only the four *names*
+  ever reached the brief and the agent fell back on its own skill's impact reasoning. `minor`
+  blocks nothing and never reaches step 4, so a critical graded down is indistinguishable from a
+  critical never found. The vocabulary rule still matters on its own: a finding returned as
+  `"high"` passes `baseline.sh` untouched, is counted in none of `report.sh`'s four buckets and
+  printed in none of its four sections — it lands in `latest.json` invisible;
+- **`source` must begin `agent security · ` or `agent conventions · `** — those two literals and
+  no others — then the skill and section: `agent conventions · onion-architecture §7`, never
+  "the architecture skill".
 
   That prefix is not decoration. `baseline.sh` anchors a finding to the diff **only** when its
   `source` starts with `agent `, because that is what marks it as a model's opinion about a
@@ -158,10 +180,13 @@ Each subagent's brief carries, and carries nothing else:
 - read-only. It reports; it does not edit.
 
 Collect the arrays into `$TMP/findings.json`, and build `$TMP/agents.json` as
-`[{name, status, files}]` — one entry per dispatched agent, `files` being how many it was given.
-An agent that crashed, timed out, or returned something that is not a JSON array gets a status
-other than `ok`. **Record it honestly.** `report.sh` turns any such agent into the `incomplete`
-verdict, which blocks; hiding it makes breaking a subagent the cheapest way past the gate.
+`[{name, status, files}]` — **one entry per roster agent, and nothing else**: `report.sh`
+compares `agents[]` against the roster in `scope.json` as a set equality, so a missing name and
+a surplus name each record `incomplete`. Step 4's verifiers are not entries. `files` is how many
+the agent was given. An agent that crashed, timed out, or returned something that is not a JSON
+array gets a status other than `ok`. **Record it honestly.** `report.sh` turns any such agent
+into the `incomplete` verdict, which blocks; hiding it makes breaking a subagent the cheapest
+way past the gate.
 
 **4 — Verify every critical adversarially.**
 
@@ -174,7 +199,12 @@ stop work, so the burden of proof sits on the finding.
 - Survived → it stays `critical`, and `verifier` records the confirmation.
 
 Track A findings do not go through this. They are already deterministic — see
-[severity.md](severity.md).
+[severity.md](severity.md). A verifier is **not** an `agents[]` entry — that array is the step-3
+roster, and step 6 reads it as one.
+
+This step has never executed: no Track B run has yet produced a `critical`. Step 3's severity
+rules exist partly to change that, so the first run that reaches here is the first measurement of
+it — treat the outcome as unproven, not as routine.
 
 **5 — Merge, then filter against the baseline.**
 
@@ -249,10 +279,12 @@ turn. Cheap error, expensive error; pick the cheap one.
 
 `report.sh` catches both halves of that mistake. `full` with an empty `agents[]` over a
 **non-empty** `.routed[]` is recorded as `incomplete` and prints `NO SUBAGENT RAN`. And a `full`
-claimed after subagents ran on *some* of the diff is caught too: `scope.json` carries the domain
-set, so every domain in `.routed[].domains` must appear in `.agents[].name` or the run is
-`incomplete` and prints `PARTIAL COVERAGE` naming the domains that were missed. Dispatch those
-and re-run — the ones already covered do not need repeating.
+claimed after only part of Track B ran is caught too: `scope.json` carries the roster, so
+`.agents[].name` must equal `.routed[].domains` exactly. One missing is `incomplete` and prints
+`PARTIAL COVERAGE` naming it — dispatch that one and re-run, the other does not need repeating.
+One too many is `incomplete` as well and prints `UNEXPECTED AGENT`: a name off the roster is
+either a typo for one on it or bookkeeping in the wrong array, and both stop `agents[]`
+describing what reviewed the diff.
 
 `report.sh` writes `.pr-self-review/latest.json` for the hook and `.pr-self-review/report.md` for
 people, prints the short form, and always exits 0. **The verdict never reaches you through an
@@ -326,7 +358,9 @@ Stop when you catch yourself doing any of these.
 |---|---|
 | "Nothing found — I'll add a note so it looks thorough" | §5 — an empty report is the result |
 | "The Drizzle skill says this query is fine" | §5 — the repo skill wins; do not report the upstream rule |
-| "The frontend agent died, I'll just report the other four" | §3.3 — that is the `incomplete` verdict, and it blocks |
+| "The `conventions` agent died, I'll just report `security`" | §3.3 — that is the `incomplete` verdict, and it blocks |
+| "It's a path traversal, but the origin is pinned, so `minor`" | §3.3 — the measured defect. OWASP shapes are `critical` here |
+| "I'll record the verifier in `agents[]` too, for completeness" | §3.3 — `agents[]` is the roster; a surplus name is `incomplete` |
 | "This critical is obvious, skip the verifier" | §3.4 — a false critical stops the user's work |
 | "I'll fix the two criticals while I'm here" | §intro — the verdict is stale the moment you edit |
 | "Track A failed, but let's see what the agents find" | §3.2 — it already blocks; the agents are wasted spend |
@@ -346,10 +380,11 @@ Stop when you catch yourself doing any of these.
 
 - [ ] `.branch` was not `main` (§1)
 - [ ] Track A ran, and a failure stopped Track B before any subagent was dispatched (§3.2)
-- [ ] Every dispatched agent has an entry in `agents[]`, and a broken one says so (§3.3)
+- [ ] `agents[]` is exactly the roster — both agents, nothing else — and a broken one says so (§3.3)
 - [ ] Every subagent `critical` carries a `verifier` line (§3.4)
 - [ ] `scope.flagged[]` was merged into the findings before `baseline.sh` (§3.5)
-- [ ] Every subagent finding's `source` begins `agent <domain> · ` (§3.3)
+- [ ] Every subagent finding's `source` begins `agent security · ` or `agent conventions · ` (§3.3)
+- [ ] The brief carried the severity **rules**, not only the four names (§3.3)
 - [ ] Every finding has `file`, `line`, a `source` naming skill and section, and a `message`
 - [ ] Every surviving `critical` carries one concrete `fix`
 - [ ] No finding restates an upstream rule that a repo skill contradicts (§5)

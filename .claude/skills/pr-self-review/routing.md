@@ -1,35 +1,48 @@
-# Routing — which subagent opens which skill
+# Routing — which files reach Track B, and what its two agents open
 
-Step 3 of [SKILL.md](SKILL.md) dispatches one subagent per domain. This file says what each one
-is given to read.
+Step 3 of [SKILL.md](SKILL.md) dispatches two subagents over the routed diff. This file says
+which files that is, and what each agent is given to read.
 
-**This file copies no rules.** For a skill that ships a review checklist, it points at the
-checklist. For a skill that does not, it carries three to six *questions* aimed at a named
-section — a pointer, never the rule itself. A third copy of a rule is a third thing to drift,
-and this repo already pays that bill twice over in `vendor/shared/`.
+**This file copies no rules.** It points at the checklist a skill ships and stops there. A third
+copy of a rule is a third thing to drift, and this repo already pays that bill twice over in
+`vendor/shared/`.
 
-## 1. Domains
+## 1. What is routed, and to whom
 
-`scope.sh` does the routing, in its `domains_for` function. **That function is the executable
-copy; the table below is the readable one. If they disagree, the script is right.**
+`scope.sh` decides, in its `domains_for` function. **That function is the executable copy; the
+tables below are the readable one. If they disagree, the script is right.**
 
-| A path matching | Domain | Opens |
+Routed — the source of the three packages this repo gates, after `skip_reason` and `flag_for`
+have removed dependencies, build output, generated snapshots, binaries, secrets, vendored copies
+and locked skills:
+
+| A path matching | Routed |
+|---|---|
+| `client/src/**/*.ts(x)`, and `client/**/*.test.ts(x)` outside it | yes |
+| `server/src/**` | yes — **all of it**, not only `modules/`, `adapters/`, `platform/` and `db/` |
+| `reviewer-core/src/**` | yes |
+| `**/contracts/**`, `**/*.schema.ts` | yes, and nothing in this repo matches: there are no `*.schema.ts` files, and every `contracts/` directory sits under `*/vendor/shared/`, which `flag_for` diverts before routing |
+| everything else | no: `checklist[]` |
+
+Both agents get that whole set:
+
+| Agent | Opens | Is there for |
 |---|---|---|
-| `client/**/*.test.ts(x)` | `frontend-tests` | `react-testing-library` |
-| `client/src/**/*.ts(x)` | `frontend` | `frontend-architecture`, `react-best-practices`, `next-best-practices` *(only when `app/`, `layout`, `page` or `'use client'` is in the diff)* |
-| `server/src/{modules,adapters,platform}/**` | `backend` | `onion-architecture`, `fastify-best-practices` *(only when a `routes.ts` or a plugin is touched)* |
-| `server/src/db/**`, `**/schema.ts`, `server/drizzle/*.sql` | `data` | `drizzle-orm-patterns`, `postgresql-table-design` *(only for a new migration or a schema change)* |
-| `reviewer-core/src/**` | `core` | `onion-architecture` — **Core-ring rules only** (§1, §3.8) |
-| `**/contracts/**`, `**/*.schema.ts` | `contracts` | `zod`, `typescript-expert` |
-| every routed file | `security` | `security` |
+| `security` | `security` | injection, authorization bypass, path traversal, SSRF, a secret in the diff. The only Track B findings the severity model lets block |
+| `conventions` | the three checklist skills in §2 | running those checklists against the diff, as written |
 
-Two properties of that table are deliberate and easy to break:
+Three properties are deliberate and easy to break:
 
-- **`security` is appended to every routed file**, so it is the one agent that is not
-  partitioned. It sees the whole reviewed diff and is the only agent that can spot a
-  cross-file problem.
-- **A test file gets `frontend-tests` and not `frontend`.** The first match wins in
-  `domains_for`. Do not "fix" that by giving test files both — a test is not a component.
+- **Neither agent is partitioned.** Both see the whole reviewed diff, so either can spot a
+  cross-file problem. `.routed[].domains` therefore carries the same pair on every entry: it is
+  the roster `report.sh` checks the run against, not a per-file routing decision.
+- **`security` has a rule of its own.** It used to have none — it was *appended* to whichever of
+  five partitioned domains matched, so those five patterns were the routing test itself. Deleting
+  them without replacing the test would have emptied `routed[]` and dispatched both surviving
+  agents over zero files while the run still printed a verdict.
+- **`server/src/**` routes whole.** The old `backend`/`data` split left `server/src/index.ts` and
+  anything else outside those four directories reaching no domain at all — read by nobody. That
+  was a hole, not a scope decision.
 
 Files that reach no domain land in `checklist[]`: `.github/workflows/**`, `scripts/**`,
 `docker-compose.yml`, `*.env.example`, `docs/**`, `specs/**`, `*.md`. Read them, no subagent.
@@ -43,92 +56,42 @@ work the list; nothing here restates it.
 
 | Skill | Section | Given to |
 |---|---|---|
-| `frontend-architecture` | §Review checklist | `frontend` |
-| `onion-architecture` | §7 Review checklist | `backend`, `core` |
-| `typescript-expert` | §Code Review Checklist | `contracts` |
+| `frontend-architecture` | §Review checklist | `conventions` |
+| `onion-architecture` | §7 Review checklist | `conventions` |
+| `typescript-expert` | §Code Review Checklist | `conventions` |
 
-## 3. Skills with no checklist — what to look for
+This section survived the narrowing on evidence, and it is the reason `conventions` exists. The
+one Track B finding in the whole acceptance run that was worth having — a 16-line Drizzle query
+added straight into `pulls/routes.ts` — came from `onion-architecture` §7. All eleven of the
+throwaway findings came from the pointer lists we invented for skills that ship no checklist,
+which is what §3 used to hold and why it is gone. Checklists written to be run against a diff are
+cheap and produced the only result; our invented questions were expensive and produced noise.
 
-Eight of the ten checklist-less skills take part in a review. Each block below points at
-sections *of that skill*; open the section before reporting against it. The other two —
-`mermaid-diagram` and `engineering-insights` — take no part at all, and are in §5.
+`conventions` opens all three over the whole routed diff and skips the ones with nothing to
+apply. `typescript-expert` is the one that had no live trigger of its own — its old domain,
+`contracts`, cannot fire here (§1) — but it is a general TypeScript review checklist and the diff
+is TypeScript, so it is reachable for the first time.
 
-### `react-best-practices` → `frontend`
+## 3. The question lists that used to be here
 
-- §Derive, Don't Store — is anything in `useState` computable from props or query data?
-- §Hooks — does a new hook obey the rules there, and is anything named `use*` that is not one?
-- §Render Factories — is a component defined inside another component's body?
-- §Key Prop Patterns — does a new list key off an index or something unstable?
-- §Conditional Rendering — does `&&` guard a number or a possibly-empty string?
-- §Severity Levels — its CRITICAL / HIGH / MEDIUM labels are **its own**, not ours. Map every
-  finding through [severity.md](severity.md) before reporting it.
+Gone, deliberately. §3 carried three to six invented *questions* per skill for the eight skills
+that ship no checklist — pointers we wrote at their section headings. The acceptance run measured
+what they bought: eleven of Track B's twelve findings came from them, every one of them small
+(an `export *` barrel, two derive-don't-store effects, six test-style items), none blocking, at
+509k tokens across four agents. The twelfth — the only one worth having — came from a real
+`Review checklist`. They were unmeasured when they were written and the one measurement did not
+favour them, so they are not kept as "nearly free".
 
-### `next-best-practices` → `frontend`, only when `app/`, `layout`, `page` or `'use client'` moved
+Two consequences worth knowing:
 
-- §RSC Boundaries — did `'use client'` move up a tree that did not need it?
-- §Async Patterns — are `params`, `searchParams`, `cookies()` and `headers()` awaited?
-- §Data Patterns and §Route Handlers — is the fetch where that section puts it?
-- §Hydration Errors — does the diff introduce one of the causes listed there?
-- §Metadata & OG Images — does a new route export what the section requires?
-
-### `react-testing-library` → `frontend-tests`
-
-- §Query Priority — is the query the highest-priority one actually available?
-- §userEvent — is `fireEvent` used where `userEvent` applies?
-- §Async Testing — a `waitFor` wrapped round a `getBy`, or a `findBy` that should have been one?
-- §Anti-Patterns — does the test assert on implementation rather than behaviour?
-- §What to Test / What to Skip — is the new test in the "skip" column?
-
-### `fastify-best-practices` → `backend`, only when a `routes.ts` or a plugin moved
-
-Its content lives in `rules/*.md`, not in `SKILL.md`. Open the named file, not the index.
-
-- `rules/schemas.md` — does the route declare `schema`, response schema included?
-- `rules/plugins.md` — does a new plugin respect encapsulation? *(Whether it is registered in
-  `modules/index.ts` is ours, not Fastify's — see [severity.md](severity.md).)*
-- `rules/hooks.md` — is a hook doing work that belongs to a handler, or the reverse?
-- `rules/error-handling.md` — is an error swallowed, or re-thrown with its type lost?
-- `rules/testing.md` — is a new route exercised through `inject()`?
-
-### `drizzle-orm-patterns` → `data`
-
-Read the precedence rule in [SKILL.md](SKILL.md) §5 before this one — it decides every conflict
-between this skill and `onion-architecture`.
-
-- §Best Practices — do the new queries follow it?
-- §Constraints and Warnings — does the diff hit one of them?
-- §Quick Reference — right dialect? This repo is Postgres: `pgTable`, `drizzle-orm/pg-core`.
-- §Examples — Example 1 builds the client and runs `db.select()` at module scope, in the same
-  file as the schema. `onion-architecture` §3.2 puts every query in a `repository.ts`, so that
-  example is a source of false findings here, not a standard.
-
-### `postgresql-table-design` → `data`, only for a new migration or a schema change
-
-- §Core Rules and §Constraints — does a new column carry the constraint that section asks for?
-- §Data Types — is the type that section's choice for this shape of value?
-- §Indexing — does a new foreign key or filtered column have an index?
-- §PostgreSQL “Gotchas” — does the migration walk into one? (curly quotes in the real heading)
-- §JSONB Guidance — is JSONB standing in for a column that should exist?
-
-### `zod` → `contracts`
-
-- §1 Schema Definition and §2 Parsing & Validation — is the schema at the edge, parsed once?
-- §3 Type Inference — is a type hand-written next to a schema instead of inferred from it?
-- §4 Error Handling — is `parse` used where the failure is ordinary user input?
-- §5 Object Schemas — was strict / passthrough decided, or defaulted into?
-- Its CRITICAL / HIGH / MEDIUM priorities are its own; map through [severity.md](severity.md).
-
-### `security` → every domain
-
-- §A01 Broken Access Control — is a tenancy or ownership check missing on a new route?
-- §A05 Injection — SQL, shell or path built by string concatenation?
-- §Secret Detection — a key, a token, or a URL carrying credentials in the diff?
-- §File Upload Security — does a new path join stay inside its root? Commit `1d5348d` is this
-  repo's own case: a finding link whose path resolved out of the repo.
-- §Core Philosophy — Confidence-Based Review — its confidence bar and our adversarial verifier
-  ([SKILL.md](SKILL.md) §3.4) both apply. A critical must clear both.
-- §Framework Security Quirks — its MongoDB, Mongoose and Express subsections describe a stack
-  this repo does not have. Do not report against them.
+- **The RED prong can be re-run honestly again.** The old `security` block named commit
+  `1d5348d` and described the defect that prong plants, so the shipped file handed the agent the
+  answer. Nothing here does now.
+- **Two facts, not questions, survive into the `security` agent's brief**, because both prevent
+  false findings rather than prompting for true ones: the skill's §Framework Security Quirks
+  covers MongoDB, Mongoose and Express, a stack this repo does not have, so nothing is reported
+  against it; and its §Core Philosophy confidence bar does not replace our adversarial verifier
+  ([SKILL.md](SKILL.md) §3.4) — a critical clears both.
 
 ## 4. Skills from outside `.claude/skills/`
 
@@ -149,6 +112,7 @@ Listed so the next editor does not add "the missing one".
 
 | Not used | Why |
 |---|---|
+| `react-best-practices`, `next-best-practices`, `react-testing-library`, `fastify-best-practices`, `drizzle-orm-patterns`, `postgresql-table-design`, `zod` | they ship no `Review checklist`, so the only way to aim them at a diff was the invented question lists in §3. Those produced eleven small findings out of twelve for 509k tokens and are gone; the skills go with them. Any of them is still the right thing to open **while writing** the code — this is a list of what a *review* dispatches. |
 | `mermaid-diagram` | generative, not analytic. Nothing in a review produces a diagram. |
 | `claude-api` | skipped **by its own rule**: its SKIP clause defers to whichever provider the project already uses, and `reviewer-core` depends on `openai`. |
 | `superpowers:requesting-code-review` | superseded here — [SKILL.md](SKILL.md) §6. Running both duplicates every finding. |
@@ -158,9 +122,15 @@ Listed so the next editor does not add "the missing one".
 
 ## 6. Where this drifts
 
-Five of the eight skills in §3 — `next-best-practices`, `fastify-best-practices`,
-`drizzle-orm-patterns`, `postgresql-table-design`, `zod` — are pinned upstream in
-`skills-lock.json` and cannot be edited to grow a checklist of their own. So §3 holds *our*
-pointer into *their* section heading, and
-nothing detects it when they rename one. If a subagent reports that a named section does not
-exist, that is a defect in this file — fix the pointer, do not guess at the content.
+Three section pointers are left, in §2, and one of them — `typescript-expert` — is pinned
+upstream in `skills-lock.json`, so its `## Code Review Checklist` heading can be renamed by an
+update and nothing here detects it. The other two are ours. Dropping §3 removed thirty-odd such
+pointers into five pinned skills, which is the second reason to be glad of it.
+
+If an agent reports that a named section does not exist, that is a defect in this file — fix the
+pointer, do not guess at the content.
+
+The roster itself drifts in three places at once: `scope.sh`'s `TRACK_B`, §1 here, and
+[SKILL.md](SKILL.md) §3.3. `scope.sh` is the executable copy. A `report.sh` run whose
+`UNEXPECTED AGENT` or `PARTIAL COVERAGE` banner names something you did dispatch means these
+three have already disagreed.

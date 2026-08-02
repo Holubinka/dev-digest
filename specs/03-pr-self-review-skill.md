@@ -4,6 +4,44 @@
 
 **Divergences from the text below, all deliberate.**
 
+- **Track B is two agents over the whole diff, not one per domain.** The §Approach fan-out —
+  `frontend`, `frontend-tests`, `backend`, `data`, `core`, `contracts`, `security` — ran once, at
+  acceptance, and cost **509,176 tokens and ~5 minutes for twelve findings: one worth having,
+  none blocking, none critical.** An agent with no skill at all found the same planted defect
+  first, graded it more accurately, and cost 75,822. So the five partitioned domains were deleted
+  and Track B is now `security` (the only domain whose findings the severity model lets block)
+  and `conventions` (the three skills that ship a real `Review checklist` — the source of the one
+  finding worth having, `onion-architecture` §7 on a Drizzle query in a route handler). Both see
+  every routed file. `routing.md` §3's invented question lists went with the five: eleven of the
+  twelve findings came from them. **Given up:** nobody now runs `react-best-practices`,
+  `next-best-practices`, `react-testing-library`, `fastify-best-practices`,
+  `drizzle-orm-patterns`, `postgresql-table-design` or `zod` over a diff. Measured once, that is
+  nine small findings; unmeasured, it is unknown. The full record, including what was not
+  measured, is `.claude/skills/pr-self-review/README.md` §9.
+- **`security` needed a routing rule of its own, so `domains_for` was rewritten rather than
+  trimmed.** §Approach describes `security` as cross-cutting, and it was implemented as an
+  *append* to whichever of the five domains matched — so those five patterns were the routing
+  test itself. Deleting the arms would have returned empty for every path, taken `routed[]` from
+  61 files to 0 on the acceptance branch, and dispatched the surviving agents over nothing while
+  the run still printed a verdict. It now routes the source of the three gated packages directly.
+  That also closed a hole the spec's own partition created: `server/src/**` outside `modules/`,
+  `adapters/`, `platform/` and `db/` — `server/src/index.ts` among it — reached no domain and was
+  reviewed by nobody. Old and new rules route the same 61 files on that branch.
+- **Three of the spec's domains were already dead.** `contracts` cannot fire here — no
+  `*.schema.ts` file exists and every `contracts/` directory is under `*/vendor/shared/`, which
+  `flag_for` diverts before routing — so `zod` and `typescript-expert` were wired to nothing.
+  `data`'s `server/drizzle/*.sql` route and its `server/drizzle/meta/*` skip both matched nothing,
+  because `drizzle.config.ts` sets `out: './src/db/migrations'`; the real generated snapshots were
+  being routed to a subagent as source, and are now skipped.
+- **The subagent brief carries the severity rules, not only the four value names.** §Severity
+  assumes the scale is applied; nothing carried it to the agent. The RED prong had the `security`
+  agent find a real path traversal and grade it `minor`, because `severity.md` — which calls path
+  traversal critical — never reached the subagent. `SKILL.md` §3.3 now sends the agent to that
+  file and quotes the deciding rule into the brief.
+- **A `full` run's `agents[]` must equal the Track B roster exactly.** Stronger than the coverage
+  divergence below it, which this replaces: one roster agent missing prints `PARTIAL COVERAGE`,
+  one name too many prints `UNEXPECTED AGENT`, and both record `incomplete`. Step 4's adversarial
+  verifiers are not `agents[]` entries.
 - **The hook is `scripts/pr-self-review/gate.sh`, not `scripts/pr-self-review-gate.sh`.** Six
   scripts ship, not one, and they belong in a directory together — `scope.sh`, `gates.sh`,
   `registry.sh`, `baseline.sh`, `report.sh` and `gate.sh`, with their tests under
@@ -34,7 +72,8 @@
 - **A `full` run must cover every routed domain.** Beyond the spec: `scope.json` carries the
   domain set, so `.scope.routed[].domains` minus `.agents[].name` must be empty or the run is
   `incomplete` and prints `PARTIAL COVERAGE`. A five-agent fan-out with one agent forgotten was
-  otherwise indistinguishable from complete coverage.
+  otherwise indistinguishable from complete coverage. Tightened to a set equality when Track B
+  narrowed — see the roster divergence at the top.
 - **Tier 2's secret list is wider than `.env`, `*.key`, `*.pem`.** Every `.env` variant in any
   directory (`client/.env.local` is the standard Next.js secrets file), `id_rsa` and friends,
   `secrets.json` / `credentials.json`. `*.example`, `*.sample`, `*.template` and `*.dist` are

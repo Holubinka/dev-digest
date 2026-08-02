@@ -42,6 +42,11 @@ grading is not trustworthy enough to stop work — the acceptance run had the `s
 a real path traversal and grade it `minor`. `report.sh` records which half a critical came from
 in `pushBlocked`, and `gate.sh` reads it.
 
+That mis-grade had a structural cause: this file never reached the subagent. Only the four
+*names* travelled into the brief, so the agent graded with its own skill's impact reasoning.
+[SKILL.md](SKILL.md) §3.3 now sends the agent here and quotes the deciding rule into the brief.
+Whether that fixes it is unmeasured — the RED prong has not been re-run since.
+
 ## critical
 
 Track A: **any failed gate.** See [gates.md](gates.md).
@@ -107,14 +112,17 @@ Do not manufacture notes to make a thin report look fuller — [SKILL.md](SKILL.
 
 ## Upstream skills bring their own labels — do not pass them through
 
-`react-best-practices` marks sections CRITICAL / HIGH / MEDIUM. `zod` orders its rules
-CRITICAL / HIGH / MEDIUM-HIGH / LOW-MEDIUM. `security` ships its own severity classification.
-**None of those are this scale.** They rank a rule's importance in general; this scale ranks what
-a finding stops in this repo today.
+`security`, the skill one of the two Track B agents opens, ships its own severity classification
+and its own confidence bar. **Neither is this scale.** They rank a rule's importance in general;
+this scale ranks what a finding stops in this repo today. The skills that used to arrive with
+CRITICAL / HIGH / MEDIUM vocabularies of their own — `react-best-practices`, `zod` — are no
+longer dispatched at all ([routing.md](routing.md) §5), so `security` is the live case.
 
-Map through the table at the top of this file. A `react-best-practices` "CRITICAL" that no gate
-enforces and that stops nothing is a `major` here, and calling it critical would block a push
-over a key prop.
+Map through the table at the top of this file, in both directions. A rule marked "CRITICAL"
+upstream that no gate enforces and that stops nothing is a `major` here — calling it critical
+would block a push over a key prop. And a finding the agent reasons its way down to "low impact"
+is still `critical` if it is one of the shapes listed below; that is the direction the one
+measurement got wrong.
 
 ## What the hook does with the verdict
 

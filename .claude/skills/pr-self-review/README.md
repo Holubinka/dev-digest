@@ -35,12 +35,12 @@ Scope is the whole repo: every package, every file the branch touched, committed
 
 | File | Lines | Answers |
 |---|---|---|
-| `README.md` | 427 | This card: scope, boundaries, sources, decisions, how it was tested, the environment overrides |
-| `SKILL.md` | 357 | When does it run? What is the procedure? Which mode? What must never be reported? |
+| `README.md` | 549 | This card: scope, boundaries, sources, decisions, how it was tested, the environment overrides |
+| `SKILL.md` | 392 | When does it run? What is the procedure? Which mode? What must never be reported? |
 | `modes.md` | 170 | How do `--freeze` and `--only critical` differ from a normal run? |
-| `routing.md` | 166 | Which subagent opens which skill, what to look for in the ones with no checklist, what is left out on purpose |
+| `routing.md` | 136 | Which files reach Track B, what each of its two agents opens, what is left out on purpose |
 | `gates.md` | 187 | What is each Track A gate, what does its failure look like, what do I try first? |
-| `severity.md` | 171 | Which of the four levels is this, and what does it stop? |
+| `severity.md` | 179 | Which of the four levels is this, and what does it stop? |
 
 `SKILL.md` stays thin because it loads in full whenever the skill activates. The topic files load
 only when the run needs them — a `--gates` run never opens `routing.md`, and a `--full` run
@@ -131,6 +131,46 @@ authoritative in the abstract. That is why a Track A critical and a Track B crit
 different objects, and why an upstream skill's CRITICAL is not ours.
 
 ## 8. Version and changelog
+
+### 1.2.0 — 2026-08-02
+
+Track B narrowed from five partitioned domain agents to two unpartitioned ones, on the
+measurement in §9. This is the first release that removes review coverage rather than adding it,
+so §9 records what was given up as well as what was cut.
+
+- **The five partitioned domain agents are gone** — `frontend`, `frontend-tests`, `backend`,
+  `data`, `core`. They cost **509k tokens and about five minutes** for twelve findings, one of
+  which was worth having and none of which was blocking. An agent with **no skill at all** found
+  the RED prong's planted defect first, graded it more accurately, and cost a seventh as much.
+- **Track B is `security` and `conventions`, both over the whole routed diff.** `security` is the
+  only domain whose findings the severity model lets block. `conventions` runs the three skills
+  that ship a real `Review checklist` — the source of the one Track B finding in the acceptance
+  run that was worth having (`onion-architecture` §7, a Drizzle query in a route handler).
+- **`routing.md` §3's invented question lists are deleted.** Eleven of the twelve findings came
+  from them, all small, none blocking; §9 already conceded they were unmeasured. Seven skills
+  lose their Track B seat with them. A side effect worth having: §3 named commit `1d5348d` and
+  described the defect the RED prong plants, so the shipped file could not be used to re-run that
+  measurement honestly. It can now.
+- **The severity *rules* travel into the subagent brief, not just the four value names.** The
+  acceptance run's most expensive defect: the `security` agent found a real path traversal and
+  graded it `minor`, because `severity.md` — which calls path traversal critical — never reached
+  it. `SKILL.md` §3.3 now sends the agent to that file and quotes the deciding rule.
+- **`domains_for` was rewritten, not trimmed.** `security` had no criteria of its own: it was
+  appended to whichever of the five domains matched, so those five patterns *were* the routing
+  test. Deleting the arms would have emptied `routed[]` — 61 files to 0 on this branch — and
+  dispatched the survivors over nothing while the run still printed a verdict. It now routes the
+  source of the three gated packages directly, which also closes a hole: `server/src/**` outside
+  `modules/`, `adapters/`, `platform/` and `db/` reached no domain before and was reviewed by
+  nobody. Measured on this branch, the old and new rules route the same 61 files.
+- **The coverage check is a set equality.** `agents[]` must be exactly the roster
+  `scope.sh` declares: one missing prints `PARTIAL COVERAGE`, one too many prints
+  `UNEXPECTED AGENT`, both record `incomplete`. Step 4's verifiers are not `agents[]` entries.
+- **Drizzle's snapshots are skipped where they really live.** `skip_reason` named
+  `server/drizzle/meta/*`; `drizzle.config.ts` puts migrations in `src/db/migrations`, so the
+  skip matched nothing and the real snapshots were routed as source.
+- Tests: 329 → 347 assertions, including the routing-membership pin (every shape the five domains
+  used to carry is still routed, plus a `server/src` file that matched none of them), both legal
+  `agent <name> · ` source prefixes through the real chain, and both sides of the roster equality.
 
 ### 1.1.0 — 2026-08-02
 
@@ -285,8 +325,8 @@ run, and the ones that did not go the way the spec predicted are recorded as the
 
 ### The scripts
 
-`bash scripts/pr-self-review/test/run.sh` — **329 assertions, 0 failures** across seven files
-(`baseline` 53, `gate` 34, `gates` 15, `registry` 7, `report` 153, `scope` 36, `seam` 31). Also a
+`bash scripts/pr-self-review/test/run.sh` — **347 assertions, 0 failures** across seven files
+(`baseline` 53, `gate` 34, `gates` 15, `registry` 7, `report` 158, `scope` 42, `seam` 38). Also a
 CI job, `.github/workflows/pr-self-review.yml`, with `fetch-depth: 0` because `scope.sh` needs a
 real merge-base and the suite builds throwaway repos with real branches.
 
@@ -432,9 +472,52 @@ things. It is the half that *formats* things. If one change is made next, it is 
 prong named: get the severity rules into the subagent brief, because a critical graded `minor`
 is indistinguishable from a critical never found.
 
+### What that measurement was then spent on — the 1.2.0 narrowing
+
+The numbers above are the whole case, so they are worth restating as the decision read them:
+**509,176 tokens and ~5 minutes of wall clock, across four agents, for twelve findings — one
+worth having, none blocking, none critical.** A skill-less agent found the planted defect first
+and graded it better for 75,822 tokens. And the one finding worth having came from
+`onion-architecture`'s `Review checklist`; the other eleven came from the question lists we
+invented for skills that ship no checklist.
+
+That splits Track B's cost cleanly, and the cut follows the split:
+
+| Kept | Cut |
+|---|---|
+| `security`, over the whole routed diff — the only domain whose findings the severity model lets block | the five partitioned domain agents: `frontend`, `frontend-tests`, `backend`, `data`, `core` |
+| `conventions`, over the whole routed diff — the three skills that ship a real `Review checklist`, which produced the one finding worth having | `routing.md` §3's invented question lists, and with them the seven skills that ship no checklist |
+
+**What coverage was given up, stated plainly.** Nobody now runs `react-best-practices`,
+`next-best-practices`, `react-testing-library`, `fastify-best-practices`, `drizzle-orm-patterns`,
+`postgresql-table-design` or `zod` over a diff. Measured once, that is six test-style minors, two
+derive-don't-store effects and an `export *` barrel we would not have heard about — and an
+unknown number of real findings we cannot count, because a negative was never measured. The
+argument for accepting that is cost and the counterfactual, not a claim that the lost findings
+were worthless: `/code-review` covers the same ground on request, and none of the eleven would
+have stopped a merge. If a later run shows the gate letting through the class of thing those
+skills catch, this is the paragraph to reopen.
+
+**Two things were found while following the cut through the code**, both recorded in the 1.2.0
+changelog and both worse than the thing being fixed: `security` had no routing rule of its own,
+so deleting the five domains naively would have taken `routed[]` from 61 files to 0 while the run
+still printed a verdict; and `server/src/**` outside four directories — `server/src/index.ts`
+among it — had never been routed to anybody at all.
+
+**Three domains had already been dead**, which is the other half of why the five were cheap to
+lose: `contracts` cannot fire in this repo (no `*.schema.ts` exists, and every `contracts/`
+directory is under `*/vendor/shared/`, which `flag_for` diverts before routing), so `zod` and
+`typescript-expert` were wired to nothing; `data`'s `server/drizzle/*.sql` pattern and its
+`server/drizzle/meta/*` skip both matched nothing, because `drizzle.config.ts` puts migrations in
+`src/db/migrations` — where the generated snapshots were being routed to an agent as source.
+
 ### What was not measured
 
 - The adversarial verifier (§3.4) — no run has yet produced a Track B `critical`.
+- **The 1.2.0 narrowing itself.** Two agents have never been dispatched; the numbers above are
+  all from the five-agent shape they replace. Whether the severity rules in the brief fix the
+  mis-grade the RED prong found is unknown until that prong is re-run — which the deletion of
+  `routing.md` §3 makes possible again, and which nothing in this change did.
 - `--freeze` and `--only critical` end to end. Their scripts are unit-tested; their procedures
   in [modes.md](modes.md) have not been executed.
 - A second run over the same diff, so the non-deterministic spread of Track B findings is
