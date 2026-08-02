@@ -135,6 +135,37 @@ entry first suggested: they approve *reviewed-and-merged* work and speak up on f
 Re-running on a PR whose diff the model has not seen before is worth a try; re-running on
 #1 or #482 is not.
 
+### Guarding each site as you find it loses to a defect class
+
+Building `pr-self-review` on 2026-08-02 hit **eight** instances of one shape: a run fails
+partway, a `null` reaches a jq `+`, jq treats it as the identity, and a `pass` verdict is
+written from an empty findings array. Six review rounds each fixed the instances they were
+given and shipped another — round 1's fix for a read/write-of-one-file introduced an
+unconditional `mv`, whose fix left `&` out of a separator list, and so on.
+
+Spot fixes only close the sites you have found. What worked was a check at the point the
+verdict is decided (`scripts/pr-self-review/report.sh` rule 6: an absent, null or non-array
+`.findings`, `.gates` or `.agents` is `incomplete`, never `pass`), which converts every
+remaining path of the class — including ones nobody has found — from a silent allow into a
+visible block.
+
+Know its limit before relying on it: a chain that succeeds while producing a legitimately
+*empty* array is indistinguishable from a clean run by the time the last station sees it.
+That case has to be caught where the loss happens, so the site fixes were still required.
+
+### A green suite is not a coverage measurement, and the gap is shaped
+
+`scripts/pr-self-review/` reached 402 passing assertions and scored **37%** under a
+130-mutation pass on 2026-08-02. The shape mattered more than the number: coverage clustered
+tightly on the defect classes humans had already found during the build and thinned to almost
+nothing elsewhere — `registry.sh` killed 1 mutation of 9, `scope.sh` 3 of 24, while
+`report.sh`'s verdict expression was near-saturated at 24 of 25.
+
+Assertions accumulate where bugs were, so a suite grown by fixing review findings is a scar
+map. Three contract-breaking mutations passed the whole suite *simultaneously*, the worst
+being `scope.sh`'s `source: "gate scope"` literal → `"agent scope"`, which silently turns
+every deterministic critical into an unanchored note. Nothing pinned that one string.
+
 ## Codebase Patterns
 
 ### The two `docker-compose.yml` files are byte-identical duplicates
@@ -299,6 +330,45 @@ start a standalone `pnpm start` on another port. Related: deleting `client/.next
 `next start` is serving from it leaves the process alive but returning 500 for every route
 with `Cannot find module './vendor-chunks/*.js'` — rebuild *and* restart, and free the port
 before rebuilding or `next start` dies on `EADDRINUSE`.
+
+### `git -C ""` does not fail — it operates on the current directory
+
+On 2026-08-02 a regression script in `scripts/pr-self-review/test/` had the wrong `HERE`, so
+`lib.sh` went unsourced and `make_repo` was undefined. `$repo` was therefore the empty string,
+and every `git -C "$repo" checkout -qb feat/x` in the suite ran against the developer's own
+checkout: a real branch, four real commits, and a `git add -A` that swept 41 unrelated files.
+Nothing in the suite failed.
+
+`set -u` does not help — it catches an *unset* variable, not an empty one. The guard now lives
+in `test/lib.sh`: `sgit` refuses an empty path and refuses the real toplevel, `make_repo` dies
+rather than returning an empty string, and `run.sh` compares HEAD and the branch list across
+the whole suite as a canary. Derive the repo root from `BASH_SOURCE`, never from
+`git rev-parse --show-toplevel`, which answers about wherever the suite happened to be run
+from and comes back empty outside a repository — silently disarming the guard exactly where it
+is needed.
+
+### Two `set -e` holes that make a shell gate report success
+
+Both cost a full review round on 2026-08-02.
+
+**An assignment's exit status is its command substitution's.** `out="$(cmd)"; code=$?` aborts
+the script the moment `cmd` fails — `set -e` fires before `code=$?` ever runs. A gate loop that
+*expects* commands to fail must write `out="$(cmd)" && code=0 || code=$?`. Reference code that
+looked obviously correct scored 5 of 11 on its own tests.
+
+**`set -e` is suspended inside a function invoked in a pipeline.** `render | tee file` runs
+the whole function body with errexit off, so a failing command mid-render leaves a truncated,
+plausible-looking artifact and exit 0. Measured with a `.gates` key missing: `report.md` was
+cut off mid-section with nothing in the file saying so.
+
+### jq treats `null` as the identity for `+`, so a lost array is silent
+
+`[a] + null` is `[a]`, and `$x[0]` on a slurped empty file is `null`. Every step of a
+jq pipeline that merges arrays therefore absorbs an upstream failure and exits 0 with fewer
+elements than it should have. This is the mechanism behind all eight instances of the
+silent-pass class above. A `--slurpfile` over a file that is missing or 0 bytes is the usual
+source; guard with `[ -s "$f" ] && jq -e 'type == "array" or type == "object"' "$f"` before
+using it, and never let a `jq … > f` and a consumer of `f` share the same path.
 
 ## Recurring Errors & Fixes
 

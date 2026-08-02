@@ -12,7 +12,35 @@ _Nothing recorded yet._
 
 ## What Doesn't Work
 
-_Nothing recorded yet._
+### A frozen dependency-cruiser edge silences that edge entirely, not one violation
+
+`.dependency-cruiser-known-violations.json` freezes a *rule + from + to* triple, not a count.
+`no-db-from-routes: src/modules/pulls/routes.ts → src/db/schema.ts` is one of the frozen 20, so
+`pnpm arch` exits 0 no matter how many inline `container.db` queries that file grows. On
+2026-08-02 this branch added a seventeenth and the gate still printed
+`✔ no dependency violations found (20 known violations ignored)`.
+
+`.github/workflows/server-arch.yml` compounds it: `--ignore-known` is the blocking step and the
+strict run is `|| true`, so CI is blind to the same growth.
+
+The consequence is the opposite of what a baseline is for. It is meant to make a backlog
+countable while new violations fail; on a frozen edge it lets the backlog grow silently. Moving
+one query out does not restore the gate for that file — it stays silenced until the last of them
+leaves. `pulls/routes.ts` went 18 → 16 on 2026-08-02 and is still not measured.
+
+When adding to a file that already appears in the frozen list, `pnpm arch:strict` is the only
+command that tells the truth.
+
+### The architecture gate ran on exactly one machine for five days
+
+`server/.dependency-cruiser.cjs`, `.dependency-cruiser-known-violations.json` and
+`.github/workflows/server-arch.yml` were all untracked until 2026-08-02, while `server/AGENTS.md`
+and spec 02 described the gate as live. `pnpm arch` passed locally because the config sat on
+disk; on any fresh clone `depcruise --config` would have failed with no configuration file, and
+CI never ran the job at all. Committed in `006fda4`.
+
+A gate whose config is untracked is indistinguishable from a passing gate. `git ls-files` on the
+config is part of trusting the result.
 
 ## Codebase Patterns
 

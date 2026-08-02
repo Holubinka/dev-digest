@@ -474,6 +474,31 @@ Note when checking the fix in DevTools: the serialized `style` attribute reads
 back into a shorthand for display — not React writing one. Read the style object, not the
 attribute.
 
+### `value in OBJ` passes for eight inherited keys, so an allowlist built with it is not one
+
+**Symptom.** A findings row with `severity` or `category` set to `"constructor"`, `"toString"`,
+`"valueOf"`, `"hasOwnProperty"`, `"__proto__"`, `"isPrototypeOf"`, `"toLocaleString"` or
+`"propertyIsEnumerable"` gets past a guard that was written to reject unknown values. The badge
+then resolves to a function on `Object.prototype`, `Icon[undefined]` follows, and React throws
+`Element type is invalid` — the whole-route crash already recorded above.
+
+**Cause.** `in` walks the prototype chain. `SEV`, `CAT` and `RANK` are plain object literals, and
+`Object.fromEntries` output carries `Object.prototype` too. `findings.severity` and
+`findings.category` are unconstrained `text` columns filled from LLM agent JSON, so those strings
+really do reach the client. A guard with `if (!c) return null` does not save you either:
+`CAT["constructor"]` is truthy, so the guard never fires.
+
+**Fix.** `Object.hasOwn(OBJ, value)`. On 2026-08-02 the same defect was found in four places —
+`components/severity-badge/helpers.ts:9`, `components/findings-preview/helpers.ts:42`,
+`vendor/ui`'s category tag consumers, and `server/src/modules/pulls/status.ts:93`. Fixing one
+instance is a signal to grep for the rest: `grep -rn ' in [A-Z][A-Za-z_]*' client/src server/src`.
+
+Note the client and server ranking functions are declared mirrors of each other. Fix only one and
+the two sides disagree about which rows exist, which is worse than the bug.
+
+**A test that pins this must name the inherited keys.** Asserting that `'CRITICAL'` passes and
+`'nope'` fails is green *before* the fix, because `in` is correct for both.
+
 ## Session Notes
 
 ### 2026-07-28
