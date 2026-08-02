@@ -101,5 +101,30 @@ assert_json "$out" '[.gates[] | select(.name == "registry")][0].status' 'ok' \
   'and the registry gate still reports'
 rm -rf "$repo"
 
+# --- and a registry critical turns that row red, and lands in .findings --------
+# C1's own surface, and the half of it nothing pinned. registry.test.sh tests
+# registry.sh alone, and every assertion above only ever saw the row come back
+# `ok`, so both steps that carry a registry critical into the verdict — the
+# `record repo registry fail` branch and the `$a + $b` merge — survived mutation
+# individually AND together with the suite at 347 passed, 0 failed. C1 was a
+# report printing `FAIL repo registry 2 inconsistent entries` under a `PASS`
+# header; this is the net built to stop it coming back.
+#
+# A lock entry with no directory is the cheapest way to produce one: registry.sh
+# reads the working tree, so the file need not even be committed.
+repo="$(make_repo)"
+printf '{"skills":{"ghost":{"version":"1.0.0"}}}\n' >"$repo/skills-lock.json"
+out="$(cd "$repo" && printf '%s' "$(scope_json '[]')" | bash "$GATES")"; code=$?
+assert_eq "$code" '0' 'gates.sh still exits 0 when the registry gate fails'
+assert_json "$out" '[.gates[] | select(.name == "registry")][0].status' 'fail' \
+  'a registry critical makes the registry gate row FAIL'
+assert_json "$out" '[.gates[] | select(.name == "registry")][0].detail' '1 inconsistent entries' \
+  'and the row counts them'
+assert_json "$out" '[.findings[] | select(.source == "gate registry" and .severity == "critical")] | length' \
+  '1' 'and the critical itself is merged into .findings, not left behind in registry.sh'
+assert_contains "$(printf '%s' "$out" | jq -r '[.findings[] | select(.source == "gate registry")][0].message')" \
+  'ghost' 'naming the entry that has no directory'
+rm -rf "$repo"
+
 rm -f "$runner"
 finish
