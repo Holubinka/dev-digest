@@ -28,3 +28,10 @@ describe('PullsRepository.findingsForPrs', () => {
     await expect(repo.findingsForPrs([])).resolves.toEqual([]);
   });
 });
+
+describe('PullsRepository.reviewsForPrs', () => {
+  it('returns no reviews for an empty page of PRs, without querying', async () => {
+    const repo = new PullsRepository(unusableDb);
+    await expect(repo.reviewsForPrs([])).resolves.toEqual([]);
+  });
+});

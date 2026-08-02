@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { PrMeta, PrDetail, GitHubClient, PrReviewComment } from '@devdigest/shared';
 import { PrCommentInput } from '@devdigest/shared';
 import * as t from '../../db/schema.js';
@@ -129,11 +129,7 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
     // "reviewed and clean" from "never reviewed" for the FINDINGS column below.
     const reviewedPrIds = new Set<string>();
     if (prIds.length > 0) {
-      const reviewRows = await container.db
-        .select({ prId: t.reviews.prId, score: t.reviews.score, kind: t.reviews.kind })
-        .from(t.reviews)
-        .where(inArray(t.reviews.prId, prIds))
-        .orderBy(desc(t.reviews.createdAt));
+      const reviewRows = await container.pullsRepo.reviewsForPrs(prIds);
       // Rows are newest-first → first seen per PR is the latest review.
       for (const rv of reviewRows) {
         reviewedPrIds.add(rv.prId);

@@ -1,4 +1,4 @@
-import { eq, inArray } from 'drizzle-orm';
+import { desc, eq, inArray } from 'drizzle-orm';
 import type { Db } from '../../db/client.js';
 import * as t from '../../db/schema.js';
 
@@ -31,8 +31,41 @@ export interface PrListFindingRow {
   rationale: string;
 }
 
+/**
+ * One review as the PR list's rollup needs it. `kind` rides along because the
+ * caller reads the two columns for different things off the same pass: SCORE is
+ * the latest `kind='review'`, while "has this PR ever been reviewed at all" —
+ * what separates a reviewed-and-clean `0 · 0 · 0` from a never-reviewed `—` in
+ * the FINDINGS column — counts every kind.
+ */
+export interface PrListReviewRow {
+  prId: string;
+  score: number | null;
+  kind: 'summary' | 'review';
+}
+
 export class PullsRepository {
   constructor(private db: Db) {}
+
+  /**
+   * Reviews for a page of PRs, newest first, across every review kind.
+   *
+   * The ordering is load-bearing and belongs with the query: the caller walks
+   * the rows once and takes the FIRST it sees per PR as that PR's latest
+   * review. Dropping the `ORDER BY` would silently hand it whatever order
+   * Postgres felt like returning.
+   *
+   * No `kind` predicate — filtering happens in the caller, which needs both the
+   * narrow set (score) and the wide one (ever-reviewed) out of one query.
+   */
+  async reviewsForPrs(prIds: string[]): Promise<PrListReviewRow[]> {
+    if (prIds.length === 0) return [];
+    return this.db
+      .select({ prId: t.reviews.prId, score: t.reviews.score, kind: t.reviews.kind })
+      .from(t.reviews)
+      .where(inArray(t.reviews.prId, prIds))
+      .orderBy(desc(t.reviews.createdAt));
+  }
 
   /**
    * Findings for a page of PRs, across EVERY review of each PR and every review
