@@ -1,6 +1,29 @@
 # 03 — pr-self-review, a blocking pre-PR gate
 
-**Status:** proposed 2026-08-01.
+**Status:** Implemented 2026-08-02.
+
+**Divergences from the text below, all deliberate.**
+
+- **The hook is `scripts/pr-self-review/gate.sh`, not `scripts/pr-self-review-gate.sh`.** Six
+  scripts ship, not one, and they belong in a directory together — `scope.sh`, `gates.sh`,
+  `registry.sh`, `baseline.sh`, `report.sh` and `gate.sh`, with their tests under
+  `scripts/pr-self-review/test/`. §"What gets built" names the flat path.
+- **`baseline.sh` diff-anchors only findings whose `source` begins `agent `.** §Baseline says
+  findings are anchored to diff lines without qualification. Anchoring all of them was built
+  first and was wrong: `scope.flagged[]` carries `line: 1` for a path that is never in
+  `.routed[]`, and `registry.sh` carries `line: 1` into `skills-lock.json`, which a branch
+  almost never edits — so a tree with a committed `.env` and two broken lock entries reported
+  `pass`. Deterministic sources already scope themselves; the baseline exists for the sixteen
+  pre-existing `container.db` calls, which come from a subagent.
+- **`SKILL.md` §4's two mode procedures live in `modes.md`.** The 500-line authoring cap the
+  registry gate enforces left no room, and a `--full` run never reads them.
+- **The finding cache by file-content hash (§"Modes and cost control") is not built.**
+  `--only critical` covers the same need with a re-run. Task 9's timing found Track A at 12–14 s
+  and Track B at ~5 minutes, so if a cache is ever added it belongs on Track B.
+
+**What the acceptance run measured**, in full, including the criteria that were not met:
+`.superpowers/sdd/2026-08-02-pr-self-review/task-9-report.md`, with the baseline and the GREEN
+comparison in `.claude/skills/pr-self-review/README.md` §9.
 
 ## Problem
 

@@ -34,14 +34,16 @@ Scope is the whole repo: every package, every file the branch touched, committed
 
 | File | Lines | Answers |
 |---|---|---|
-| `README.md` | 265 | This card: scope, boundaries, sources, decisions, how it was tested |
-| `SKILL.md` | 489 | When does it run? What is the procedure? Which mode? What must never be reported? |
+| `README.md` | 403 | This card: scope, boundaries, sources, decisions, how it was tested |
+| `SKILL.md` | 351 | When does it run? What is the procedure? Which mode? What must never be reported? |
+| `modes.md` | 158 | How do `--freeze` and `--only critical` differ from a normal run? |
 | `routing.md` | 166 | Which subagent opens which skill, what to look for in the ones with no checklist, what is left out on purpose |
 | `gates.md` | 181 | What is each Track A gate, what does its failure look like, what do I try first? |
 | `severity.md` | 145 | Which of the four levels is this, and what does it stop? |
 
 `SKILL.md` stays thin because it loads in full whenever the skill activates. The topic files load
-only when the run needs them — a `--gates` run never opens `routing.md`.
+only when the run needs them — a `--gates` run never opens `routing.md`, and a `--full` run
+never opens `modes.md`.
 
 **There is no `procedure.md` and no `report-format.md`.** The procedure is the one thing that
 must be in `SKILL.md` (a run that never opens a topic file still has to be correct), and the
@@ -120,7 +122,7 @@ joke to put one here.
 | An upstream skill's own CRITICAL / HIGH / MEDIUM label vs. what a finding stops here | [severity.md](severity.md) |
 | A Track A critical and a Track B critical are both "critical" | [severity.md](severity.md) |
 | This skill vs. `superpowers:requesting-code-review` | [SKILL.md](SKILL.md) §6 |
-| `--only critical` narrows the review — does it narrow the verdict? | [SKILL.md](SKILL.md) §4 |
+| `--only critical` narrows the review — does it narrow the verdict? | [modes.md](modes.md) |
 
 The one thing worth adding here, because it is about the *set* rather than any single rule: all
 five are resolved by asking what a decision **stops**, never by which source is more
@@ -139,8 +141,8 @@ Decisions made while writing, beyond what the spec fixed:
 - **`--freeze` and `--only critical` are implemented rather than removed from the slash
   command.** `.claude/commands/pr-self-review.md` promised four arguments; two of them had no
   procedure anywhere. `--freeze` had a mechanism (`baseline.sh --freeze`) wired to nothing, and
-  `--only critical` mapped to no script at all. Both now have a written procedure in `SKILL.md`
-  §4 and neither needed a new script. Removing them instead would have left the only user-facing
+  `--only critical` mapped to no script at all. Both now have a written procedure in
+  [modes.md](modes.md) and neither needed a new script. Removing them instead would have left the only user-facing
   entry point — the one the hook's refusal message names — promising less than the mechanism
   already does, and `--freeze` in particular is the documented remedy for the "sixteen criticals
   on day one" failure this design exists to avoid.
@@ -247,19 +249,155 @@ Decisions made while writing, beyond what the spec fixed:
 
 ## 9. How this skill was tested
 
-*Not yet measured.* Task 9 of the implementation plan owns the acceptance run and fills this
-section in.
+Measured 2026-08-02, on branch `feat/findings-severity-filter` (base `3f30409`, HEAD `a05a1c1`)
+— a 61-file diff across `client/`, `server/` and `reviewer-core/`. Every number below is a real
+run, and the ones that did not go the way the spec predicted are recorded as they came out.
 
-Per `.claude/skills/README.md`, a skill is not done until the scenarios it exists for have been
-run against an agent that does **not** have it. The baseline (RED) and verification (GREEN) runs
-belong here, with the token and tool-call counts, and any rule the baseline shows an agent
-already follows unaided should be cut rather than kept.
+### The scripts
 
-The acceptance criteria to measure against are in `specs/03-pr-self-review-skill.md`
-§Acceptance. The sharpest of them is the RED prong: re-running against commit `1d5348d`
-(*refuse a finding link whose path would resolve out of the repo*) with the fix reverted should
-raise a path-traversal critical from the `security` agent — a real defect this repo actually
-shipped a fix for.
+`bash scripts/pr-self-review/test/run.sh` — **237 assertions, 0 failures** across six files
+(`baseline` 31, `gate` 28, `gates` 11, `registry` 7, `report` 137, `scope` 23). Now also a CI
+job, `.github/workflows/pr-self-review.yml`, with `fetch-depth: 0` because `scope.sh` needs a
+real merge-base and the suite builds throwaway repos with real branches.
 
-Until that section is filled in, every claim in this file about what the skill catches is a
-prediction.
+### Track A — the deterministic half
+
+**12–14 s** for the whole of Track A on that three-package diff, against a 90-second budget:
+arch 0.6 s, server typecheck 2.3 s, server tests 8.6 s, client lint 1.8 s, client typecheck
+1.1 s, client tests 3.7 s, reviewer-core typecheck 0.9 s + tests 0.6 s, vendor diff and registry
+under a second. Two runs: 13.1 s and 12.1 s.
+
+Track A is the part that works exactly as designed, and it is the part with a reproducible
+answer. Three things it caught on a tree nobody thought was dirty: the two `skills-lock.json`
+entries with no directory, the missing `.cursor/skills` symlink, and — unpredicted —
+`react-testing-library/SKILL.md` at **603 lines**, over the authoring cap this repo documents.
+
+One correction to the spec's own text: **`gates.sh` does not fail fast.** It runs all nine
+package gates and then the registry gate regardless of failures. "Fails fast" is true only at
+the Track A → Track B boundary, which is a rule in `SKILL.md` §3.2 that a model obeys, not
+something the script enforces.
+
+### Track B — the model half, run for the first time
+
+Four subagents over the 61 routed files, dispatched in one message per
+`superpowers:dispatching-parallel-agents`:
+
+| Agent | Files | Findings | Tokens | Tool calls |
+|---|---|---|---|---|
+| `backend` | 3 | 1 major, 1 minor | 90,134 | 20 |
+| `frontend` | 42 | 3 minor | 123,582 | 20 |
+| `frontend-tests` | 16 | 6 minor, 1 note | 130,912 | 29 |
+| `security` | 61 | **0** — returned `[]` | 164,548 | 44 |
+| | | **12 findings** | **509,176** | **113** |
+
+Wall clock ~5 minutes, concurrent. Three results are worth having on record:
+
+- **The `agent <domain> · ` source prefix held 4/4.** Every returned finding carried it, so
+  `baseline.sh` diff-anchored all of them. The contract in `SKILL.md` §3.3 works when it is
+  quoted into the brief verbatim.
+- **The four severity values held 4/4.** Not one `HIGH`, `MEDIUM` or `CRITICAL` leaked through
+  from `react-best-practices`, `zod` or `security`, which all ship their own vocabulary. Quoting
+  the four legal values into the brief is doing its job.
+- **Diff-anchoring held 12/12.** Every finding landed on a line the branch actually touched;
+  `baseline.sh` demoted none. Passing each agent its `lines` array is why.
+
+Zero of the twelve were `critical`, so **step 4 — the adversarial verifier — has still never
+run.** It remains unmeasured.
+
+Were the findings worth having? The `backend` one was: a new 16-line Drizzle query added
+straight into `pulls/routes.ts`, the exact file `onion-architecture` §5 already names as its
+cautionary example. The other eleven were real but small — an `export *` barrel, two
+derive-don't-store effects, six test-style items. None of them would have stopped a merge, and
+none of them are things `/code-review` could not have found.
+
+### The RED prong — a defect this repo actually shipped a fix for
+
+Commit `1d5348d` (*refuse a finding link whose path would resolve out of the repo*) was put back
+to its pre-fix state in the working tree — all four files, including the `client/INSIGHTS.md`
+entry that records the lesson, so the agent had no recorded knowledge of it — and the `security`
+agent was dispatched over `lib/github-urls.ts` and its three call sites.
+
+**It found the defect and mis-graded it.**
+
+> `client/src/lib/github-urls.ts:31` — "`encPath` splits on `/` and runs `encodeURIComponent`
+> per segment, but `.` is an unreserved character, so `..` segments survive verbatim… renders as
+> an ordinary-looking citation whose href the browser normalizes to
+> `https://github.com/apps/evil-app/installations/new`."
+>
+> `"severity": "minor"`
+
+The `fix` it proposed is, near enough, the fix that actually shipped. But `severity.md` §critical
+names "an OWASP finding: injection, authorization bypass, path traversal, SSRF" and cites this
+very commit — so the right answer was `critical`. Graded `minor`, it blocks nothing and never
+reaches the adversarial verifier.
+
+The cause is structural, not a bad roll: **the subagent never sees `severity.md`.** `SKILL.md`
+§3.3 quotes the four legal *values* into the brief and stops there, so the agent applied the
+`security` skill's own impact-based reasoning — origin is pinned to `github.com`, so bounded —
+and landed on minor. The four *names* travel into the brief; the *rules for choosing between
+them* do not. That is the single most actionable defect this measurement found.
+
+### The GREEN comparison — the same scenario without the skill
+
+The same four files, same RED state, given to an agent with **no skill, no routing, no
+INSIGHTS-first rule, no severity vocabulary and no output contract** — just "tell me whether
+anything here is a problem worth fixing before this branch is merged".
+
+| | With the skill | Without it |
+|---|---|---|
+| Tokens | 62,325 | 75,822 |
+| Tool calls | 11 | 38 |
+| Duration | 119 s | 299 s |
+| Found the path traversal | yes, `github-urls.ts:31` | yes, **first item**, with `new URL()` output proving it |
+| Other findings | none | 3 more + 2 nits, incl. a raw `repoFullName` interpolation the skilled run missed |
+| Output | machine-readable JSON | prose |
+| Severity | `minor` — would not block | "worth fixing before merge" |
+
+**The unskilled agent found the defect the skill exists to catch, found more besides, and
+described its severity more accurately.** It also verified its claim by executing the builder,
+which the skilled run did not. It cost 22% more tokens and 3.5× the tool calls, and it read git
+history despite being told not to — it cited commit `1d5348d` by name — so part of its advantage
+is contamination we could not fully exclude.
+
+### The honest verdict
+
+Spec 02 found its skill rescued nothing it had assumed it would. **The same is true here, for
+the model half.** On the one scenario with a known right answer, the skill did not improve
+detection; it made the answer cheaper and structured, and it got the severity wrong in the
+direction that matters — down, not up.
+
+What earns its context cost:
+
+- **Track A.** Nothing else in this repo runs nine gates over a diff in twelve seconds, and it
+  found three real problems on a tree everyone believed was clean. It is deterministic,
+  reproducible, and would be worth keeping with Track B deleted.
+- **The output contract.** The `agent · ` prefix, the four severity values and the `lines` array
+  each held 4/4 or 12/12. Structure is what the skill reliably buys: 12 findings that
+  `baseline.sh`, `report.sh` and `gate.sh` can all consume without a human in between.
+- **The verdict file and the hook.** Freshness, mode and bypass all behave: a `gates` pass allows
+  a push and refuses a PR; one edit or one commit makes it stale and both are refused;
+  `PR_SELF_REVIEW_SKIP=1` proceeds and the bypass appears in the next report; a crashed subagent
+  yields `incomplete` and blocks, naming the unreviewed files.
+
+What does not, on this evidence:
+
+- **The claim that partitioned domain subagents find more than one plain reviewer.** Measured
+  once, they found less. Half a million tokens for twelve findings, none of them blocking.
+- **`routing.md` §3's pointer lists**, unmeasured. Whether an agent given a skill plus five
+  "what to look for" questions outperforms one given the skill alone was never tested, and the
+  RED prong is weak evidence that it does not.
+
+The recommendation is not to delete Track B but to stop describing it as the half that catches
+things. It is the half that *formats* things. If one change is made next, it is the one the RED
+prong named: get the severity rules into the subagent brief, because a critical graded `minor`
+is indistinguishable from a critical never found.
+
+### What was not measured
+
+- The adversarial verifier (§3.4) — no run has yet produced a Track B `critical`.
+- `--freeze` and `--only critical` end to end. Their scripts are unit-tested; their procedures
+  in [modes.md](modes.md) have not been executed.
+- A second run over the same diff, so the non-deterministic spread of Track B findings is
+  unknown.
+- Whether Track A's `incomplete`-on-crash path fires against a genuinely crashed subagent rather
+  than a hand-written `agents.json` entry.
