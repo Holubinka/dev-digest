@@ -44,6 +44,17 @@ assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'incomplete'
 assert_contains "$out" '11 files unreviewed' 'and the unreviewed files are named'
 rm -rf "$repo"
 
+# --- a failed agent outranks a critical: incomplete, not blocked ---------------
+# The whole point of the rule. If this ever resolves to "blocked", breaking a
+# subagent becomes cheaper than fixing a finding.
+repo="$(make_repo)"
+out="$(cd "$repo" && printf '%s' "$(payload full "[$crit]" '[{"name":"frontend","status":"failed","files":4}]')" | bash "$REPORT")"
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'incomplete' \
+  'a failed agent outranks a critical finding'
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.counts.critical' '1' \
+  'and the critical is still counted, not swallowed'
+rm -rf "$repo"
+
 # --- a gates run records its mode, so the PR hook can refuse it ----------------
 repo="$(make_repo)"
 ( cd "$repo" && printf '%s' "$(payload gates '[]' '[]')" | bash "$REPORT" >/dev/null )
@@ -57,6 +68,18 @@ repo="$(make_repo)"
 ( cd "$repo" && printf '%s' "$(payload full "[$crit]" '[]')" | bash "$REPORT" >/dev/null )
 assert_eq "$([ -f "$repo/.pr-self-review/report.md" ] && printf yes || printf no)" yes \
   'report.md is written'
+rm -rf "$repo"
+
+# --- a payload missing .gates still exits 0 and still writes a report ----------
+# .gates[] used to be the one unguarded iteration on the render path — a
+# payload without it crashed under set -e and left report.md truncated with
+# no marker that it was incomplete. Exit 2 is reserved for gate.sh alone.
+repo="$(make_repo)"
+out="$(cd "$repo" && printf '%s' "$(payload full '[]' '[]')" | jq 'del(.gates)' | bash "$REPORT")"
+code=$?
+assert_eq "$code" '0' 'a payload missing .gates does not crash the script'
+assert_eq "$([ -f "$repo/.pr-self-review/report.md" ] && printf yes || printf no)" yes \
+  'the report is still written when .gates is missing'
 rm -rf "$repo"
 
 # --- a recorded bypass surfaces once, then is cleared --------------------------

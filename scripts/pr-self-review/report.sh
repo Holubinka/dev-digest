@@ -62,15 +62,15 @@ render() {
   printf '%s\n' "$(printf '%s' "$latest" | jq -r \
     '"base \(.baseSha[0:7]) → HEAD \(.headSha[0:7]) · branch \(.branch) · mode \(.mode)"')"
   printf '\nGATES\n'
-  printf '%s' "$payload" | jq -r '.gates[] |
+  printf '%s' "$payload" | jq -r '.gates[]? |
     "  \(if .status == "ok" then "ok  " elif .status == "fail" then "FAIL" else "--  " end)  \(.package)  \(.name)  \(.detail)"'
 
   for sev in critical major minor note; do
     local n
-    n="$(printf '%s' "$payload" | jq --arg s "$sev" '[.findings[] | select(.severity == $s)] | length')"
+    n="$(printf '%s' "$payload" | jq --arg s "$sev" '[.findings[]? | select(.severity == $s)] | length')"
     [ "$n" -eq 0 ] && continue
     printf '\n%s — %s\n' "$(printf '%s' "$sev" | tr '[:lower:]' '[:upper:]')" "$n"
-    printf '%s' "$payload" | jq -r --arg s "$sev" '.findings[] | select(.severity == $s) |
+    printf '%s' "$payload" | jq -r --arg s "$sev" '.findings[]? | select(.severity == $s) |
       "  \(.file):\(.line)  [\(.source)]\n     \(.message)" +
       (if .verifier then "\n     Verifier: \(.verifier)" else "" end) +
       (if .fix then "\n     Fix: \(.fix)" else "" end)'
@@ -89,4 +89,8 @@ render() {
   printf '\nThis skill checks conventions, not correctness. For logic bugs run /code-review.\n'
 }
 
-render | tee "$OUT/report.md"
+# The verdict reaches the caller through latest.json and this text, never
+# through this script's own exit code — exit 2 belongs exclusively to
+# gate.sh, so a non-zero status from render or tee must not escape here.
+render | tee "$OUT/report.md" || true
+exit 0
