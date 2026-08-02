@@ -92,7 +92,7 @@ domains_for() { # path -> space-separated domains, or empty for checklist-only
 
 changed_lines() { # path -> JSON array of line numbers touched on this branch
   if git ls-files --error-unmatch "$1" >/dev/null 2>&1; then
-    git diff -U0 --no-color "$head" -- "$1" |
+    git diff -U0 --no-color "$base" -- "$1" |
       awk '/^@@/ {
              match($0, /\+[0-9]+(,[0-9]+)?/);
              spec = substr($0, RSTART + 1, RLENGTH - 1);
