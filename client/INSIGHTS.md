@@ -27,6 +27,31 @@ The filter state itself belongs in the URL via the page's existing `setParam` he
 (`page.tsx:62`), next to `?tab` and `?trace`, so a reload keeps it. Reuse this shape for
 the next cross-run control rather than adding per-accordion state.
 
+### Narrowing a barrel only shrinks a graph the component is not already in
+
+Measure before claiming a barrel fix helped. On 2026-08-02
+`_components/SeverityFilterBar/index.ts` was narrowed from three re-export lines to the
+component plus `export type { SeverityLevel }`, and its two value-level consumers were
+repointed at `./constants` and `./helpers`. Walking the **runtime** graph — following only
+imports that survive type erasure, so `import type` and statements whose every specifier is
+`type`-prefixed are dropped:
+
+- `_components/RunFindings/RunFindings.tsx`: 19 → 16 local modules, and
+  `SeverityFilterBar.tsx` unreachable. Real: that row renders no filter bar.
+- `[number]/page.tsx`: 117 → **117**, still reachable. The page renders `<FindingsTab>`,
+  which renders `<SeverityFilterBar>`, so the component was in its graph on its own account
+  and the direct import bought nothing back.
+
+So the review finding was half right, and only the half you can measure. The direct edge is
+still worth deleting — it is a claim about what the page depends on — but do not sell it as a
+smaller bundle. The rule that generalises: a barrel costs a consumer only what the consumer
+does not already reach by another path, and in a route subtree the page usually reaches
+everything.
+
+`export type { … } from` is the escape hatch that keeps a leaf barrel usable: it is erased at
+compile time, so the four siblings reading `SeverityLevel` from the folder pay no runtime
+edge, and only `FindingsTab` — which actually renders the bar — keeps a value import.
+
 ## What Doesn't Work
 
 ### A popover anchored inside a PR-list row gets clipped
@@ -347,6 +372,28 @@ were on the table and only one keeps the reviewer honest:
 
 So the two surfaces differ on purpose. Do not "fix" `rankFindings` to match.
 
+### The cost of `useTranslations` is the test provider, so migrating two strings costs what migrating nine does
+
+`src/app/page.tsx` had its new `ErrorState` title and body hardcoded while the rest of the
+file — the `PageContainer` title, the `EmptyState`, the redirect line — was hardcoded too.
+The tempting fix is to move the two strings the review named.
+
+Do not. The moment the component calls `useTranslations`, every `render()` in
+`page.test.tsx` needs a `NextIntlClientProvider` wrapper (the pattern is
+`SeverityFilterBar.test.tsx:43` — import the namespace JSON, pass `{ ns: messages }`). That
+wrapper is a fixed cost paid once. Against it, the marginal cost of taking the remaining
+seven strings is seven JSON keys and seven one-line JSX edits. A two-key `home.json` buys the
+full test churn *and* leaves `t("error.title")` sitting between `title="Welcome to
+DevDigest"` and `title="No repositories yet"`.
+
+So the decision is binary: leave the file alone, or migrate the screen. `messages/en/*.json`
+is read by directory listing in `src/i18n/request.ts`, so a new namespace file needs no
+wiring — the whole cost really is the provider. Copy the strings verbatim while moving them;
+retyping an apostrophe at the same time makes the diff impossible to check, and note the repo
+is already split between `'` (here) and `’` (`prReview.json`).
+
+Brand names stay literal — the `AppShell` crumb is `"DevDigest"` in every locale.
+
 ## Tool & Library Notes
 
 ### A component test fails on `ResizeObserver is not defined`
@@ -614,6 +661,25 @@ the two sides disagree about which rows exist, which is worse than the bug.
 - `pnpm build` after the pass: `/repos/[repoId]/pulls/[number]` is 15 kB / 214 kB first load,
   the heaviest route by 4× — consistent with `FindingsTab` taking 15 props and the page
   running six queries.
+
+### 2026-08-02
+
+- Fixed three `pr-self-review` findings on `feat/findings-severity-filter`, all barrel or
+  copy hygiene, none behavioural: 237 tests unchanged before and after.
+- The severity-filter barrel was the interesting one, and not for its size. The same defect
+  had already been fixed one folder over in this branch — `components/findings-preview/index.ts`
+  was narrowed and its header even *names* `SeverityFilterBar/constants.ts` as the consumer it
+  was hurting — while the sibling barrel created in the same branch kept the shape. Fixing the
+  instance you were shown and not the pattern is the failure mode; grep for the shape
+  (`grep -rln 'export \*' --include='index.ts' src`, plus multi-line explicit barrels) when you
+  fix one.
+- `components/category-tag/index.ts` and `components/severity-badge/index.ts` named
+  `isKnownCategory` / `isKnownSeverity`, which only their own folder imports (as `./helpers`).
+  Dropped. Negligible graph cost — the value is that all three barrels in the branch now state
+  the same rule.
+- Counting the graph by hand is worth the twenty lines: a script that resolves `./`, `@/` and
+  `index.ts` and skips type-only edges answered "did this actually shrink" in one run, and
+  contradicted half the finding. Regex over import statements is enough; no need for madge.
 
 ## Open Questions
 
