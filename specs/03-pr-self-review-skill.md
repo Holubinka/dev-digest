@@ -1,276 +1,382 @@
-# 03 — pr-self-review, a skill behind a blocking hook
+# 03 — pr-self-review, a blocking pre-PR gate
 
-**Status:** planned 2026-08-02.
+**Status:** proposed 2026-08-01.
 
 ## Problem
 
-Thirteen skills sit in `.claude/skills/`, and five CI workflows measure the repo. Neither fires
-before a pull request is opened. The skills load only when an agent happens to judge them
-relevant to the file it is editing; the workflows run after the branch is already public. So the
-first thing that tells us a change violates the dependency rule, drops a secret into `AppConfig`,
-or lets the two vendored copies of `shared/` drift is a red check on GitHub — after review has
-been requested from a human.
+The repo already owns the knowledge and the measurements. Nothing schedules them.
 
-Two specific gaps make this worse than a generic "run CI locally" complaint:
+- **Thirteen skills sit in `.claude/skills/`, and activate on the agent's own judgement.**
+  A skill fires when the model decides it is relevant — which happens while writing code, if at
+  all, and never as a sweep over everything a branch changed. `frontend-architecture` and
+  `onion-architecture` each end with a `Review checklist` written to be run against a diff. No
+  workflow runs them.
+- **Seven CI workflows catch gate failures after the push.** `pnpm arch`, `lint`, `typecheck`,
+  the test suites and `shared-sync` all report on GitHub, minutes later, on a branch that is
+  already public. The same commands run locally in seconds.
+- **Convention violations have no gate at all.** "State that is shareable belongs in the URL",
+  "a `*Row` type must not leave its module", "a new route must be registered by hand in
+  `modules/index.ts`" — prose in a skill or in `AGENTS.md`, measured by nobody.
+- **Only three of thirteen skills expose a checklist** (`frontend-architecture`,
+  `onion-architecture`, `typescript-expert`). The other ten are prose guides with no entry point
+  for review.
+- **The skill registry has already drifted.** `skills-lock.json` names `architecture-patterns`
+  and `github-workflow-automation`, and neither directory exists. Seven directories —
+  `engineering-insights`, `frontend-architecture`, `mermaid-diagram`, `onion-architecture`,
+  `react-best-practices`, `react-testing-library`, `security` — have no lock entry, so by the
+  rule in `CLAUDE.md` they read as locally authored whether or not they are.
+  `.claude/skills/README.md` promises a `.cursor/skills` symlink that is not in the tree.
 
-- **Skill coverage is accidental.** An agent editing `FindingsPanel.tsx` may open
-  `react-best-practices` and never open `frontend-architecture`. Nothing routes files to skills.
-- **Only three of thirteen skills can be applied to a diff at all.** `frontend-architecture`,
-  `onion-architecture` and `typescript-expert` end in a `## Review checklist`. The other ten are
-  prose guides with no entry point for a reviewer.
-
-The goal is narrow: review every open local change against the conventions this repo already
-wrote down, and make a `critical` finding stop the change from reaching GitHub.
+Spec 02 solved this shape once for one rule: a skill supplies the judgement, a gate supplies
+the measurement. This spec applies the same split to everything a branch touches, and adds the
+part 02 did not need — refusing to proceed.
 
 ## Approach
 
-**The hook does not review. It checks a verdict.**
+Three artifacts. The **skill** reviews and writes a verdict. The **hook** reads the verdict and
+blocks. The **verdict file** is the seam between them.
 
-Claude Code hooks are shell commands; they cannot call a model. Trying to make the hook do the
-review is the design mistake to avoid. So the work splits:
+### Why the hook cannot do the review
 
-| Part | Does | Artifact |
+Claude Code hooks are shell commands. They cannot call a model, so a hook can never *perform* a
+skill-based review. It can only check whether a fresh one exists and what it concluded. That
+constraint sets the whole design: the skill produces `.pr-self-review/latest.json`, and the hook
+is a freshness-and-verdict check over that file.
+
+Freshness is the load-bearing half. Without it, one passing review licenses every later push.
+
+```jsonc
+// .pr-self-review/latest.json  (git-ignored)
+{
+  "mode": "gates" | "full",      // which tracks actually ran
+  "verdict": "pass" | "blocked" | "incomplete",
+  "baseSha": "a1b2c3d",          // merge-base with main
+  "headSha": "6f7ebb4",
+  "worktreeHash": "…",           // hash of staged + unstaged + untracked content
+  "generatedAt": "2026-08-01T21:14:00Z",
+  "counts": { "critical": 2, "major": 5, "minor": 3 },
+  "findings": [ /* file, line, severity, source, message, fix, verifier */ ],
+  "skipped":  [ /* path, reason */ ],
+  "coverage": { "agents": [ { "name": "frontend", "status": "ok", "files": 11 } ] }
+}
+```
+
+The hook (`scripts/pr-self-review-gate.sh`, wired as `PreToolUse` on `Bash` in a new
+`.claude/settings.json`) reads `tool_input.command` from stdin and exits `2` — which blocks the
+call and hands its stderr back to the model — under two different rules:
+
+| Command | Requires | Blocks when |
 |---|---|---|
-| The skill | Reviews the diff, decides severity | `.pr-self-review/latest.json` + a printed report |
-| The hook | Reads the verdict, blocks or allows | `exit 2` on `git push` / `gh pr create` |
+| `git push` | a fresh run of **either** mode | file missing, stale, or any Track A gate failed |
+| `gh pr create`, `gh pr ready` | a fresh run with `mode: "full"` | file missing, stale, `mode` is `gates`, or the verdict is not `pass` |
 
-The verdict file carries `{ verdict, criticals[], baseSha, headSha, dirtyHash, generatedAt,
-mode, skipped }`. The hook rejects it as stale when `headSha` moved, when `dirtyHash` no longer
-matches the working tree, or when the merge-base with `main` moved under the branch.
+Stale means `headSha` or `worktreeHash` no longer matches the working tree. One `mode: "full"`
+run therefore satisfies both rules; a cheap `gates` run satisfies only the push.
 
-`mode` is what makes one verdict serve both commands. `git push` is satisfied by a fresh verdict
-of mode `gates` **or** `full`; `gh pr create` requires mode `full`. A missing, stale, or
-insufficient-mode verdict fails the same way: `exit 2` telling the agent which run to perform.
+### Track A — deterministic gates
 
-### Two tracks
+Run first, no model involved, only for packages present in the diff. A failure here is
+**critical by definition**; nothing interprets it.
 
-**Track A — deterministic gates.** No model. Run first, and only for packages present in the
-diff, so a docs-only change costs nothing.
+| Gate | Command | Passes when |
+|---|---|---|
+| Architecture | `cd server && pnpm arch` | exits 0 **and** the known-violations baseline did not grow |
+| Types | `pnpm typecheck` in `server/`, `client/`, `reviewer-core/` | exits 0 |
+| Lint | `cd client && pnpm lint` | exits 0 (`client/` is the only package with ESLint) |
+| Unit tests | `cd server && pnpm exec vitest run --exclude '**/*.it.test.ts'`; `cd client && pnpm test`; `cd reviewer-core && npm test` | exit 0 |
+| Vendor mirror | `diff -r server/src/vendor/shared client/src/vendor/shared` | no output |
+| Registry | lock ↔ directories, frontmatter `name` == directory, `SKILL.md` < 500 lines | no mismatch |
 
-| Gate | Command |
-|---|---|
-| Architecture | `cd server && pnpm arch` — exit 0 **and** the baseline did not grow |
-| Types | `pnpm typecheck` in `server/`, `client/`, `reviewer-core/` |
-| Lint | `cd client && pnpm lint` |
-| Unit tests | server `vitest run --exclude '**/*.it.test.ts'`, client, reviewer-core |
-| Vendor drift | `diff -r server/src/vendor/shared client/src/vendor/shared` |
+Integration tests (`*.it.test.ts`) are **not** in Track A. They need testcontainers and cost
+minutes; CI owns them.
 
-A failure here is `critical` by definition — no interpretation, no second opinion.
+Track A runs first and fails fast: a broken `typecheck` ends the run in seconds and no subagent
+is ever paid for. On `main` the skill does not review at all — it says to branch first.
 
-**Track B — skill review by parallel subagents.** Changed files route to domains; each subagent
-sees only its own files and returns findings as JSON, never prose.
+### Track B — skill review by parallel subagents
+
+One subagent per domain, each seeing only its own files, each returning JSON findings rather
+than prose. Every subagent reads the relevant `<module>/INSIGHTS.md` first — that file records
+failures that already cost someone time in this repo, which no general-purpose skill knows.
 
 | Diff matches | Subagent | Opens |
 |---|---|---|
-| `client/src/**/*.{ts,tsx}` | Frontend | `frontend-architecture`, `react-best-practices`, `next-best-practices` |
-| `client/**/*.test.{ts,tsx}` | Frontend tests | `react-testing-library` |
-| `server/src/modules/**`, `adapters/**`, `platform/**` | Backend | `onion-architecture`, `fastify-best-practices` |
-| `server/src/db/**`, `**/schema.ts`, `server/drizzle/*.sql` | Data | `drizzle-orm-patterns`, `postgresql-table-design` |
-| `**/contracts/**`, `*.schema.ts` | Contracts | `zod`, `typescript-expert` |
-| `reviewer-core/src/**` | Core | `onion-architecture` (Core ring only) |
-| routes, request input, auth, secrets, uploads | Security | the built-in `/security-review` |
+| `client/src/**/*.{ts,tsx}` | frontend | `frontend-architecture`, `react-best-practices`, `next-best-practices` (only when `app/`, `layout`, `page` or `'use client'` is touched) |
+| `client/**/*.test.{ts,tsx}` | frontend-tests | `react-testing-library` |
+| `server/src/{modules,adapters,platform}/**` | backend | `onion-architecture`, `fastify-best-practices` (only when a `routes.ts` or plugin is touched) |
+| `server/src/db/**`, `**/schema.ts`, `server/drizzle/**` | data | `drizzle-orm-patterns`, `postgresql-table-design` (only for a new migration or schema change) |
+| `**/vendor/shared/**`, `**/*.schema.ts`, Zod contracts | contracts | `zod`, `typescript-expert` |
+| `reviewer-core/src/**` | core | `onion-architecture` (Core-ring rules only) |
+| the whole diff | security | `security` — cross-cutting, the one agent that is not partitioned |
 
-Fan-out follows `superpowers:dispatching-parallel-agents` rather than a bespoke scheme.
+`mermaid-diagram` and `engineering-insights` take no part in review. The first is generative;
+the second runs *after*, when a finding turns out to be worth recording. The one exception:
+`docs/architecture.md` in the diff raises a note asking whether its diagram still holds.
 
-### The skill registry, and what is deliberately unused
+For the ten skills with no `Review checklist`, `routing.md` carries three to six "what to look
+for" lines per skill, each pointing at a section of that skill. **It does not copy the rules.** A
+third copy of a rule is a third thing to drift; spec 01 and the twice-vendored `shared/` are the
+standing reminder of what that costs.
 
-Skills come from three places. `~/.claude/skills/` does not exist here, so there is no fourth.
+**Precedence: a repo skill overrules an upstream one.** `drizzle-orm-patterns` will happily show
+a query inside a handler; `onion-architecture` §3.2 forbids it. Both are loaded by the same
+subagent for the same file. Without the rule written down, one report carries two contradictory
+findings and the reader stops trusting it.
 
-**Project — `.claude/skills/`.** All thirteen are accounted for. The eleven routed above, plus
-`mermaid-diagram` (unused; a review draws nothing) and `engineering-insights` (not a gate — the
-report suggests it when the run surfaced something non-obvious).
-
-**Plugins — `~/.claude/plugins/cache/claude-plugins-official/`.**
-
-| Skill | Role |
-|---|---|
-| `superpowers:requesting-code-review` | Boundary. It requests review from another agent; this skill checks conformance to repo conventions |
-| `superpowers:verification-before-completion` | The report format follows it: real command output, not a claim that a command passed |
-| `superpowers:dispatching-parallel-agents` | The fan-out mechanism |
-| `superpowers:receiving-code-review` | The next step for whoever acts on the findings |
-| `superpowers:test-driven-development` | Source of one rule: new behaviour with no test is `major` |
-| `superpowers:finishing-a-development-branch` | The next step after a clean run |
-| the remaining `superpowers:*` and all `chrome-devtools-mcp:*` | Not applicable to a static diff |
-
-**Built-in.** `/security-review` is invoked, not paraphrased. `/code-review` hunts bugs and is
-explicitly *not* this skill's job — the report ends by pointing at it. `simplify` is an optional
-pass after a clean run, never a gate. `claude-api` is skipped on purpose: `reviewer-core` depends
-on `openai`, which is that skill's own documented SKIP condition, and saying so in `routing.md`
-stops an agent burning context rediscovering it.
-
-**Precedence.** When two skills disagree, the repo skill wins. `drizzle-orm-patterns` will
-happily show a query inside a handler; `onion-architecture` §3.2 forbids it. Without this rule
-written down, two subagents put contradictory findings in one report.
-
-### What is never reviewed
-
-Three buckets, because "skip it" and "ignore it" are different answers.
-
-**Ignored.** Not read, counted in the report and nothing more: `**/node_modules/**`, lockfiles,
-`server/clones/**`, `.screenshots/**`, `client/.next/**`, `dist/**`, `build/**`, `coverage/**`,
-binaries (`*.png *.jpg *.svg *.ico *.woff2 *.pdf`), and `server/drizzle/meta/**` (generated
-journal and snapshots — the `.sql` migrations beside them *are* reviewed).
-
-**Flag-only.** No domain skill runs, but presence in the diff is itself the finding:
-
-| Path | Severity |
-|---|---|
-| `.env`, `*.env` (not `.env.example`) | critical — secret leak |
-| a skill listed in `skills-lock.json` | critical — pinned upstream copy |
-| any `CLAUDE.md` that stopped being a symlink | critical — the Claude Code shim is broken |
-| `server/src/vendor/**`, `client/src/vendor/**` | major; critical if the copies diverge |
-| `e2e/specs/*.flow.json` | major — live scenarios, not documentation |
-| `docs/agent-prompts/**` with no matching DB change | major — the DB is the source of truth |
-
-**Reviewed.** Everything else, by the routing table.
+**Skills from outside `.claude/skills/` are named, including the unused ones.** They come from two
+further places — the plugin cache and the built-ins; there is no `~/.claude/skills/`.
+`superpowers:dispatching-parallel-agents` is the fan-out mechanism,
+`superpowers:verification-before-completion` sets the report's evidence rule,
+`superpowers:test-driven-development` supplies "new behaviour with no test is major", and
+`receiving-code-review` / `finishing-a-development-branch` are the two steps after a run.
+Everything else — the rest of `superpowers`, all of `chrome-devtools-mcp`, and `claude-api`
+(skipped by its own documented rule, since `reviewer-core` depends on `openai`) — is listed in
+`routing.md` as deliberately unused, so the next editor does not "add the missing one".
 
 ### Severity, and what blocks
 
-Only `critical` blocks. It means: a Track A gate failed; a dependency-rule violation (Drizzle
-outside `repository.ts`, `container.db` in a route, `adapters/` importing `modules/`); a secret
-in `AppConfig`, `process.env`, or reachable from the client module graph; an OWASP finding
-(injection, authorization bypass, path traversal, SSRF); vendor drift; a new Fastify module
-absent from `modules/index.ts`; a test deleted or skipped to make a gate green.
+**critical — blocks per the hook table above**, so a Track A critical stops `git push` as well,
+while a Track B one stops only `gh pr create`: any Track A gate failed; a dependency-rule violation
+(Drizzle outside `repository.ts`, `container.db` in a route, `adapters/` importing `modules/`);
+a secret in `AppConfig`, `process.env`, or a committed file; an OWASP finding (injection,
+authorization bypass, path traversal, SSRF); one-sided drift between the two `vendor/shared`
+copies; a Fastify module added without registration in `modules/index.ts`; a test deleted or
+`skip`ped to make a gate green; a change to a `skills-lock.json`-pinned skill; a `CLAUDE.md` that
+stopped being a symlink.
 
-`major` is fixed before the PR but does not block. `minor` and `note` are records.
+**major — fix before the PR, does not block:** checklist violations that no gate enforces, new
+behaviour with no test, anything named `use*` that calls no hook, shareable state held in
+`useState`, a new route absent from the API map in `server/README.md`.
 
-**A model finding cannot block on its own.** Track A blocks immediately. A `critical` from a
-subagent goes to a second adversarial verifier — "try to refute this; if uncertain, refuted" —
-and drops to `major` unless confirmed.
+**minor / note:** everything else.
 
-**Every finding cites a rule.** `file:line` plus the skill section that was violated
-(`[onion §3.2]`). A finding with no rule reference is dropped before the report is written; that
-is what keeps this from becoming vague model nagging.
+### Guarding against false criticals
+
+Model findings are noisy, and here they stop work. So the two sources are treated differently: a
+Track A failure blocks immediately, while a **critical from a subagent must survive a second,
+adversarial verifier** ("try to refute this; if uncertain, treat it as refuted"). Unconfirmed,
+it drops to major and does not block.
+
+### Baseline
+
+`.pr-self-review/baseline.json` freezes findings that already exist in files the branch did not
+change, exactly as `.dependency-cruiser-known-violations.json` does for the architecture gate.
+Without it the first run against `pulls/routes.ts` — 420 lines, 16 direct `container.db` calls
+per spec 02 — emits sixteen criticals and the hook is deleted the same day.
+
+Findings are anchored to **diff lines, not files**. A violation on line 300 of a file whose line
+40 you edited is baseline, not yours.
+
+### What is never reviewed
+
+**Tier 1 — not read at all**, and always listed in the report's skipped section:
+`**/node_modules/**`, `**/dist/**`, `**/.next/**`, `**/coverage/**`, `pnpm-lock.yaml`,
+`package-lock.json`, `.screenshots/**`, `server/clones/**`, `server/drizzle/meta/**`, `*.snap`,
+binaries (`png|jpe?g|svg|webp|ico|pdf|woff2?`). A file over 200 KB or 1500 lines contributes its
+diff hunks only, never its full text.
+
+**Tier 2 — the fact of the change is the finding**, the contents are not reviewed:
+
+| Path | A change here means |
+|---|---|
+| `server/src/vendor/**`, `client/src/vendor/**` | acceptable only if both copies match; one-sided is **critical** |
+| `e2e/specs/*.flow.json` | major — live browser scenarios, confirm it was deliberate |
+| `.claude/skills/<locked>/**` | **critical** — pinned upstream copy |
+| `CLAUDE.md` anywhere | **critical** if it is no longer a symlink |
+| `server/clones/**`, `.env`, `*.key`, `*.pem` | **critical** — git-ignored runtime data, or a secret |
+
+**Tier 3 — read, but no skill applies.** A short checklist only, no subagent:
+`.github/workflows/**`, `scripts/**`, `docker-compose.yml`, `*.env.example`, `docs/**`,
+`specs/**`, `*.md`, `AGENTS.md`, `INSIGHTS.md`.
 
 ### The report
 
-Printed after the run; the JSON is written alongside for the hook.
+`.pr-self-review/report.md` is written and printed; `latest.json` carries the same data for the
+hook. The verdict, the counts and the scope fit on the first screen; detail follows, ordered by
+severity and then by path.
 
 ```
-━━ PR Self-Review ─ feat/findings-severity-filter ━━━━━━━━━━━━━━━━━━━
-  BLOCKED · 1 critical · 3 major · 2 minor            12.4s
-  Scope  main…HEAD +7 uncommitted · 18 reviewed · 9 ignored · 2 flagged
+PR Self-Review — BLOCKED        2 critical · 5 major · 3 minor
+base main@a1b2c3d → HEAD 6f7ebb4 + 4 uncommitted
+18 files (client 11 · server 5 · docs 2) · 3 skipped · 42s · mode full
 
-  Gates                                            (track A, no model)
-    ✔ server arch        exit 0, baseline 41 → 41
-    ✘ client lint        exit 1 — 1 error
-    ⊘ server unit tests  skipped — no server/src file in diff
+GATES
+  ok    server  arch         baseline 20 -> 20
+  ok    server  typecheck
+  ok    server  test         88 passed
+  FAIL  client  lint         2 errors                     -> CRITICAL 1
+  ok    client  typecheck
+  ok    client  test         141 passed
+  ok    shared  vendor diff  clean
+  ok    repo    registry     lock and directories agree
+  --    core    typecheck    not run (no changes in reviewer-core)
 
-  CRITICAL
-  1  client/src/…/FindingsPanel.tsx:64          [gate: client lint]
-     react-hooks/exhaustive-deps — `repoId` missing from deps
-     Fix: cd client && pnpm lint --fix
+CRITICAL — blocks the PR
+  1  client/src/.../FindingCard.tsx:42            [gate eslint]
+     react-hooks/exhaustive-deps: `repoId` missing from the dependency array
+     Fix: add `repoId` to the dependency array
 
-  MAJOR
-  2  client/src/…/FindingsPanel.tsx:31   [frontend-architecture §5]
-     Shareable filter state in useState, not the URL · verifier 2/2
+  2  server/src/modules/pulls/routes.ts:118       [onion-architecture 3.1]
+     `container.db` in a route — added by this diff, not baseline
+     Verifier: confirmed 2/2
+     Fix: move the query into pulls/repository.ts
 
-  Coverage   nothing truncated · flag-only: e2e/specs/pr-review.flow.json
-  Next       /pr-self-review --only critical · bugs are /code-review
-  Verdict → .pr-self-review/latest.json (HEAD 6f7ebb4)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MAJOR — fix before the PR, does not block
+  3  client/.../FindingsPanel.tsx:57  [frontend-architecture 5]
+     filter state in useState although it is shareable — belongs in the URL
+  ... 4 more
+
+MINOR / NOTES — 3, listed in .pr-self-review/report.md
+
+SKIPPED
+  client/pnpm-lock.yaml (lockfile) · .screenshots/panel.png (binary)
+  server/src/vendor/shared/contracts.ts (vendor — mirror checked, contents not reviewed)
+
+Next: fix 2 criticals, then /pr-self-review (re-reviews only what changed).
+This skill checks conventions, not correctness. For logic bugs run /code-review.
 ```
 
-Rules the report obeys: gates print real exit codes; a skipped gate states why; nothing is
-truncated silently; and **an empty report is a valid result** — zero findings print as zero.
-Inventing a finding so the run looks useful is prohibited in `SKILL.md`, for the same reason
-`INSIGHTS.md` records that local reviews legitimately return nothing.
+Five rules make it trustworthy:
 
-After a clean run the report appends a paste-ready PR description. The diff has already been
-read; drafting it costs almost nothing and is the next thing anyone does.
+1. **No finding without `file:line` and a source** — `[onion-architecture §3.1]` or
+   `[gate eslint]`. A finding that cannot be checked is not a finding.
+2. **Every critical carries one concrete `Fix:` line.** Not "consider reviewing".
+3. **Skipped files are always printed.** A green report with no skipped list is lying.
+4. **A failed subagent is visible** — `FE agent failed, 11 files unreviewed` — and forces the
+   `incomplete` verdict, which blocks. Otherwise the cheapest way past the gate is to break a
+   subagent.
+5. **The report states what it does not do**: this skill checks conventions, not correctness.
+   Logic bugs are `/code-review`'s job.
 
-On `main`, the skill does not review — it says to branch first.
+A sixth rule is about restraint rather than trust: **an empty report is a valid result.** Zero
+findings print as zero. Inventing something so the run looks worthwhile is prohibited outright —
+the root `INSIGHTS.md` already records that reviews in this repo legitimately return nothing.
 
-### Artifacts
+After a passing `full` run the report appends a paste-ready PR description. The diff has been
+read already, so drafting it is nearly free, and it is the next thing anyone does.
+
+### Modes and cost control
+
+`/pr-self-review` runs everything. `gates` runs Track A alone in seconds. `fe`, `be`, `sec` run
+one domain. Findings are cached by file-content hash, so the run after a fix re-reviews only
+what changed.
+
+### What gets built
 
 ```
-.claude/skills/pr-self-review/{SKILL.md,gates.md,routing.md,severity.md,README.md}
-.claude/commands/pr-self-review.md      slash command; --gates, --full, --only critical
-.claude/settings.json                   PreToolUse hook (no such file today)
-scripts/pr-self-review-gate.sh          reads the verdict; never reviews
-scripts/fixtures/pr-self-review/        deliberately bad diffs, one per critical rule
-.gitignore                              += .pr-self-review/
-.claude/skills/README.md                += catalog row
+.claude/skills/pr-self-review/
+  SKILL.md      trigger, procedure, severity model, block rule, routing table
+  gates.md      Track A commands per package, and how to read each failure
+  routing.md    globs to skills, and what to look for in the ten without a checklist
+  severity.md   the four levels, with examples taken from this repo
+  README.md     skill card: scope, sibling boundaries, sources, version, baseline evidence
+scripts/pr-self-review-gate.sh      the hook: reads the verdict, never reviews
+.claude/settings.json               new file — PreToolUse hook on Bash
+.claude/commands/pr-self-review.md  the slash command
 ```
 
-Not added to `skills-lock.json` — this skill is ours.
+Plus a catalog row in `.claude/skills/README.md`, `.pr-self-review/` in `.gitignore`, and **no
+entry in `skills-lock.json`** — this skill is ours.
 
 ## Decisions and their alternatives
 
-**`git push` runs Track A only; `gh pr create` runs everything.** Requiring a full fan-out for
-every WIP push means dozens of model runs a day for changes nobody will ever read. The gate that
-actually catches breakage cheaply — typecheck, lint, arch, vendor diff — costs seconds and runs
-on every push. The expensive judgement runs once, where it pays: at the PR boundary.
+**A Claude Code hook, not a git `pre-push` hook.** A git hook fires for every terminal, which is
+strictly better coverage, but it can only run Track A — a shell hook cannot invoke a model, so
+the skill review would silently never run for anyone outside Claude Code. Coverage that omits the
+half the spec exists for is worse than honest partial coverage. A git hook remains available
+later for Track A alone.
 
-**An escape hatch exists and is recorded.** `PR_SELF_REVIEW_SKIP=1 git push` passes, and the
-bypass is written into `latest.json` and printed in the next report. A gate with no override is
-removed from `settings.json` the first time it is inconvenient, and then protects nothing. A
-recorded override is visible; a deleted hook is not.
+**`git push` runs Track A only; `gh pr create` runs everything.** The request was "before every
+GitHub call", but pushing a WIP branch is ordinary and happens dozens of times a day. Charging a
+full multi-agent review for each one guarantees the hook is removed. The gates are seconds and
+still catch the majority of criticals; the full review is mandatory at the moment a PR is
+actually opened.
 
-**A Claude Code hook, not a git `pre-push` hook.** A git hook would also catch pushes from the
-IDE, which is a real advantage. But it cannot run Track B at all — there is no agent behind it —
-so it would enforce only the half that CI already enforces, at the cost of a second maintenance
-point and a slower push. Consequence accepted below.
+**The escape hatch stays.** `PR_SELF_REVIEW_SKIP=1 git push` bypasses the hook and the bypass is
+recorded in the report. A gate with no override is removed the first time it is wrong during an
+urgent push, and then it protects nothing.
 
-**The skill routes; it does not restate rules.** Rules live in the skills they came from. A
-fourth copy of "no Drizzle in a route" would drift from the three that exist
-(`onion-architecture`, `.dependency-cruiser.cjs`, `server/AGENTS.md`). For the ten skills with no
-checklist, `routing.md` carries three to six *pointers* per skill, not their content.
+**Freeze a baseline instead of starting clean.** Same argument as spec 02, with a sharper edge:
+there, a red gate blocked a branch; here it blocks every push in the repo.
 
-**Findings are dropped unless they cite a rule.** The alternative — let subagents report whatever
-they noticed — produces a report nobody reads by the third run, and the block becomes noise.
+**Parallel subagents, not an inline sweep.** Reviewing five domains inline loads four or five
+skills into one context at once and serialises the work. Partitioned subagents keep the main
+context clean and each agent's attention on its own files. The cost is tokens, which the
+content-hash cache and the mode flags are there to bound.
 
-**Fail-fast ordering, and a fixed time budget.** Track A first: a broken typecheck ends the run
-in seconds without paying for subagents. Exceeding the budget reports partial coverage and is
-never a pass.
+**This skill copies no rules.** It routes and enforces; the domain rules stay in their skills.
+Restating them here creates a third copy that drifts — which is the failure mode the `shared-sync`
+gate exists to catch elsewhere in this repo.
 
-**The verdict is cached by diff hash.** Re-running with an unchanged diff reuses the verdict, so
-a push after a rebase-less retry is free.
+**No review on `Edit`/`Write`.** A `PostToolUse` hook reviewing each write is tempting and would
+catch problems earlier. It also runs a review dozens of times per feature, most of them against
+code that is half-written. Rejected deliberately, recorded here so it is not revisited.
+
+**`incomplete` blocks.** Treating a crashed subagent as a pass makes breaking a subagent the
+cheapest way through the gate.
+
+**It does not hunt for bugs.** `/code-review` and `/security-review` already do, and they are
+better at it. This skill checks conventions, gates, and secrets, and it blocks — three things
+those commands do not do. The report points at them rather than competing.
+
+**It supersedes `superpowers:requesting-code-review` in this repo.** Same intent, but that skill
+knows nothing about `pnpm arch`, the vendored `shared/`, or `skills-lock.json`. `SKILL.md` states
+the boundary so an agent does not run both.
 
 ## Known weakness
 
-**A push outside Claude Code bypasses the gate completely.** A `git push` from WebStorm or a
-plain terminal never reaches a `PreToolUse` hook. This is the direct cost of the decision above,
-and it means the gate is a fast feedback loop for agent-driven work, not an enforcement boundary.
-CI remains the only thing that cannot be walked around.
+**Half the verdict is non-deterministic.** Two runs over the same diff will not produce the same
+Track B findings. The adversarial verifier reduces false criticals but cannot remove them, and it
+cannot address false *negatives* at all — a missed critical is invisible by construction. Track A
+is the only part with a reproducible answer, which is the argument for keeping it first and
+letting it block on its own.
 
-**Track B is not reproducible.** Two runs over the same diff can differ. Adversarial verification
-reduces the false-positive rate but cannot make model output deterministic, so only Track A
-findings are stable enough to argue with. Anything blocking that came from a subagent should be
-readable as a claim with evidence, not as a verdict.
+**The baseline can hide a real problem.** A pre-existing critical in an untouched file never
+blocks. That is the deliberate trade for the skill surviving its first week, and the mitigation
+is the same as spec 02's: the file only shrinks, and it is readable.
 
-**The flag-only table is a second copy of `CLAUDE.md` prose.** The do-not-touch list, the
-symlink rule and the DB-is-source-of-truth rule live in `CLAUDE.md` today. Encoding them in
-`routing.md` creates exactly the drift this spec warns about elsewhere. Mitigation is a single
-acceptance check comparing the two lists; there is no mechanism that keeps them honest.
+**The freshness check breaks on rebase.** `headSha` changes when a branch is rebased or amended
+even though the content did not, forcing a re-review. `worktreeHash` covers uncommitted changes
+but not this case. Accepted rather than solved; a content-tree hash instead of a SHA is the
+obvious later fix.
 
-**Staleness detection cannot see everything.** `headSha` + working-tree hash + merge-base cover
-the common cases. A dependency install, an env change, or an edit to a skill itself leaves the
-verdict looking fresh while its basis moved.
+**The hook guards one tool, not the machine.** It sees `Bash` calls in this session. A push from
+another terminal, an IDE button, or the GitHub web UI bypasses it entirely. This is a discipline
+aid, not a security control — the enforceable copy of these rules is CI.
 
-**The value is unmeasured until the baseline runs.** `.claude/skills/README.md` requires
-measuring against an agent without the skill. Spec 02 found every RED agent reached the right
-answer unaided, and the skill bought speed rather than correctness. The same may hold here — the
-part most likely to earn its keep is the routing table, since accidental skill coverage is the
-gap that started this.
+**The ten checklist-less skills get our summary, not theirs.** Six of them are pinned upstream in
+`skills-lock.json` and cannot be edited to add a checklist, so `routing.md` holds a pointer that
+can go stale against the skill it points at. Nothing detects that drift.
+
+**Unmeasured until acceptance runs.** Every claim about what this catches is a prediction. The
+RED/GREEN prong below exists because `.claude/skills/README.md` requires it and because spec 02
+found its skill rescued nothing it had assumed it would.
 
 ## Acceptance
 
-- Every fixture in `scripts/fixtures/pr-self-review/` produces its expected `critical`, and
-  removing the defect makes the run pass. One fixture per critical rule, including a Drizzle call
-  in a route, a secret in `AppConfig`, divergent vendor copies, and an unregistered Fastify
-  module.
-- `git push` with a failing `cd client && pnpm lint` is blocked; the same push with
-  `PR_SELF_REVIEW_SKIP=1` succeeds and the bypass appears in `latest.json` and in the next report.
-- A verdict is rejected as stale after a new commit, after an uncommitted edit, and after the
-  merge-base with `main` moves.
-- A docs-only diff runs no gate for `server/` or `client/`, and each skipped gate states why.
-- A clean run prints zero findings and drafts a PR description; it invents nothing.
-- Every path in the ignored and flag-only tables matches `CLAUDE.md` §"Do not touch"; a diff of
-  the two lists is empty.
-- `SKILL.md` is under 500 lines, `name` matches the directory, file references are one level
-  deep, and the frontmatter has no top-level `version`.
-- The skill is absent from `skills-lock.json` and present in `.claude/skills/README.md`.
-- The RED/GREEN baseline is run and recorded in the skill's `README.md`, with RED being a genuinely
-  absent skill rather than an instruction not to use it.
+- `/pr-self-review` on a clean branch writes `latest.json` with `verdict: "pass"` and a report
+  that lists the skipped files.
+- With an injected `container.db` call in `modules/agents/routes.ts`, both tracks fire
+  independently: `pnpm arch` grows the baseline, so `git push` is refused with exit 2 after a
+  `gates` run alone; and the backend agent raises the same violation citing `onion-architecture`
+  and `file:line`, confirmed by the adversarial verifier. `PR_SELF_REVIEW_SKIP=1 git push`
+  proceeds and the report records the bypass.
+- A `gates` run lets `git push` through but is refused for `gh pr create` on `mode`.
+- A pass followed by one edit makes the verdict stale, and the hook blocks both commands until
+  the review is re-run.
+- A deliberately crashed subagent yields `incomplete`, blocks, and names the unreviewed files.
+- The registry gate reports today's real drift: two `skills-lock.json` entries without
+  directories, seven directories without entries, and the missing `.cursor/skills` symlink.
+- Re-running against commit `1d5348d` (*refuse a finding link whose path would resolve out of the
+  repo*) with the fix reverted raises a path-traversal critical from the `security` agent. This is
+  the RED prong: a real defect this repo actually shipped a fix for.
+- The same run without the skill installed is recorded in `README.md` as the GREEN comparison,
+  with token and tool-call counts, per `.claude/skills/README.md`.
+- Track A alone completes in under 90 seconds on a diff touching both packages, and a failing
+  `typecheck` ends the run before any subagent starts.
+- Every path in the Tier 1 and Tier 2 tables appears in `CLAUDE.md` §"Do not touch" or in the
+  gotchas beside it; diffing the two lists yields nothing. This is the only guard against the
+  copy those tables create.
+- `SKILL.md` under 500 lines, file references one level deep, frontmatter `name` matching the
+  directory, no top-level `version`.
 - No Cyrillic in any committed file.
