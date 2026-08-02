@@ -34,11 +34,11 @@ Scope is the whole repo: every package, every file the branch touched, committed
 
 | File | Lines | Answers |
 |---|---|---|
-| `README.md` | 204 | This card: scope, boundaries, sources, decisions, how it was tested |
-| `SKILL.md` | 357 | When does it run? What is the procedure? Which mode? What must never be reported? |
+| `README.md` | 216 | This card: scope, boundaries, sources, decisions, how it was tested |
+| `SKILL.md` | 381 | When does it run? What is the procedure? Which mode? What must never be reported? |
 | `routing.md` | 166 | Which subagent opens which skill, what to look for in the ones with no checklist, what is left out on purpose |
 | `gates.md` | 181 | What is each Track A gate, what does its failure look like, what do I try first? |
-| `severity.md` | 124 | Which of the four levels is this, and what does it stop? |
+| `severity.md` | 131 | Which of the four levels is this, and what does it stop? |
 
 `SKILL.md` stays thin because it loads in full whenever the skill activates. The topic files load
 only when the run needs them — a `--gates` run never opens `routing.md`.
@@ -98,7 +98,7 @@ specific claim taken from it.
 | `scripts/pr-self-review/scope.sh` | the four buckets and their exact JSON — `routed` / `checklist` / `skipped` / `flagged`, and that `flagged` entries carry `line: 1` |
 | `scripts/pr-self-review/gates.sh` | the ten gates, the `skip` ≠ `ok` distinction, and that gate findings put the package name in `file` |
 | `scripts/pr-self-review/baseline.sh` | that only an `agent `-sourced finding is diff-anchored, and that the freeze fingerprint is `{file, line, message}` |
-| `scripts/pr-self-review/report.sh` | the five trustworthiness rules, and that the verdict never travels by exit code |
+| `scripts/pr-self-review/report.sh` | the six trustworthiness rules, that the verdict never travels by exit code, and that a payload with no findings array is `incomplete` |
 | `scripts/pr-self-review/gate.sh` | what the hook actually refuses, and that freshness is the load-bearing half |
 | `scripts/pr-self-review/registry.sh` | the five registry checks and their severities |
 | `.claude/skills/README.md` | the authoring standard: thin `SKILL.md`, one topic file per question, `name` matching the directory, no top-level `version` |
@@ -183,6 +183,17 @@ Decisions made while writing, beyond what the spec fixed:
   a model. A bare `startswith` raises `requires string inputs`, and under `set -e` that discarded
   the entire payload, deterministic criticals included. One malformed model finding must not take
   the committed `.env` with it.
+- **`report.sh` refuses to call an unreadable payload a pass (its rule 6).** Three separate
+  defects in this feature's short history ended identically: a `jq` step failed or a slurped file
+  came back empty, `null` reached a `+`, jq took null as the identity for it, and an empty
+  findings array produced `pass`. Guarding each site as it was found lost three times, so the
+  last station on the line now treats an absent, null, or non-array `.findings` as `incomplete`.
+  An empty *array* is still `pass` — an empty report is a valid result and that rule stands.
+  Repairing rather than crashing is the load-bearing part: a crash writes no `latest.json`, and a
+  passing verdict from an earlier run over the same tree is still *fresh* to `gate.sh`, so it
+  would be honoured. Measured against the committed pre-fix script, `.findings = {}` went from
+  `pass` to `incomplete`, and a broken run following a clean one now overwrites the stale `pass`
+  instead of leaving it standing.
 - **No `enforcement.md` and no `report-format.md`.** The scripts are the executable copy of both.
 
 ## 9. How this skill was tested

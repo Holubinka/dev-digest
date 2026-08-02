@@ -102,6 +102,28 @@ assert_json "$out" '[.[] | select(.file == ".env")][0].severity' 'critical' \
   'the deterministic critical beside it is not lost'
 rm -rf "$repo"
 
+# `file` is written by the same model as `source`, and $touched[.file] raises
+# "Cannot index object with null" on a missing key and "... with number" on a
+# non-string. Same blast radius: the whole payload, deterministic criticals
+# included.
+repo="$(make_repo)"
+nofile='{"severity":"major","source":"agent backend · onion-architecture §3.2","line":300,"message":"no file key"}'
+out="$(cd "$repo" && printf '%s' "$(input "[$nofile,$flag]")" | bash "$BASELINE")"; code=$?
+assert_eq "$code" 0 'a finding with no file does not abort the script'
+assert_json "$out" 'length' '2' 'and the payload survives intact'
+assert_json "$out" '[.[] | select(.file == ".env")][0].severity' 'critical' \
+  'the deterministic critical beside it is not lost'
+assert_json "$out" '[.[] | select(.message == "no file key")][0].severity' 'note' \
+  'the fileless model finding matches no touched path, so it is demoted'
+rm -rf "$repo"
+
+repo="$(make_repo)"
+numfile='{"severity":"major","source":"agent backend · x","file":42,"line":300,"message":"numeric file"}'
+out="$(cd "$repo" && printf '%s' "$(input "[$numfile,$flag]")" | bash "$BASELINE")"; code=$?
+assert_eq "$code" 0 'a non-string file does not abort the script either'
+assert_json "$out" 'length' '2' 'and that payload survives too'
+rm -rf "$repo"
+
 repo="$(make_repo)"
 odd_type='{"severity":"minor","source":42,"file":"server/src/modules/pulls/routes.ts","line":300,"message":"numeric source"}'
 out="$(cd "$repo" && printf '%s' "$(input "[$odd_type]")" | bash "$BASELINE")"; code=$?

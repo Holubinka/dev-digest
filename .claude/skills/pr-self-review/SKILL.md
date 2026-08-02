@@ -218,6 +218,10 @@ turn. Cheap error, expensive error; pick the cheap one.
 people, prints the short form, and always exits 0. **The verdict never reaches you through an
 exit code** — read it from the output or from `latest.json`.
 
+If the report prints `BROKEN INPUT`, no findings array reached the script: some step above lost
+it, and the verdict is `incomplete` rather than `pass`. Do not paper over it by re-running step 6
+with a hand-written array — find which step produced an empty file and fix that.
+
 **7 — Print the report and stop.** Do not fix anything unless asked. If the verdict is `blocked`,
 say which criticals block and where; the user decides what happens next.
 
@@ -245,12 +249,18 @@ finding is the one thing this baseline cannot survive.
 
 ```sh
 jq -r '[.findings[] | select(.severity == "critical")
-                    | select(.source | startswith("agent ")) | .file] | unique[]' \
+                    | select(((.source // "") | tostring) | startswith("agent ")) | .file] | unique[]' \
   .pr-self-review/latest.json > "$TMP/recheck"
 ```
 
 Only **Track B** criticals go on that list. A gate critical needs no narrowing — step 2 re-runs
 every gate in full anyway, and `skills-lock.json` is not a file a subagent reviews.
+
+**Both `--only critical` snippets guard `.source` the same way `baseline.sh` does**, and for the
+same reason: this command reads `latest.json`, whose findings were written by a model, and
+`baseline.sh` deliberately lets a malformed-source finding *through* rather than dropping the
+payload — so `report.sh` records it and the next run reads it back. A bare
+`.source | startswith(…)` on that entry raises `startswith() requires string inputs` and exits 5.
 
 No `latest.json` means there is no last run to narrow — say so and run `--full` instead. Then:
 
@@ -268,21 +278,33 @@ No `latest.json` means there is no last run to narrow — say so and run `--full
     '($r | split("\n") | map(select(length > 0))) as $re
      | [ $p[0].findings[]
          | . as $f
-         | select($f.source | startswith("agent "))
-         | select(($re | index($f.file)) | not) ] + $n[0]' > "$TMP/merged.json"
-  mv "$TMP/merged.json" "$TMP/findings.json"
+         | select(((($f.source // "") | tostring) | startswith("agent ")))
+         | select(($re | index(($f.file // "") | tostring)) | not) ] + $n[0]' \
+    > "$TMP/merged.json" && mv "$TMP/merged.json" "$TMP/findings.json"
   ```
 
-  **Write to `merged.json` and `mv`. Never redirect into `findings.json` while `--slurpfile n`
-  is reading it** — the shell truncates the redirection target before `jq` starts, so `$n` comes
-  back `[]`, `$n[0]` is `null`, and `[carried] + null` is silently just `[carried]` in jq. The
-  re-check's own findings disappear, the count drops, and `report.sh` writes `pass` on a branch
-  whose criticals were never fixed. That is the exact failure the carry-forward exists to
-  prevent, arriving through the other door.
+  **The `&&` is load-bearing, and so is the separate filename.** Three things had to be true at
+  once here, and each was wrong at some point:
 
-  Bind the finding to `$f` before the `index`. After the pipe into `index()`, a bare `.file`
-  reads off `$re`, not off the finding — `jq` answers `Cannot index array with string "file"`,
-  and a subtler shape of the same mistake once shipped silently in `baseline.sh`.
+  1. **Never redirect into `findings.json` while `--slurpfile n` is reading it.** The shell
+     truncates a redirection target before `jq` starts, so `$n` comes back `[]`, `$n[0]` is
+     `null`, and `[carried] + null` is silently just `[carried]`. Everything the re-check found
+     disappears.
+  2. **`mv` only on success.** A failing `jq` still leaves the 0-byte `merged.json` the redirect
+     created. An unconditional `mv` then installs *that* as `findings.json`, step 5 slurps it to
+     `null`, `+` takes null as its identity, the merge exits 0 with nothing in it, and the
+     verdict reads `pass`. Chaining with `&&` leaves the previous `findings.json` in place
+     instead. **If this command fails, stop and re-run `--full`** — do not run step 5 on a
+     half-merged file.
+  3. **Bind the finding to `$f` before the `index`.** After the pipe into `index()`, a bare
+     `.file` reads off `$re`, not off the finding — `jq` answers
+     `Cannot index array with string "file"`.
+
+  Those three are one failure mode wearing three hats: a `null` reaching a `+`, which jq treats
+  as the identity, producing an empty findings array and a `pass` on a branch that has none.
+  `report.sh` refuses to call such a payload a pass (rule 6 in its header), so an escape here is
+  caught — but it is caught as `incomplete`, which blocks and costs a full re-run. Get it right
+  at the site.
 
 - Step 6 records **`mode: "gates"`, not `"full"`.** Track A ran whole, Track B did not, and
   `gates` is exactly the mode `gate.sh` already treats as *enough for a push, not enough for a
@@ -338,6 +360,8 @@ Stop when you catch yourself doing any of these.
 | "Track A failed, but let's see what the agents find" | §3.2 — it already blocks; the agents are wasted spend |
 | "`scope.flagged` is just metadata" | §3.5 — it holds the committed-secret criticals |
 | "The source can just name the skill" | §3.3 — without the `agent ` prefix it is never diff-anchored |
+| "The `jq` probably worked, `mv` it into place" | §4 — a failed `jq` leaves a 0-byte file that reads as zero findings |
+| "`BROKEN INPUT` — I'll just re-run step 6 with the array" | §3.6 — that hides which step lost it |
 | "I'll re-freeze the baseline so the branch goes green" | §4 — the baseline only shrinks |
 | "It's on line 300 of a file I touched at line 40" | §3.5 — that is baseline, not yours |
 | "Run it on `main`, it's only a check" | §1 — there is no base and no PR |

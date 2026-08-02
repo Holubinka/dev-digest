@@ -24,13 +24,19 @@
 # The baseline exists for the sixteen pre-existing container.db calls in
 # pulls/routes.ts, and those come from a subagent. Only model findings need it.
 #
-# The `source` test is defensive because half the findings are written by a
-# model: a missing or non-string `source` would make bare startswith() raise
-# "requires string inputs", and under `set -e` that discards the WHOLE payload
-# — including the deterministic criticals sitting beside the malformed entry.
-# One bad model finding must not take the committed .env with it. An entry with
-# no usable source is treated as deterministic, which is the safe direction:
-# it stays visible at full severity instead of vanishing.
+# Both the `source` and the `file` tests are defensive, and for the same
+# reason: half the findings in the payload are written by a model, so any key
+# can be absent or the wrong type. A bare startswith() on a missing `source`
+# raises "requires string inputs"; a bare $touched[.file] on a missing `file`
+# raises "Cannot index object with null". Under `set -e` either one discards
+# the WHOLE payload — including the deterministic criticals sitting beside the
+# malformed entry. One bad model finding must not take the committed .env with
+# it.
+#
+# An entry with no usable source is treated as deterministic, and one with no
+# usable file simply matches no touched path. Both are the safe direction: the
+# finding stays visible at full severity instead of vanishing, and nothing else
+# in the array is affected.
 #
 # Always exits 0.
 #
@@ -69,7 +75,7 @@ printf '%s' "$payload" | jq \
           .
         elif .line == 0 then
           .
-        elif ($touched[.file] // []) | index($f.line) then
+        elif ($touched[(($f.file // "") | tostring)] // []) | index($f.line) then
           .
         else
           .severity = "note" | .anchored = false

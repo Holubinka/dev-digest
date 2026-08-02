@@ -113,10 +113,17 @@ over a key prop.
 |---|---|---|---|
 | `pass` | no critical, every agent ok | allowed | allowed **only if** `mode` is `full` |
 | `blocked` | one or more criticals survive | refused | refused |
-| `incomplete` | any agent status is not `ok` | refused | refused |
+| `incomplete` | any agent status is not `ok`, **or the payload carried no findings array** | refused | refused |
 
 `incomplete` outranks `blocked` deliberately: if a crashed subagent counted as a pass, breaking
 a subagent would be the cheapest way through the gate.
+
+The second trigger is the same argument turned on the pipeline itself. `report.sh` computes the
+verdict from `.findings`, and everything upstream is a chain of `jq` steps over slurped files —
+if one fails or a file comes back empty, `null` reaches a `+`, jq takes it as the identity, and
+an empty array arrives looking exactly like a clean run. So a payload whose `.findings` is
+absent, null, or not an array is `incomplete` by definition. An empty *array* is still `pass`:
+zero findings really are a valid result, and rule 6 must not break the rule beside it.
 
 Freshness sits on top of all three. A verdict is only usable while `headSha` and `worktreeHash`
 still match the working tree, so one edit after a pass makes it stale and the hook refuses again.

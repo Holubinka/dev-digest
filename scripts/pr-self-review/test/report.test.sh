@@ -82,6 +82,48 @@ assert_eq "$([ -f "$repo/.pr-self-review/report.md" ] && printf yes || printf no
   'the report is still written when .gates is missing'
 rm -rf "$repo"
 
+# --- rule 6: a payload with no findings array is incomplete, never pass --------
+# The class guard. Three defects in this feature's history ended the same way:
+# a jq step failed or a slurped file came back empty, `null` reached a `+`, jq
+# took null as the identity, and an empty findings array produced `pass`. Every
+# case below would have been a clean `pass` before this rule existed.
+for missing in 'del(.findings)' '.findings = null' '.findings = {}' '.findings = "none"'; do
+  repo="$(make_repo)"
+  out="$(cd "$repo" && printf '%s' "$(payload full '[]' '[]')" | jq "$missing" | bash "$REPORT")"
+  code=$?
+  assert_eq "$code" '0' "[$missing] still exits 0"
+  assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'incomplete' \
+    "[$missing] is incomplete, not pass"
+  assert_contains "$out" 'BROKEN INPUT' "[$missing] says so in the report"
+  rm -rf "$repo"
+done
+
+# --- but an empty findings array is still a pass -------------------------------
+# Rule 6 must not break the rule it sits next to: an empty report is a valid
+# result here, and zero findings print as zero.
+repo="$(make_repo)"
+out="$(cd "$repo" && printf '%s' "$(payload full '[]' '[]')" | bash "$REPORT")"
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'pass' \
+  'an empty findings array is still a pass'
+assert_contains "$out" '0 critical' 'and it still prints zero'
+case "$out" in
+  *'BROKEN INPUT'*) assert_eq 'marked broken' 'not marked' 'an empty array is not a broken input' ;;
+  *)               assert_eq 'not marked' 'not marked' 'an empty array is not a broken input' ;;
+esac
+rm -rf "$repo"
+
+# --- rule 6 overwrites a stale passing verdict rather than leaving it ----------
+# Crashing would not be enough. gate.sh reads latest.json, and a pass from an
+# earlier run over the same tree is still fresh — same headSha, same
+# worktreeHash — so it would be honoured. The file must be rewritten.
+repo="$(make_repo)"
+( cd "$repo" && printf '%s' "$(payload full '[]' '[]')" | bash "$REPORT" >/dev/null )
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'pass' 'the earlier run passed'
+( cd "$repo" && printf '%s' "$(payload full '[]' '[]')" | jq 'del(.findings)' | bash "$REPORT" >/dev/null )
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'incomplete' \
+  'the broken run overwrites the stale pass'
+rm -rf "$repo"
+
 # --- a recorded bypass surfaces once, then is cleared --------------------------
 repo="$(make_repo)"
 mkdir -p "$repo/.pr-self-review"
