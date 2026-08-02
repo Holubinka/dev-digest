@@ -100,8 +100,10 @@ changed_lines() { # path -> JSON array of line numbers touched on this branch
              count = (p[2] == "" ? 1 : p[2]);
              for (i = 0; i < count; i++) print p[1] + i
            }' | jq -R . | jq -s 'map(tonumber)'
-  else
+  elif [ -f "$1" ]; then
     awk 'END { for (i = 1; i <= NR; i++) print i }' "$1" | jq -R . | jq -s 'map(tonumber)'
+  else
+    printf '[]'
   fi
 }
 

@@ -107,4 +107,27 @@ assert_json "$out" "$lines | index(1)" 'null' \
   'a line the branch never touched is not in scope'
 rm -rf "$repo"
 
+# --- a deleted routed file yields no lines and does not crash ------------------
+# `git ls-files --error-unmatch` is false for a removed path, so the untracked
+# branch used to read a file that is no longer on disk. A deletion stays routed:
+# the spec makes a test deleted to green a gate a critical finding.
+repo="$(make_repo)"
+mkdir -p "$repo/client/src"
+printf 'a\nb\n' >"$repo/client/src/gone.ts"
+git -C "$repo" add -A && git -C "$repo" commit -qm "gone.ts predates the branch"
+git -C "$repo" checkout -qb feat/x
+git -C "$repo" rm -q "client/src/gone.ts"
+
+out="$(cd "$repo" && bash "$SCOPE")"; code=$?
+assert_eq "$code" '0' 'a staged deletion does not crash scope.sh'
+assert_json "$out" '[.routed[] | select(.path == "client/src/gone.ts")] | length' '1' \
+  'a deleted file stays routed so the deletion itself can be reviewed'
+assert_json "$out" '[.routed[] | select(.path == "client/src/gone.ts")][0].lines | length' '0' \
+  'and carries no lines, because there is nothing left to anchor to'
+
+git -C "$repo" commit -qm "delete gone.ts"
+out="$(cd "$repo" && bash "$SCOPE")"; code=$?
+assert_eq "$code" '0' 'a committed deletion does not crash scope.sh either'
+rm -rf "$repo"
+
 finish
