@@ -51,10 +51,38 @@ repo="$(new_repo)"
 assert_eq "$(run x "$repo" 'ls -la' | cut -f1)" '0' 'the hook ignores commands it does not guard'
 rm -rf "$repo"
 
-# --- a command that cannot publish is not guarded, even with no verdict --------
+# --- a read-only text tool that merely mentions the phrase is not guarded ------
+# grep/rg/cat/etc. inspecting a file cannot publish anything. This replaced a
+# --dry-run/--help flag exemption that lived here for two rounds: it matched
+# the flag anywhere in the string, including inside a quoted argument value,
+# so `gh pr create --title "feat: add --dry-run flag"` was exempt and would
+# have opened an unreviewed PR. The allowlist below is anchored to the first
+# token instead — nothing later in the string can satisfy it.
 repo="$(new_repo)"
-assert_eq "$(run x "$repo" 'git push --dry-run' | cut -f1)" '0' 'git push --dry-run cannot publish'
-assert_eq "$(run x "$repo" 'gh pr create --help' | cut -f1)" '0' 'gh pr create --help cannot publish either'
+assert_eq "$(run x "$repo" 'grep -rn "git push" AGENTS.md' | cut -f1)" '0' \
+  'grep inspecting a file that mentions git push is not a push'
+rm -rf "$repo"
+
+# --- but the allowlist is anchored: a separator disqualifies it immediately ----
+repo="$(new_repo)"
+assert_eq "$(run x "$repo" 'grep -rn "git push" AGENTS.md && git push' | cut -f1)" '2' \
+  'a real push riding along after the grep is still guarded'
+rm -rf "$repo"
+
+# --- the flag exemption is gone: this is the accepted cost, not a hole ---------
+# git is not on the read-only allowlist, so a dry run is refused just like a
+# real one. Cheaper than the alternative: an exemption keyed on the flag text
+# cannot distinguish a real --dry-run from one quoted inside an unrelated
+# argument (see the next test) — that hole is worse than this false positive.
+repo="$(new_repo)"
+assert_eq "$(run x "$repo" 'git push --dry-run' | cut -f1)" '2' \
+  'git push --dry-run is guarded again, deliberately — do not re-add this exemption'
+rm -rf "$repo"
+
+# --- the quoted-value hole the old exemption opened is now closed --------------
+repo="$(new_repo)"
+assert_eq "$(run x "$repo" 'gh pr create --title "feat: add --dry-run flag"' | cut -f1)" '2' \
+  'a --dry-run mention inside a quoted title no longer exempts the PR'
 rm -rf "$repo"
 
 # --- the substring-matching contract, pinned so hardening cannot drift it ------
@@ -117,10 +145,20 @@ assert_contains "$(printf '%s' "$res" | cut -f2)" 'stale' 'and the reason is nam
 rm -rf "$repo"
 
 # --- an uncommitted edit makes it stale too ------------------------------------
+# .pr-self-review/ IS gitignored here (new_repo), so this exercises the
+# generic arm of the staleness branch, not the check-ignore one below. Pin
+# its message too: both arms exit 2, so if check-ignore detection ever
+# regressed (path form changed, trailing slash dropped), a genuinely stale
+# verdict here would silently start reporting the misleading "add
+# .pr-self-review/ to .gitignore" message instead, with the suite still green
+# on the exit-code-only assertion above.
 repo="$(new_repo)"
 write_verdict "$repo" full pass
 printf 'dirty\n' >>"$repo/README.md"
-assert_eq "$(run x "$repo" 'git push' | cut -f1)" '2' 'an uncommitted edit invalidates it'
+res="$(run x "$repo" 'git push')"
+assert_eq "$(printf '%s' "$res" | cut -f1)" '2' 'an uncommitted edit invalidates it'
+assert_contains "$(printf '%s' "$res" | cut -f2)" 'working tree changed' \
+  'with the genuine-staleness message, not the gitignore one'
 rm -rf "$repo"
 
 # --- an un-ignored .pr-self-review names its own defect, not a phantom edit ----

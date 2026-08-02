@@ -22,25 +22,45 @@ command="$(printf '%s' "$payload" | jq -r '.tool_input.command // ""')"
 
 # --- is this a command we guard at all? -------------------------------------
 # Substring matching is crude in both directions, and deliberately so — see
-# the brief. Known holes, left as-is:
+# the brief. A --dry-run/--help exemption lived here for two rounds and was
+# removed: it matched the flag anywhere in the string, including inside a
+# quoted argument value — `gh pr create --title "feat: add --dry-run flag"`
+# was exempt and opened an unreviewed PR. The asymmetry decides the design:
+# a command that's merely REFUSED because it looks like a push costs one
+# wasted turn; a push or PR that gets through unreviewed costs the whole
+# guarantee. So the only exemption left is the read-only-tool allowlist
+# below, anchored to the first token — nothing later in the string can forge
+# that.
+#
+# Known holes, left as-is:
 #   false negatives (a real push/PR that slips through unguarded):
 #     git -C <path> push, git --git-dir=<dir> push, git  push (extra spaces),
 #     gh api -X POST .../pulls
-#   false positives (a harmless command merely containing the phrase):
-#     grep/rg for "git push", a commit message or heredoc quoting it, etc.
-# A missed push is a discipline gap the spec accepts; blocking a harmless
-# command is worse — it burns the model's turn on a phantom refusal. The
-# --dry-run/--help carve-out below claws back the cheapest, most common false
-# positives; the rest of the false-positive surface is accepted, not fixed.
+#   false positives (a harmless command still refused):
+#     git push --dry-run, gh pr create --help — the accepted cost of closing
+#     the quoted-value hole above; and anything other than the allowlisted
+#     read-only tools below that merely contains the phrase, e.g. a commit
+#     message or heredoc quoting it.
 case "$command" in
   *"git push"*)                    guard=push ;;
   *"gh pr create"*|*"gh pr ready"*) guard=pr ;;
   *)                               exit 0 ;;
 esac
 
-# Neither flag can actually publish anything, so there is nothing to guard.
+# A read-only text tool (grep, cat, ...) inspecting a file that happens to
+# contain the phrase "git push" or "gh pr create" cannot publish anything —
+# but only when it's the *whole* command. Any separator (&&, ||, ;, |, &, a
+# newline, a backtick, or a $( substitution) means a second command could
+# ride along, so its presence anywhere disqualifies the exemption before the
+# first token is even looked at.
 case "$command" in
-  *"--dry-run"*|*"--help"*) exit 0 ;;
+  *"&&"*|*"||"*|*";"*|*"|"*|*"&"*|*$'\n'*|*'`'*|*'$('*) ;;   # compound — no exemption
+  *)
+    read -r first_token _ <<<"$command"
+    case "$first_token" in
+      grep|rg|ag|ack|cat|less|head|tail|awk|sed|echo|printf) exit 0 ;;
+    esac
+    ;;
 esac
 
 # --- the escape hatch ------------------------------------------------------
@@ -91,8 +111,19 @@ if [ "$recorded_hash" != "$hash" ]; then
   # ever satisfy this, and telling the model "the working tree changed" sends
   # it to re-run a review that regenerates the same unsatisfiable mismatch.
   # Name the real, fixable cause instead.
-  git check-ignore -q .pr-self-review/ ||
+  #
+  # check-ignore's exit status is 0 (ignored), 1 (not ignored), or >=128 (a
+  # git-level failure unrelated to ignore status). Both stdout and stderr are
+  # redirected — an unredirected git fatal would otherwise prepend a raw
+  # diagnostic onto the refusal the model reads, the same leak class as the
+  # corrupt-JSON case above. Matching status 1 specifically, rather than
+  # "anything nonzero", keeps a >=128 git failure from being misreported as
+  # "not ignored" — it falls through to the generic stale message instead,
+  # which is at least not actively wrong.
+  git check-ignore -q .pr-self-review/ >/dev/null 2>&1
+  if [ $? -eq 1 ]; then
     refuse "the verdict can never look fresh — .pr-self-review/ is not gitignored, so its own output changes the hash it is compared against. Add .pr-self-review/ to .gitignore, then re-run the review."
+  fi
   refuse "the verdict is stale — the working tree changed since it was written"
 fi
 
