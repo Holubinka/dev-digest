@@ -9,8 +9,9 @@
 #   3. skipped files are always printed — a green report with no skipped
 #      list is lying
 #   4. a subagent that failed, one that a `full` run never dispatched over
-#      routed files at all, or a routed domain no agent covered, is visible
-#      and forces `incomplete`, which blocks
+#      routed files at all, or an agents[] that is not exactly the Track B
+#      roster scope.json declares, is visible and forces `incomplete`, which
+#      blocks
 #   5. the report states what it does not do: conventions, not correctness
 #   6. a payload the script cannot read — anything but an object whose
 #      .scope is an object and whose .findings, .gates, .agents and
@@ -176,25 +177,39 @@ if [ "$input_ok" -eq 1 ]; then
   fi
 fi
 
-# --- rule 4, third half: a `full` run that covered only some of the diff -----
+# --- rule 4, third half: a `full` run whose Track B roster is not what ran ---
 # SKILL.md used to call this hole unclosable — "nothing downstream can tell
-# partial coverage from complete". It can: scope.json carries the domain set,
-# so on a `full` run every domain in .scope.routed[].domains must appear in
-# .agents[].name or some routed file was never reviewed by the agent that was
-# supposed to see it. That is the same argument as the second half, one step
-# finer, and it is the shape a real run actually fails in — a five-agent
-# dispatch where one agent was forgotten, not one where none ran.
+# partial coverage from complete". It can: scope.sh writes the Track B roster
+# into .scope.routed[].domains, so on a `full` run the set of agents that ran
+# must be exactly that roster.
+#
+# It is a set EQUALITY, not a subset test, and that is the deliberate part.
+# Track B is two agents now — `security` and `conventions` — and both see the
+# whole routed set, so `domains` is the same pair on every entry and there is no
+# per-file arithmetic left to fall out of. Missing one of them means a routed
+# file was reviewed by one reviewer where two were promised; an agent that is
+# not on the roster means the run dispatched something else and recorded it as
+# coverage. Neither more nor fewer satisfies it. agents[] is the step-3 roster
+# and nothing else — step 4's adversarial verifiers are not entries in it
+# (SKILL.md §3.4), so a surplus name is a bookkeeping error, not a busy run.
 #
 # Skipped when `unrun` already fired: with an empty agents[] EVERY domain is
 # uncovered, and two banners saying the same thing blame the wrong step.
 uncovered='[]'
+unexpected='[]'
 if [ "$input_ok" -eq 1 ] && [ "$unrun" -eq 0 ]; then
-  uncovered="$(printf '%s' "$payload" | jq -c '
+  coverage="$(printf '%s' "$payload" | jq -c '
     if .mode == "full"
-    then ( ([.scope.routed[]? | .domains[]? | select(type == "string")] | unique)
-           - ([.agents[]? | .name? | select(type == "string")]) )
-    else [] end' 2>/dev/null)" || uncovered='[]'
+    then ([.scope.routed[]? | .domains[]? | select(type == "string")] | unique) as $roster
+       | ([.agents[]?      | .name?    | select(type == "string")] | unique) as $ran
+       | {uncovered: ($roster - $ran), unexpected: ($ran - $roster)}
+    else {uncovered: [], unexpected: []} end' 2>/dev/null)" ||
+    coverage='{"uncovered":[],"unexpected":[]}'
+  [ -n "$coverage" ] || coverage='{"uncovered":[],"unexpected":[]}'
+  uncovered="$(printf '%s' "$coverage" | jq -c '.uncovered' 2>/dev/null)" || uncovered='[]'
+  unexpected="$(printf '%s' "$coverage" | jq -c '.unexpected' 2>/dev/null)" || unexpected='[]'
   [ -n "$uncovered" ] || uncovered='[]'
+  [ -n "$unexpected" ] || unexpected='[]'
 fi
 
 # gate.sh appends one line per bypass, scope.sh and gates.sh one per env
@@ -206,21 +221,22 @@ bypassed='[]'
 latest="$(printf '%s' "$payload" | jq \
   --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson bypassed "$bypassed" \
   --argjson inputOk "$input_ok" --argjson unrun "$unrun" \
-  --argjson uncovered "$uncovered" '
+  --argjson uncovered "$uncovered" --argjson unexpected "$unexpected" '
   ( [.findings[] | select(.severity == "critical")] | length ) as $c
   | ( [.findings[] | select(.severity == "critical")
        | select( ((((.source // "") | tostring) | startswith("agent ")) | not) )]
       | length ) as $det
   | ( [.gates[] | select(.status == "fail")] | length ) as $gatefail
   | ( [.agents[]? | select(.status != "ok")] | length ) as $broken
-  | ( $inputOk == 0 or $broken > 0 or $unrun == 1 or ($uncovered | length) > 0 ) as $incomplete
+  | ( $inputOk == 0 or $broken > 0 or $unrun == 1
+      or ($uncovered | length) > 0 or ($unexpected | length) > 0 ) as $incomplete
   | {
       mode: .mode,
       verdict: (if $incomplete then "incomplete"
                 elif $c > 0 or $gatefail > 0 then "blocked"
                 else "pass" end),
       pushBlocked: ($incomplete or $gatefail > 0 or $det > 0),
-      uncovered: $uncovered,
+      uncovered: $uncovered, unexpected: $unexpected,
       baseSha: .scope.base, headSha: .scope.head, worktreeHash: .scope.worktreeHash,
       branch: .scope.branch, generatedAt: $t,
       counts: {
@@ -270,14 +286,27 @@ render() {
     printf '  honestly as mode "gates" — enough for a push, not enough for a PR.\n'
   fi
 
-  # Rule 4's third half. Names the domains, because the fix is to dispatch
-  # exactly those and re-run — not to repeat the whole five-agent fan-out.
+  # Rule 4's third half. Names the agents, because the fix is to dispatch
+  # exactly those and re-run — not to repeat all of Track B.
   if [ "$(printf '%s' "$uncovered" | jq 'length')" -gt 0 ]; then
     printf '\nPARTIAL COVERAGE — mode is "full", but %s had routed files and no\n' \
       "$(printf '%s' "$uncovered" | jq -r 'join(", ")')"
     printf '  agent in agents[]. A full run means both tracks covered the whole diff,\n'
     printf '  so the verdict is incomplete rather than pass. Dispatch step 3 for those\n'
-    printf '  domains and re-run, or record the run honestly as mode "gates".\n'
+    printf '  agents and re-run, or record the run honestly as mode "gates".\n'
+  fi
+
+  # The other side of the same equality. An agent nobody asked for is either a
+  # mis-named entry — in which case the roster name is missing above and the
+  # real fix is the spelling — or step 4 bookkeeping recorded where it does not
+  # belong. Both make agents[] stop describing what reviewed the diff.
+  if [ "$(printf '%s' "$unexpected" | jq 'length')" -gt 0 ]; then
+    printf '\nUNEXPECTED AGENT — agents[] records %s, which is not on the Track B\n' \
+      "$(printf '%s' "$unexpected" | jq -r 'join(", ")')"
+    printf '  roster in scope.json (.routed[].domains). Track B is `security` and\n'
+    printf '  `conventions`; step 4 verifiers are not agents[] entries. Either the\n'
+    printf '  name is a typo for a roster agent, or an entry belongs somewhere else,\n'
+    printf '  so the verdict is incomplete rather than pass.\n'
   fi
 
   # A blocked verdict that still allows a push is the one verdict a reader can

@@ -113,11 +113,17 @@ assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.pushBlocked' 'true' \
   'an incomplete run stops the push whatever the findings say'
 rm -rf "$repo"
 
-# --- rule 4's third half: a full run that covered only some domains ------------
-# SKILL.md called this hole unclosable. scope.json carries the domain set, so a
-# `full` run whose .scope.routed[].domains are not all present in .agents[].name
-# reviewed some routed file with nobody. It is the shape a real dispatch fails
-# in: five agents where one was forgotten, not zero agents.
+# --- rule 4's third half: a full run whose roster is not what ran --------------
+# SKILL.md called this hole unclosable. scope.json carries the Track B roster in
+# .scope.routed[].domains, so a `full` run whose .agents[].name is not exactly
+# that set reviewed some routed file with nobody, or recorded something else as
+# coverage. It is the shape a real dispatch fails in: one of two agents
+# forgotten, not zero agents.
+#
+# report.sh is domain-agnostic — it compares two sets of strings and never
+# names an agent — so the names in these payloads are arbitrary. The real
+# roster, `security` and `conventions`, meets this check in seam.test.sh, where
+# scope.sh writes it and report.sh reads it back.
 repo="$(make_repo)"
 out="$(cd "$repo" && printf '%s' "$(payload full '[]' "$okagent")" |
   jq '.scope.routed += [{path:"server/src/modules/x/routes.ts",domains:["backend","security"],lines:[1]}]' |
@@ -135,7 +141,7 @@ out="$(cd "$repo" && printf '%s' "$(payload full '[]' "$okagent")" |
   jq '.scope.routed += [{path:"server/src/modules/x/routes.ts",domains:["backend"],lines:[1]}]
       | .agents += [{name:"backend",status:"ok",files:1}]' | bash "$REPORT")"
 assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'pass' \
-  'every routed domain covered is a pass'
+  'every roster agent covered is a pass'
 case "$out" in
   *'PARTIAL COVERAGE'*) assert_eq 'marked' 'not marked' 'full coverage is not a coverage gap' ;;
   *)                    assert_eq 'not marked' 'not marked' 'full coverage is not a coverage gap' ;;
@@ -148,6 +154,33 @@ case "$out" in
   *'PARTIAL COVERAGE'*) assert_eq 'marked' 'not marked' 'a gates run is never a coverage gap' ;;
   *)                    assert_eq 'not marked' 'not marked' 'a gates run is never a coverage gap' ;;
 esac
+rm -rf "$repo"
+
+# The other side of the equality: an agent nobody asked for. A subset test
+# passes this payload — every routed domain has an agent — and it is still a run
+# whose agents[] does not describe what reviewed the diff, so the check is a set
+# equality and this is the half that proves it.
+repo="$(make_repo)"
+out="$(cd "$repo" && printf '%s' "$(payload full '[]' "$okagent")" |
+  jq '.agents += [{name:"verifier",status:"ok",files:1}]' | bash "$REPORT")"
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'incomplete' \
+  'an agent that is not on the roster is incomplete, not a pass'
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.unexpected | join(",")' 'verifier' \
+  'and latest.json records which one'
+assert_contains "$out" 'UNEXPECTED AGENT' 'and the report names it'
+case "$out" in
+  *'PARTIAL COVERAGE'*) assert_eq 'marked' 'not marked' 'without claiming anything was missed' ;;
+  *)                    assert_eq 'not marked' 'not marked' 'without claiming anything was missed' ;;
+esac
+rm -rf "$repo"
+
+# A gates run is exempt from both halves — Track B did not run, and saying so
+# honestly in `mode` is the whole point of the mode.
+repo="$(make_repo)"
+out="$(cd "$repo" && printf '%s' "$(payload gates '[]' '[{"name":"security","status":"ok","files":1}]')" |
+  bash "$REPORT")"
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.unexpected | length' '0' \
+  'a gates run is never an unexpected-agent gap'
 rm -rf "$repo"
 
 # --- a gates run records its mode, so the PR hook can refuse it ----------------

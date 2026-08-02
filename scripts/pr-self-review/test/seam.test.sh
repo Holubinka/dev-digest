@@ -95,9 +95,16 @@ hook() { # repo command -> exit code
   printf '%s' "$code"
 }
 
-on_line() { # line severity -> one agent finding on client/src/a.tsx
-  jq -nc --argjson l "$1" --arg s "$2" \
-    '{severity:$s, source:"agent frontend · react-best-practices §Derive",
+# The Track B roster, as scope.sh writes it into .routed[].domains. Both agents
+# see every routed file, so a run records exactly these two.
+BOTH='[{"name":"security","status":"ok","files":1},{"name":"conventions","status":"ok","files":1}]'
+
+on_line() { # line severity domain -> one agent finding on client/src/a.tsx
+  # The `agent <domain> · ` prefix is the single point of failure for
+  # diff-anchoring — baseline.sh keys on that literal and nothing else — and
+  # there are exactly two legal values now. Both are exercised below.
+  jq -nc --argjson l "$1" --arg s "$2" --arg d "$3" \
+    '{severity:$s, source:("agent " + $d + " · a section of a skill"),
       file:"client/src/a.tsx", line:$l,
       message:("something at line " + ($l | tostring)), fix:"fix it"}'
 }
@@ -107,9 +114,8 @@ on_line() { # line severity -> one agent finding on client/src/a.tsx
 #    one on a touched line, one off it.
 # =============================================================================
 repo="$(fixture_repo with-secret)"
-chain "$repo" full "[$(on_line 2 critical), $(on_line 99 critical)]" \
-  '[{"name":"frontend","status":"ok","files":1},{"name":"security","status":"ok","files":1}]' \
-  lint
+chain "$repo" full "[$(on_line 2 critical security), $(on_line 99 critical conventions)]" \
+  "$BOTH" lint
 latest="$(cat "$repo/.pr-self-review/latest.json")"
 
 # Mutation 1. scope.sh emits `source:"gate scope"`, and that literal is the only
@@ -135,11 +141,13 @@ assert_json "$latest" '[.gates[] | select(.package == "repo" and .name == "vendo
 assert_json "$latest" '[.gates[] | select(.package == "repo" and .name == "registry")][0].status' 'ok' \
   'and so did the registry gate, resolved next to gates.sh'
 
-# The model half, through the real baseline.sh.
-assert_json "$latest" '[.findings[] | select(.line == 2 and (.source | startswith("agent ")))][0].severity' \
-  'critical' 'an agent finding on a touched line keeps its severity'
-assert_json "$latest" '[.findings[] | select(.line == 99)][0].severity' 'note' \
-  'and one off the diff is demoted'
+# The model half, through the real baseline.sh. One finding per legal prefix,
+# so a rename of either literal shows up here: `agent security · ` on a touched
+# line must survive, `agent conventions · ` off the diff must be demoted.
+assert_json "$latest" '[.findings[] | select(.line == 2 and (.source | startswith("agent security · ")))][0].severity' \
+  'critical' 'an `agent security · ` finding on a touched line keeps its severity'
+assert_json "$latest" '[.findings[] | select(.line == 99 and (.source | startswith("agent conventions · ")))][0].severity' \
+  'note' 'and an `agent conventions · ` finding off the diff is demoted'
 assert_json "$latest" '[.findings[] | select(.line == 99)][0].anchored' 'false' \
   'and marked unanchored'
 
@@ -188,8 +196,7 @@ rm -rf "$repo"
 # 3. The push/PR split, end to end: a Track B critical and nothing else.
 # =============================================================================
 repo="$(fixture_repo)"
-chain "$repo" full "[$(on_line 2 critical)]" \
-  '[{"name":"frontend","status":"ok","files":1},{"name":"security","status":"ok","files":1}]'
+chain "$repo" full "[$(on_line 2 critical security)]" "$BOTH"
 latest="$(cat "$repo/.pr-self-review/latest.json")"
 
 assert_json "$latest" '.verdict' 'blocked' 'a surviving Track B critical blocks'
@@ -199,16 +206,51 @@ assert_eq "$(hook "$repo" 'gh pr create')" '2' 'the PR does not'
 rm -rf "$repo"
 
 # =============================================================================
-# 4. Coverage, end to end: the same run with the security agent forgotten.
+# 4. Coverage, end to end: the same run with the conventions agent forgotten.
+#    scope.sh writes the roster, report.sh reads it back — this is the only
+#    place both halves of that contract run against each other.
 # =============================================================================
 repo="$(fixture_repo)"
-chain "$repo" full "[$(on_line 2 minor)]" '[{"name":"frontend","status":"ok","files":1}]'
+chain "$repo" full "[$(on_line 2 minor security)]" \
+  '[{"name":"security","status":"ok","files":1}]'
 latest="$(cat "$repo/.pr-self-review/latest.json")"
 
 assert_json "$latest" '.verdict' 'incomplete' \
-  'a full run missing one domain agent is incomplete'
-assert_json "$latest" '.uncovered | join(",")' 'security' 'and names the domain that was missed'
+  'a full run missing one roster agent is incomplete'
+assert_json "$latest" '.uncovered | join(",")' 'conventions' 'and names the agent that was missed'
 assert_eq "$(hook "$repo" 'git push')" '2' 'which blocks, like every incomplete run'
+rm -rf "$repo"
+
+# =============================================================================
+# 5. The other half of the same equality: both roster agents ran, and something
+#    that is not on the roster was recorded beside them. agents[] is the step-3
+#    roster; a verifier or a mis-named entry there stops it describing what
+#    actually reviewed the diff.
+# =============================================================================
+repo="$(fixture_repo)"
+chain "$repo" full "[$(on_line 2 minor conventions)]" \
+  '[{"name":"security","status":"ok","files":1},{"name":"conventions","status":"ok","files":1},
+    {"name":"frontend","status":"ok","files":1}]'
+latest="$(cat "$repo/.pr-self-review/latest.json")"
+
+assert_json "$latest" '.verdict' 'incomplete' \
+  'an agent that is not on the roster is not a pass either'
+assert_json "$latest" '.unexpected | join(",")' 'frontend' 'and it is named'
+assert_json "$latest" '.uncovered | length' '0' 'while nothing is reported missing'
+assert_contains "$(cat "$repo/.pr-self-review/report.md")" 'UNEXPECTED AGENT' \
+  'and the report says which side of the equality failed'
+rm -rf "$repo"
+
+# =============================================================================
+# 6. And the roster exactly covered is a pass — the equality is satisfiable.
+# =============================================================================
+repo="$(fixture_repo)"
+chain "$repo" full '[]' "$BOTH"
+latest="$(cat "$repo/.pr-self-review/latest.json")"
+
+assert_json "$latest" '.verdict' 'pass' 'both roster agents and nothing else passes'
+assert_json "$latest" '.mode' 'full' 'as a full run'
+assert_eq "$(hook "$repo" 'gh pr create')" '0' 'so the PR the roster exists to gate goes through'
 rm -rf "$repo"
 
 rm -f "$runner"

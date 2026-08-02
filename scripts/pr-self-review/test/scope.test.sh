@@ -6,7 +6,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/lib.sh"
 SCOPE="$HERE/../scope.sh"
 
-# --- a changed client component routes to frontend, and to security ------------
+# --- a changed client component routes, to the one Track B agent there is ------
 repo="$(make_repo)"
 sgit "$repo" checkout -qb feat/x
 mkdir -p "$repo/client/src/app"
@@ -16,12 +16,78 @@ sgit "$repo" add -A && sgit "$repo" commit -qm "add a"
 out="$(cd "$repo" && bash "$SCOPE")"
 assert_json "$out" '.routed | length' '1' 'one routed file'
 assert_json "$out" '.routed[0].path' 'client/src/app/a.tsx' 'the component is routed'
-assert_json "$out" '[.routed[0].domains[] | select(. == "frontend")] | length' '1' \
-  'a client component goes to the frontend agent'
-assert_json "$out" '[.routed[0].domains[] | select(. == "security")] | length' '1' \
-  'security is cross-cutting and sees every routed file'
+assert_json "$out" '.routed[0].domains | sort | join(",")' 'conventions,security' \
+  'and carries the two-agent Track B roster — the five partitioned domains are gone'
 assert_json "$out" '.packages | index("client") != null' 'true' 'client is in packages'
 assert_json "$out" '.branch' 'feat/x' 'the branch is reported'
+rm -rf "$repo"
+
+# --- narrowing Track B must not narrow what gets reviewed ----------------------
+# `security` used to be appended to whichever of five domains matched, so those
+# five patterns were the routing test itself. Deleting them would have returned
+# empty for every path, emptied routed[] and dispatched the surviving agents
+# over zero files while the run still printed a verdict. This pins the property
+# that replaced them: every shape the five used to carry is still routed, and
+# each carries the roster and nothing else.
+repo="$(make_repo)"
+sgit "$repo" checkout -qb feat/x
+mkdir -p "$repo/client/src/lib" "$repo/client/src/app/_components" \
+         "$repo/server/src/modules/pulls" "$repo/server/src/adapters" \
+         "$repo/server/src/platform" "$repo/server/src/db" "$repo/reviewer-core/src"
+for f in client/src/lib/urls.ts \
+         client/src/app/_components/Card.test.tsx \
+         server/src/modules/pulls/routes.ts \
+         server/src/adapters/github.ts \
+         server/src/platform/config.ts \
+         server/src/db/schema.ts \
+         reviewer-core/src/review.ts; do
+  printf 'export const x = 1\n' >"$repo/$f"
+done
+sgit "$repo" add -A && sgit "$repo" commit -qm "one file per old domain"
+
+out="$(cd "$repo" && bash "$SCOPE")"
+assert_json "$out" '.routed | length' '7' \
+  'every shape the five partitioned domains used to route is still routed'
+assert_json "$out" '[.routed[].domains[]] | unique | join(",")' 'conventions,security' \
+  'and the roster is the only thing any of them carries'
+assert_json "$out" '[.routed[] | select((.domains | sort) != ["conventions","security"])] | length' \
+  '0' 'every routed file carries both agents — neither is partitioned'
+
+# `security` standing on its own merits, not inherited from a deleted arm:
+# server/src wiring outside modules/, adapters/, platform/ and db/ matched none
+# of the five and so used to reach checklist[], reviewed by nobody.
+printf 'export const boot = 1\n' >"$repo/server/src/index.ts"
+mkdir -p "$repo/server/src/lib" && printf 'export const h = 1\n' >"$repo/server/src/lib/hash.ts"
+sgit "$repo" add -A && sgit "$repo" commit -qm "server wiring outside the old four"
+
+out="$(cd "$repo" && bash "$SCOPE")"
+assert_json "$out" \
+  '[.routed[] | select(.path == "server/src/index.ts")][0].domains | sort | join(",")' \
+  'conventions,security' \
+  'server/src wiring outside the old four domains is routed on its own merits'
+assert_json "$out" '[.checklist[] | select(. == "server/src/lib/hash.ts")] | length' '0' \
+  'and a server/src module that reached no domain before is no longer checklist-only'
+rm -rf "$repo"
+
+# --- drizzle snapshots are generated, and are skipped where they really live ----
+# `server/drizzle/` does not exist here: drizzle.config.ts sets
+# out: './src/db/migrations'. The old `server/drizzle/meta/*` skip matched
+# nothing, and now that server/src/** routes whole, the snapshots would be handed
+# to the agent as source.
+repo="$(make_repo)"
+sgit "$repo" checkout -qb feat/x
+mkdir -p "$repo/server/src/db/migrations/meta"
+printf 'CREATE TABLE t (id int);\n' >"$repo/server/src/db/migrations/0001_x.sql"
+printf '{"version":"7"}\n'          >"$repo/server/src/db/migrations/meta/0001_snapshot.json"
+sgit "$repo" add -A && sgit "$repo" commit -qm "migration"
+
+out="$(cd "$repo" && bash "$SCOPE")"
+assert_json "$out" \
+  '[.skipped[] | select(.path == "server/src/db/migrations/meta/0001_snapshot.json")][0].reason' \
+  'generated' 'the real snapshot location is skipped as generated'
+assert_json "$out" \
+  '[.routed[] | select(.path == "server/src/db/migrations/0001_x.sql")] | length' '1' \
+  'while the migration itself is still reviewed'
 rm -rf "$repo"
 
 # --- a lockfile is skipped, never routed ---------------------------------------
@@ -121,8 +187,9 @@ before="$(cd "$repo" && bash "$SCOPE" | jq -r '.worktreeHash')"
 printf 'export const s = 2\n' >"$repo/server/src/modules/pulls/service.ts"
 
 out="$(cd "$repo" && bash "$SCOPE")"
-assert_json "$out" '[.routed[] | select(.path | endswith("service.ts"))][0].domains[0]' \
-  'backend' 'a service file goes to the backend agent'
+assert_json "$out" \
+  '[.routed[] | select(.path | endswith("service.ts"))][0].domains | sort | join(",")' \
+  'conventions,security' 'a service file goes to both Track B agents'
 after="$(printf '%s' "$out" | jq -r '.worktreeHash')"
 if [ "$before" != "$after" ]; then
   assert_eq ok ok 'an uncommitted edit changes the worktree hash'

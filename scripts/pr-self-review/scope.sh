@@ -72,7 +72,12 @@ skip_reason() { # path -> reason, or empty when the file is read
     *pnpm-lock.yaml|*package-lock.json)         printf 'lockfile' ;;
     .screenshots/*)                             printf 'screenshot' ;;
     server/clones/*)                            printf 'runtime data' ;;
-    server/drizzle/meta/*)                      printf 'generated' ;;
+    # Drizzle's snapshots. `server/drizzle/` does not exist in this repo —
+    # `server/drizzle.config.ts` sets `out: './src/db/migrations'` — so the old
+    # `server/drizzle/meta/*` pattern matched nothing and the real snapshots,
+    # `server/src/db/migrations/meta/*.json`, were routed to a subagent as
+    # ordinary source. Both shapes are named so the skip survives a config move.
+    */drizzle/meta/*|*/migrations/meta/*)       printf 'generated' ;;
     *.snap)                                     printf 'snapshot' ;;
     *.png|*.jpg|*.jpeg|*.svg|*.webp|*.ico|*.pdf|*.woff|*.woff2) printf 'binary' ;;
     *)                                          printf '' ;;
@@ -119,23 +124,50 @@ flag_for() { # path -> "severity<TAB>message<TAB>fix", or empty
   esac
 }
 
-domains_for() { # path -> space-separated domains, or empty for checklist-only
-  local p="$1" d=""
-  case "$p" in
-    client/*.test.ts|client/*.test.tsx) d="frontend-tests" ;;
+TRACK_B="security conventions"   # the roster; report.sh's coverage check reads it back
+
+domains_for() { # path -> the Track B roster, or empty when the file is checklist-only
+  # Track B is two agents — `security` and `conventions` — since the acceptance
+  # run measured the five partitioned ones (`frontend`, `frontend-tests`,
+  # `backend`, `data`, `core`) at 509k tokens for twelve findings, none blocking,
+  # and the one finding worth having came from a real `Review checklist`.
+  # README.md §9.
+  #
+  # Both see the whole routed set, so `domains` is the same pair on every entry:
+  # it is no longer a per-file routing decision, it is where the roster is
+  # written down, and report.sh reads it back to check that both agents ran.
+  #
+  # `security` used to have no criteria of its own: it was *appended* to
+  # whichever of the five matched. Those five patterns, not the domain names,
+  # were what decided whether a file was reviewed at all, so deleting the arms
+  # would have returned empty for everything, emptied routed[], and left the
+  # surviving agents dispatched over zero files while the run still printed a
+  # verdict. 61 files to 0, silently. So the narrowing is a rewrite of this
+  # function, and what is left is a positive rule: the source of the three
+  # packages this repo gates.
+  #
+  # skip_reason and flag_for have already run by the time a path reaches here,
+  # so dependencies, build output, generated snapshots, binaries, secrets,
+  # vendored copies and locked skills are gone. What is left under those roots
+  # is source, and source is what a review reads.
+  #
+  # It is a superset of the five it replaces, by one shape: `server/src/**`
+  # outside `modules/`, `adapters/`, `platform/` and `db/` — `server/src/index.ts`
+  # among it — used to reach no domain and so was reviewed by nobody. Measured on
+  # this branch the two rules route the same 61 files; the difference is a hole
+  # closed, not a change of subject.
+  case "$1" in
+    client/src/*.ts|client/src/*.tsx|client/*.test.ts|client/*.test.tsx) ;;
+    server/src/*|reviewer-core/src/*)                                   ;;
+    # `contracts` was the sixth domain and could never fire here: there are no
+    # `*.schema.ts` files, and every `contracts/` directory sits under
+    # `*/vendor/shared/`, which flag_for diverts before routing. The arm stays
+    # because a non-vendored one would be source like any other — it just no
+    # longer names a domain nothing dispatches.
+    */contracts/*|*.schema.ts)                                          ;;
+    *) return 0 ;;
   esac
-  [ -n "$d" ] || case "$p" in
-    client/src/*.ts|client/src/*.tsx) d="frontend" ;;
-  esac
-  [ -n "$d" ] || case "$p" in
-    server/src/modules/*|server/src/adapters/*|server/src/platform/*) d="backend" ;;
-    server/src/db/*|*/schema.ts|server/drizzle/*.sql)               d="data" ;;
-    reviewer-core/src/*)                                            d="core" ;;
-    */contracts/*|*.schema.ts)                                      d="contracts" ;;
-  esac
-  if [ -n "$d" ]; then
-    printf '%s security' "$d"
-  fi
+  printf '%s' "$TRACK_B"
 }
 
 changed_lines() { # path -> JSON array of line numbers touched on this branch
