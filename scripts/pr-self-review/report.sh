@@ -34,7 +34,11 @@
 #              clean, defeating rule 4
 #   .scope     null, {} or any object without .skipped — every field of the
 #              header comes back null and the SKIPPED section prints EMPTY on
-#              a green report, which is exactly what rule 3 calls lying
+#              a green report, which is exactly what rule 3 calls lying.
+#              .routed is in the same term because rule 4's second half counts
+#              it: an object missing the key is still an object, so without
+#              this the coverage check would silently disable itself on the
+#              one payload shape that most needs it
 #
 # The ELEMENTS are checked too, not only the container, and that half is the
 # newest. `{"agents":["frontend crashed"]}` is an array, so a container-only
@@ -91,7 +95,7 @@ payload="$(cat)"
 # --- rule 6: the input must be an object the script can actually read -------
 # Checked before anything reads it, and repaired rather than fatal, so that
 # every later step still runs and still writes a verdict — see the header.
-STUB='{"mode":null,"scope":{"skipped":[]},"findings":[],"gates":[],"agents":[]}'
+STUB='{"mode":null,"scope":{"skipped":[],"routed":[]},"findings":[],"gates":[],"agents":[]}'
 input_ok=1
 
 if [ -z "$payload" ] || ! printf '%s' "$payload" | jq -e 'type == "object"' >/dev/null 2>&1; then
@@ -106,7 +110,8 @@ elif ! printf '%s' "$payload" | jq -e '
     and (.gates    | arr_of_obj)
     and (.agents   | arr_of_obj)
     and (if (.scope | type) == "object"
-         then (.scope.skipped | arr_of_obj) else false end)' >/dev/null 2>&1; then
+         then (.scope.skipped | arr_of_obj) and (.scope.routed | arr_of_obj)
+         else false end)' >/dev/null 2>&1; then
   # Each branch is written `if … else … end` rather than leaning on jq's
   # short-circuiting `and`, so that a non-array never reaches `all` and a
   # non-object .scope never reaches `.scope.skipped`. A predicate that raises
@@ -118,7 +123,8 @@ elif ! printf '%s' "$payload" | jq -e '
     | .gates    |= objs
     | .agents   |= objs
     | .scope    = (if (.scope | type) == "object" then .scope else {} end)
-    | .scope.skipped |= objs' 2>/dev/null)" ||
+    | .scope.skipped |= objs
+    | .scope.routed  |= objs' 2>/dev/null)" ||
     payload="$STUB"
   [ -n "$payload" ] || payload="$STUB"
   # The repair keeps every element it can read and drops only the ones it

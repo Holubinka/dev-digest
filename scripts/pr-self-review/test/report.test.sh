@@ -121,9 +121,14 @@ for missing in 'del(.findings)' '.findings = null' '.findings = {}' '.findings =
                'del(.scope)'    '.scope = null'    '.scope = "nope"' \
                '.scope = {}'    '.scope = {"flagged":[]}' \
                '.scope.skipped = null' '.scope.skipped = "lockfile"' \
-               '.scope.skipped = ["client/pnpm-lock.yaml"]'; do
+               '.scope.skipped = ["client/pnpm-lock.yaml"]' \
+               'del(.scope.routed)' '.scope.routed = null' '.scope.routed = "a.tsx"' \
+               '.scope.routed = ["client/src/a.tsx"]'; do
+  # The base payload carries a dispatched agent so that rule 6 is the ONLY
+  # reason any of these is incomplete — otherwise rule 4's second half would
+  # answer for half the list and the assertions would stop discriminating.
   repo="$(make_repo)"
-  out="$(cd "$repo" && printf '%s' "$(payload full '[]' '[]')" | jq "$missing" | bash "$REPORT")"
+  out="$(cd "$repo" && printf '%s' "$(payload full '[]' "$okagent")" | jq "$missing" | bash "$REPORT")"
   code=$?
   assert_eq "$code" '0' "[$missing] still exits 0"
   assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'incomplete' \
@@ -258,10 +263,16 @@ esac
 rm -rf "$repo"
 
 # --- a recorded bypass surfaces once, then is cleared --------------------------
+# The payload must be one that PASSES. A bypass surfacing under an incomplete
+# or blocked verdict proves little — those already print several loud sections.
+# The case worth pinning is the quiet one: the run is green, and the earlier
+# bypass is still reported.
 repo="$(make_repo)"
 mkdir -p "$repo/.pr-self-review"
 printf '2026-08-02T10:00:00Z git push (verdict blocked)\n' >"$repo/.pr-self-review/bypassed"
-out="$(cd "$repo" && printf '%s' "$(payload full '[]' '[]')" | bash "$REPORT")"
+out="$(cd "$repo" && printf '%s' "$(payload full '[]' "$okagent")" | bash "$REPORT")"
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'pass' \
+  'the run this bypass surfaces on is a passing one'
 assert_contains "$out" 'BYPASSED' 'a bypass is reported on the next run'
 assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.bypassed | length' '1' \
   'and recorded in the verdict'

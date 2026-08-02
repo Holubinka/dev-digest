@@ -342,6 +342,14 @@ No `latest.json` means there is no last run to narrow — say so and run `--full
   done
   [ -f "$TMP/recheck" ] || { echo 'carry-forward: no recheck file — the extraction' >&2
                              echo '  above never ran. Run it first.' >&2; exit 1; }
+  n_agents="$(jq 'length' "$TMP/agents.json" 2>/dev/null)" || n_agents=0
+  if [ -s "$TMP/recheck" ] && [ "${n_agents:-0}" -eq 0 ]; then
+    echo 'carry-forward: recheck lists files, but agents.json is empty — no subagent' >&2
+    echo '  ran over them. Continuing would drop every previous finding on those' >&2
+    echo '  files and replace them with nothing, so a blocked branch goes green' >&2
+    echo '  without a line being fixed. Dispatch step 3, or run --full.' >&2
+    exit 1
+  fi
   jq -n --slurpfile p .pr-self-review/latest.json --slurpfile n "$TMP/findings.json" \
         --rawfile r "$TMP/recheck" \
     '($r | split("\n") | map(select(length > 0))) as $re
@@ -356,7 +364,7 @@ No `latest.json` means there is no last run to narrow — say so and run `--full
          rm -f "$TMP/merged.json"; exit 1; }
   ```
 
-  **The command must end the run when it fails, not merely decline to overwrite.** Five things
+  **The command must end the run when it fails, not merely decline to overwrite.** Six things
   had to be true at once here, and each was wrong at some point:
 
   1. **Never redirect into `findings.json` while `--slurpfile n` is reading it.** The shell
@@ -386,6 +394,14 @@ No `latest.json` means there is no last run to narrow — say so and run `--full
      that would have produced exactly the right answer — an empty `$re` matches nothing in
      `index()`, so everything is carried and nothing dropped. A guard that refuses a correct run
      teaches people to delete the guard.
+  6. **A non-empty `recheck` with an empty `agents.json` is the same failure inverted, and it is
+     the one route no script can catch.** The `select(… | not)` correctly *declines* to carry a
+     re-checked file's old findings — that is the mechanism working. But if step 3 never
+     dispatched, nothing replaces them: the critical that listed the file is dropped, `[] + []`
+     is `[]`, and the run prints `PASS` on a branch where nothing was fixed. `report.sh` cannot
+     see it, because `--only critical` records `mode: "gates"` by design and that is
+     indistinguishable there from a legitimate `--gates` run. If files were listed for re-check,
+     subagents were supposed to run over them; assert it here or nowhere.
 
   The first four are one failure mode wearing four hats: something upstream goes wrong, `null`
   or a short array flows on unremarked, and an empty or truncated findings list becomes a `pass`

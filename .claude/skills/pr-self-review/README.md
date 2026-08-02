@@ -34,8 +34,8 @@ Scope is the whole repo: every package, every file the branch touched, committed
 
 | File | Lines | Answers |
 |---|---|---|
-| `README.md` | 257 | This card: scope, boundaries, sources, decisions, how it was tested |
-| `SKILL.md` | 473 | When does it run? What is the procedure? Which mode? What must never be reported? |
+| `README.md` | 265 | This card: scope, boundaries, sources, decisions, how it was tested |
+| `SKILL.md` | 489 | When does it run? What is the procedure? Which mode? What must never be reported? |
 | `routing.md` | 166 | Which subagent opens which skill, what to look for in the ones with no checklist, what is left out on purpose |
 | `gates.md` | 181 | What is each Track A gate, what does its failure look like, what do I try first? |
 | `severity.md` | 145 | Which of the four levels is this, and what does it stop? |
@@ -194,6 +194,14 @@ Decisions made while writing, beyond what the spec fixed:
   state most days. The corrupt-`latest.json` case that leaves the same 0 bytes is caught where it
   actually happens, on the exit status of the extraction `jq`. A guard that refuses a correct run
   teaches people to delete the guard.
+
+  The inverse is the sixth and last known instance of the silent-pass class: a **non-empty**
+  `recheck` with an empty `agents.json`. The `select(… | not)` correctly declines to carry a
+  re-checked file's old findings — the mechanism working — but with no subagent dispatched,
+  nothing replaces them, and a branch blocked on a Track B critical prints `PASS`. `report.sh`
+  cannot see it: `--only critical` records `mode: "gates"` by design, which is indistinguishable
+  there from a legitimate `--gates` run. So the snippet asserts that a non-empty `recheck`
+  implies a non-empty `agents.json`, and names the findings it would otherwise drop.
 - **`baseline.sh` tolerates a missing or non-string `source`.** Half the findings are written by
   a model. A bare `startswith` raises `requires string inputs`, and under `set -e` that discarded
   the entire payload, deterministic criticals included. One malformed model finding must not take
