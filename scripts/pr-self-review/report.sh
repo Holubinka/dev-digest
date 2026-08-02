@@ -10,24 +10,37 @@
 #      list is lying
 #   4. a failed subagent is visible and forces `incomplete`, which blocks
 #   5. the report states what it does not do: conventions, not correctness
-#   6. a payload with no usable `.findings` array is `incomplete`, never `pass`
+#   6. a payload that is not an object carrying three arrays — .findings,
+#      .gates and .agents — is `incomplete`, never `pass`
 #
 # Rule 6 guards a whole class rather than one bug. The verdict is computed
-# from .findings, and everything upstream is a chain of jq steps over slurped
-# files. Three separate defects in this feature's own history ended the same
-# way: a step failed or a file came back empty, `null` reached a `+`, jq took
-# null as the identity for it, and an empty findings array produced `pass`.
-# Guarding each site as it is found has lost three times. So the last station
-# on the line refuses to call a payload it cannot read a clean run.
+# from those three keys, and everything upstream is a chain of jq steps over
+# slurped files. Four separate defects in this feature's own history ended the
+# same way: a step failed or a file came back empty, `null` reached a `+` or an
+# iteration, jq absorbed it silently, and a `pass` was written from nothing.
+# Guarding each site as it is found has lost every time. So the last station on
+# the line refuses to call a payload it cannot read a clean run.
+#
+# All three keys, not just .findings, because each one alone can forge a pass:
+#   .findings  null/absent — the original case
+#   .gates     null — a 0-byte gates.json makes $g[0].gates null, and the run
+#              reports PASS with an empty GATES section: no Track A at all
+#   .agents    null or a non-array — `.agents[]?` swallows it, $broken is 0,
+#              and a run whose crashed-subagent bookkeeping was lost reports
+#              clean, defeating rule 4
 #
 # It is deliberately narrow: `.findings: []` is still `pass`, because an empty
-# report is a legitimate result here and rule 6 must not break that. Only an
-# absent, null, or non-array `.findings` trips it.
+# report is a legitimate result here and rule 6 must not break that. Only a
+# missing, null, or non-array value trips it.
 #
 # Crashing instead would not do. A crash writes no latest.json, and if a
 # PASSING verdict from an earlier run over the same tree is already on disk,
 # gate.sh finds it fresh — same headSha, same worktreeHash — and allows the
-# push. Overwriting it with `incomplete` is what actually blocks.
+# push. Overwriting it with `incomplete` is what actually blocks. That is why
+# the empty-stdin case below is handled before the repair rather than by it:
+# `jq '.findings = []'` on empty input exits 0 printing nothing, so the repair
+# silently produced an empty payload and latest.json became a bare newline —
+# no verdict recorded at all.
 #
 # Zero findings print as zero. Inventing one so the run looks worthwhile is
 # prohibited; INSIGHTS.md records that reviews here legitimately find nothing.
@@ -41,14 +54,29 @@ mkdir -p "$OUT"
 
 payload="$(cat)"
 
-# --- rule 6: the input must carry a findings array --------------------------
+# --- rule 6: the input must be an object carrying three arrays --------------
 # Checked before anything reads it, and repaired rather than fatal, so that
 # every later step still runs and still writes a verdict — see the header.
+STUB='{"mode":null,"scope":{},"findings":[],"gates":[],"agents":[]}'
 input_ok=1
-if ! printf '%s' "$payload" | jq -e '(.findings | type) == "array"' >/dev/null 2>&1; then
+
+if [ -z "$payload" ] || ! printf '%s' "$payload" | jq -e 'type == "object"' >/dev/null 2>&1; then
+  # Empty or unparseable stdin. Must be caught HERE: jq on empty input exits 0
+  # printing nothing, so a repair expression would hand back an empty payload
+  # and latest.json would be written as a bare newline — no verdict at all.
   input_ok=0
-  payload="$(printf '%s' "$payload" | jq '.findings = []' 2>/dev/null)" ||
-    payload='{"mode":null,"findings":[]}'
+  payload="$STUB"
+elif ! printf '%s' "$payload" | jq -e '
+        (.findings | type) == "array"
+    and (.gates    | type) == "array"
+    and (.agents   | type) == "array"' >/dev/null 2>&1; then
+  input_ok=0
+  payload="$(printf '%s' "$payload" | jq '
+      .findings = (if (.findings | type) == "array" then .findings else [] end)
+    | .gates    = (if (.gates    | type) == "array" then .gates    else [] end)
+    | .agents   = (if (.agents   | type) == "array" then .agents   else [] end)' 2>/dev/null)" ||
+    payload="$STUB"
+  [ -n "$payload" ] || payload="$STUB"
 fi
 
 # gate.sh appends one line per bypass; a report consumes and clears them, so a
@@ -95,10 +123,11 @@ render() {
   # Rule 6. Loud, and above the gates: this is not a review result, it is a
   # broken pipeline, and the counts printed on the line above mean nothing.
   if [ "$input_ok" -eq 0 ]; then
-    printf '\nBROKEN INPUT — no findings array reached this script.\n'
-    printf '  The counts above are not a review result. Some step between\n'
-    printf '  scope.sh and here failed or produced an empty file, so the verdict\n'
-    printf '  is incomplete rather than pass. Re-run the review.\n'
+    printf '\nBROKEN INPUT — this script was not handed a readable payload.\n'
+    printf '  It needs an object with .findings, .gates and .agents all arrays.\n'
+    printf '  The counts and gates above are not a review result. Some step\n'
+    printf '  between scope.sh and here failed or produced an empty file, so the\n'
+    printf '  verdict is incomplete rather than pass. Re-run the review.\n'
   fi
 
   printf '\nGATES\n'

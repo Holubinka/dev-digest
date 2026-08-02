@@ -273,6 +273,7 @@ No `latest.json` means there is no last run to narrow — say so and run `--full
   carried — they re-ran:
 
   ```sh
+  [ -f "$TMP/recheck" ] || { echo 'carry-forward: no recheck list' >&2; exit 1; }
   jq -n --slurpfile p .pr-self-review/latest.json --slurpfile n "$TMP/findings.json" \
         --rawfile r "$TMP/recheck" \
     '($r | split("\n") | map(select(length > 0))) as $re
@@ -280,31 +281,37 @@ No `latest.json` means there is no last run to narrow — say so and run `--full
          | . as $f
          | select(((($f.source // "") | tostring) | startswith("agent ")))
          | select(($re | index(($f.file // "") | tostring)) | not) ] + $n[0]' \
-    > "$TMP/merged.json" && mv "$TMP/merged.json" "$TMP/findings.json"
+    > "$TMP/merged.json" \
+    && mv "$TMP/merged.json" "$TMP/findings.json" \
+    || { echo 'carry-forward FAILED — findings from files that were not re-checked' >&2
+         echo 'have been lost. Do NOT continue to step 5. Re-run /pr-self-review --full.' >&2
+         rm -f "$TMP/merged.json"; exit 1; }
   ```
 
-  **The `&&` is load-bearing, and so is the separate filename.** Three things had to be true at
-  once here, and each was wrong at some point:
+  **The command must end the run when it fails, not merely decline to overwrite.** Three things
+  had to be true at once here, and each was wrong at some point:
 
   1. **Never redirect into `findings.json` while `--slurpfile n` is reading it.** The shell
      truncates a redirection target before `jq` starts, so `$n` comes back `[]`, `$n[0]` is
      `null`, and `[carried] + null` is silently just `[carried]`. Everything the re-check found
      disappears.
-  2. **`mv` only on success.** A failing `jq` still leaves the 0-byte `merged.json` the redirect
-     created. An unconditional `mv` then installs *that* as `findings.json`, step 5 slurps it to
-     `null`, `+` takes null as its identity, the merge exits 0 with nothing in it, and the
-     verdict reads `pass`. Chaining with `&&` leaves the previous `findings.json` in place
-     instead. **If this command fails, stop and re-run `--full`** — do not run step 5 on a
-     half-merged file.
+  2. **`mv` only on success — and stop when there is no success.** A failing `jq` still leaves
+     the 0-byte `merged.json` its redirect created; an unconditional `mv` installs *that* as
+     `findings.json`, step 5 slurps it to `null`, `+` takes null as its identity, and the verdict
+     reads `pass`. But `&&` alone only saves the *new* findings: `findings.json` keeps the
+     re-check's own array and every **carried** finding is silently gone, so a critical on a file
+     this run never looked at vanishes and steps 5–6 print `PASS`. That is why the failure branch
+     exits non-zero rather than leaving prose behind. Prose is not a guard when the failure is
+     silent.
   3. **Bind the finding to `$f` before the `index`.** After the pipe into `index()`, a bare
      `.file` reads off `$re`, not off the finding — `jq` answers
      `Cannot index array with string "file"`.
 
-  Those three are one failure mode wearing three hats: a `null` reaching a `+`, which jq treats
-  as the identity, producing an empty findings array and a `pass` on a branch that has none.
-  `report.sh` refuses to call such a payload a pass (rule 6 in its header), so an escape here is
-  caught — but it is caught as `incomplete`, which blocks and costs a full re-run. Get it right
-  at the site.
+  Those three are one failure mode wearing three hats: something upstream goes wrong, `null` or a
+  short array flows on unremarked, and an empty or truncated findings list becomes a `pass` on a
+  branch that has none. `report.sh` rule 6 catches the shapes that reach it as null or non-array,
+  but a *truncated yet well-formed* array is indistinguishable from a clean run by then. The net
+  does not cover this one. Get it right at the site.
 
 - Step 6 records **`mode: "gates"`, not `"full"`.** Track A ran whole, Track B did not, and
   `gates` is exactly the mode `gate.sh` already treats as *enough for a push, not enough for a

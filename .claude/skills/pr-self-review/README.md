@@ -34,11 +34,11 @@ Scope is the whole repo: every package, every file the branch touched, committed
 
 | File | Lines | Answers |
 |---|---|---|
-| `README.md` | 216 | This card: scope, boundaries, sources, decisions, how it was tested |
-| `SKILL.md` | 381 | When does it run? What is the procedure? Which mode? What must never be reported? |
+| `README.md` | 231 | This card: scope, boundaries, sources, decisions, how it was tested |
+| `SKILL.md` | 388 | When does it run? What is the procedure? Which mode? What must never be reported? |
 | `routing.md` | 166 | Which subagent opens which skill, what to look for in the ones with no checklist, what is left out on purpose |
 | `gates.md` | 181 | What is each Track A gate, what does its failure look like, what do I try first? |
-| `severity.md` | 131 | Which of the four levels is this, and what does it stop? |
+| `severity.md` | 132 | Which of the four levels is this, and what does it stop? |
 
 `SKILL.md` stays thin because it loads in full whenever the skill activates. The topic files load
 only when the run needs them — a `--gates` run never opens `routing.md`.
@@ -98,7 +98,7 @@ specific claim taken from it.
 | `scripts/pr-self-review/scope.sh` | the four buckets and their exact JSON — `routed` / `checklist` / `skipped` / `flagged`, and that `flagged` entries carry `line: 1` |
 | `scripts/pr-self-review/gates.sh` | the ten gates, the `skip` ≠ `ok` distinction, and that gate findings put the package name in `file` |
 | `scripts/pr-self-review/baseline.sh` | that only an `agent `-sourced finding is diff-anchored, and that the freeze fingerprint is `{file, line, message}` |
-| `scripts/pr-self-review/report.sh` | the six trustworthiness rules, that the verdict never travels by exit code, and that a payload with no findings array is `incomplete` |
+| `scripts/pr-self-review/report.sh` | the six trustworthiness rules, that the verdict never travels by exit code, and that a payload whose `.findings` / `.gates` / `.agents` are not all arrays is `incomplete` |
 | `scripts/pr-self-review/gate.sh` | what the hook actually refuses, and that freshness is the load-bearing half |
 | `scripts/pr-self-review/registry.sh` | the five registry checks and their severities |
 | `.claude/skills/README.md` | the authoring standard: thin `SKILL.md`, one topic file per question, `name` matching the directory, no top-level `version` |
@@ -183,17 +183,32 @@ Decisions made while writing, beyond what the spec fixed:
   a model. A bare `startswith` raises `requires string inputs`, and under `set -e` that discarded
   the entire payload, deterministic criticals included. One malformed model finding must not take
   the committed `.env` with it.
-- **`report.sh` refuses to call an unreadable payload a pass (its rule 6).** Three separate
-  defects in this feature's short history ended identically: a `jq` step failed or a slurped file
-  came back empty, `null` reached a `+`, jq took null as the identity for it, and an empty
-  findings array produced `pass`. Guarding each site as it was found lost three times, so the
-  last station on the line now treats an absent, null, or non-array `.findings` as `incomplete`.
-  An empty *array* is still `pass` — an empty report is a valid result and that rule stands.
-  Repairing rather than crashing is the load-bearing part: a crash writes no `latest.json`, and a
-  passing verdict from an earlier run over the same tree is still *fresh* to `gate.sh`, so it
-  would be honoured. Measured against the committed pre-fix script, `.findings = {}` went from
-  `pass` to `incomplete`, and a broken run following a clean one now overwrites the stale `pass`
-  instead of leaving it standing.
+- **`report.sh` refuses to call an unreadable payload a pass (its rule 6).** Four separate defects
+  in this feature's short history ended identically: a `jq` step failed or a slurped file came
+  back empty, `null` reached a `+` or an iteration, jq absorbed it silently, and a `pass` was
+  written from nothing. Guarding each site as it was found lost every time, so the last station
+  on the line now requires an object whose `.findings`, `.gates` **and** `.agents` are all
+  arrays. All three, because each alone forges a pass: a null `.gates` reports green with no
+  Track A at all, and a null `.agents` is swallowed by `.agents[]?` so a lost crashed-subagent
+  record reads clean — rule 6's own mechanism aimed at the key that defeats rule 4. An empty
+  *array* is still `pass`; an empty report is a valid result and that rule stands.
+
+  Repairing rather than crashing is load-bearing: a crash writes no `latest.json`, and a passing
+  verdict from an earlier run over the same tree is still *fresh* to `gate.sh`, so it would be
+  honoured. Empty stdin has to be caught **before** the repair rather than by it — `jq
+  '.findings = []'` on empty input exits 0 printing nothing, which silently produced an empty
+  payload and a `latest.json` of one byte, no verdict recorded at all.
+
+  Measured against the committed pre-fix script: a 0-byte `gates.json` driven through the real
+  steps 5 and 6 went from `pass` with `"gates": null` to `incomplete`; `.agents = null` from
+  `pass` to `incomplete`; empty stdin from a 1-byte invalid file to a recorded `incomplete`; and
+  a clean payload still passes.
+- **Rule 6 is a net, not a proof, and the `--only critical` carry-forward is outside it.** A
+  *truncated yet well-formed* findings array is indistinguishable from a clean run by the time it
+  reaches `report.sh`. That is why the carry-forward snippet ends the run with a non-zero exit on
+  failure rather than trusting the net: `&&` alone preserves the re-check's own findings while
+  silently dropping every carried one, so a critical on a file the run never looked at
+  disappears and the report prints `PASS`.
 - **No `enforcement.md` and no `report-format.md`.** The scripts are the executable copy of both.
 
 ## 9. How this skill was tested

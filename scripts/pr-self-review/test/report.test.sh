@@ -87,7 +87,15 @@ rm -rf "$repo"
 # a jq step failed or a slurped file came back empty, `null` reached a `+`, jq
 # took null as the identity, and an empty findings array produced `pass`. Every
 # case below would have been a clean `pass` before this rule existed.
-for missing in 'del(.findings)' '.findings = null' '.findings = {}' '.findings = "none"'; do
+#
+# .gates and .agents are checked too, because each alone can forge a pass:
+# a null .gates reports PASS with an empty GATES section — no Track A at all —
+# and a null or non-array .agents is swallowed by `.agents[]?`, so $broken is 0
+# and a run whose crashed-subagent bookkeeping was lost reads clean, which
+# defeats rule 4.
+for missing in 'del(.findings)' '.findings = null' '.findings = {}' '.findings = "none"' \
+               'del(.gates)'    '.gates = null'    '.gates = "x"' \
+               'del(.agents)'   '.agents = null'   '.agents = "crashed"'; do
   repo="$(make_repo)"
   out="$(cd "$repo" && printf '%s' "$(payload full '[]' '[]')" | jq "$missing" | bash "$REPORT")"
   code=$?
@@ -111,6 +119,26 @@ case "$out" in
   *)               assert_eq 'not marked' 'not marked' 'an empty array is not a broken input' ;;
 esac
 rm -rf "$repo"
+
+# --- rule 6 on empty and unparseable stdin -------------------------------------
+# The input rule 6 was written for, and the one its repair could not handle:
+# `jq '.findings = []'` on empty stdin exits 0 printing nothing, so the repair
+# handed back an empty payload and latest.json was written as a bare newline —
+# 1 byte, not valid JSON, no verdict recorded. It failed safe only by accident,
+# because gate.sh happens to refuse a corrupt verdict file.
+for bad_stdin in '' 'not json at all' '[1,2,3]' 'null'; do
+  repo="$(make_repo)"
+  out="$(cd "$repo" && printf '%s' "$bad_stdin" | bash "$REPORT")"
+  code=$?
+  label="$([ -z "$bad_stdin" ] && printf '(empty)' || printf '%s' "$bad_stdin")"
+  assert_eq "$code" '0' "[$label] still exits 0"
+  assert_eq "$(jq -e . "$repo/.pr-self-review/latest.json" >/dev/null 2>&1 && printf yes || printf no)" \
+    yes "[$label] writes valid JSON, not a bare newline"
+  assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'incomplete' \
+    "[$label] records incomplete"
+  assert_contains "$out" 'BROKEN INPUT' "[$label] says so in the report"
+  rm -rf "$repo"
+done
 
 # --- rule 6 overwrites a stale passing verdict rather than leaving it ----------
 # Crashing would not be enough. gate.sh reads latest.json, and a pass from an
