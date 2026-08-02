@@ -368,7 +368,7 @@ jq -n \
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `bash scripts/pr-self-review/test/scope.test.sh`
-Expected: PASS — `13 passed, 0 failed`. If a glob misfires, fix `domains_for`, not the test.
+Expected: PASS — the last line reads `0 failed`. If a glob misfires, fix `domains_for`, not the test.
 
 - [ ] **Step 5: Run the whole suite and commit**
 
@@ -558,7 +558,7 @@ jq -n --argjson g "$gates" --argjson f "$findings" '{gates:$g, findings:$f}'
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `bash scripts/pr-self-review/test/gates.test.sh`
-Expected: PASS — `10 passed, 0 failed`.
+Expected: PASS — the last line reads `0 failed`.
 
 - [ ] **Step 5: Run it for real once, then commit**
 
@@ -730,7 +730,7 @@ printf '%s' "$payload" | jq \
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `bash scripts/pr-self-review/test/baseline.test.sh`
-Expected: PASS — `10 passed, 0 failed`.
+Expected: PASS — the last line reads `0 failed`.
 
 - [ ] **Step 5: Commit**
 
@@ -819,6 +819,18 @@ assert_eq "$([ -f "$repo/.pr-self-review/report.md" ] && printf yes || printf no
   'report.md is written'
 rm -rf "$repo"
 
+# --- a recorded bypass surfaces once, then is cleared --------------------------
+repo="$(make_repo)"
+mkdir -p "$repo/.pr-self-review"
+printf '2026-08-02T10:00:00Z git push (verdict blocked)\n' >"$repo/.pr-self-review/bypassed"
+out="$(cd "$repo" && printf '%s' "$(payload full '[]' '[]')" | bash "$REPORT")"
+assert_contains "$out" 'BYPASSED' 'a bypass is reported on the next run'
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.bypassed | length' '1' \
+  'and recorded in the verdict'
+assert_eq "$([ -f "$repo/.pr-self-review/bypassed" ] && printf yes || printf no)" no \
+  'the bypass log is consumed, so it is reported exactly once'
+rm -rf "$repo"
+
 finish
 ```
 
@@ -858,7 +870,13 @@ mkdir -p "$OUT"
 payload="$(cat)"
 mode="$(printf '%s' "$payload" | jq -r '.mode')"
 
-latest="$(printf '%s' "$payload" | jq --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+# gate.sh appends one line per bypass; a report consumes and clears them, so a
+# bypass is reported exactly once, on the next run after it happened.
+bypassed='[]'
+[ -f "$OUT/bypassed" ] && bypassed="$(jq -R . "$OUT/bypassed" | jq -s .)"
+
+latest="$(printf '%s' "$payload" | jq \
+  --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson bypassed "$bypassed" '
   ( [.findings[] | select(.severity == "critical")] | length ) as $c
   | ( [.agents[]? | select(.status != "ok")] | length ) as $broken
   | {
@@ -874,10 +892,11 @@ latest="$(printf '%s' "$payload" | jq --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
       },
       findings: .findings, gates: .gates,
       skipped: .scope.skipped, coverage: {agents: (.agents // [])},
-      bypassed: (env.PR_SELF_REVIEW_SKIP != null)
+      bypassed: $bypassed
     }')"
 
 printf '%s\n' "$latest" >"$OUT/latest.json"
+rm -f "$OUT/bypassed"
 
 render() {
   local verdict counts
@@ -908,6 +927,11 @@ render() {
   printf '%s' "$payload" | jq -r '.agents[]? | select(.status != "ok") |
     "  \(.name) agent \(.status) — \(.files) files unreviewed"'
 
+  if [ "$(printf '%s' "$latest" | jq '.bypassed | length')" -gt 0 ]; then
+    printf '\nBYPASSED SINCE THE LAST REPORT\n'
+    printf '%s' "$latest" | jq -r '.bypassed[] | "  " + .'
+  fi
+
   printf '\nThis skill checks conventions, not correctness. For logic bugs run /code-review.\n'
 }
 
@@ -917,7 +941,7 @@ render | tee "$OUT/report.md"
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `bash scripts/pr-self-review/test/report.test.sh`
-Expected: PASS — `12 passed, 0 failed`.
+Expected: PASS — the last line reads `0 failed`.
 
 - [ ] **Step 5: Run the whole Track A chain end to end, then commit**
 
@@ -1045,6 +1069,10 @@ repo="$(make_repo)"; git -C "$repo" checkout -qb feat/x
 write_verdict "$repo" full blocked
 code="$(cd "$repo" && printf '%s' "$(hook 'git push')" | PR_SELF_REVIEW_SKIP=1 bash "$GATE" >/dev/null 2>&1; printf '%s' $?)"
 assert_eq "$code" '0' 'PR_SELF_REVIEW_SKIP lets an urgent push through'
+assert_eq "$([ -f "$repo/.pr-self-review/bypassed" ] && printf yes || printf no)" yes \
+  'and the bypass is written down rather than passing silently'
+assert_contains "$(cat "$repo/.pr-self-review/bypassed")" 'git push' \
+  'the record names the command that was let through'
 rm -rf "$repo"
 
 finish
@@ -1082,7 +1110,16 @@ case "$command" in
   *)                               exit 0 ;;
 esac
 
-[ -n "${PR_SELF_REVIEW_SKIP:-}" ] && exit 0
+if [ -n "${PR_SELF_REVIEW_SKIP:-}" ]; then
+  # Recorded, not silent. report.sh consumes this file on the next run, so a
+  # bypass shows up exactly once, in the next report anyone reads.
+  mkdir -p .pr-self-review
+  printf '%s %s (verdict %s)\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$command" \
+    "$(jq -r '.verdict' .pr-self-review/latest.json 2>/dev/null || printf none)" \
+    >>.pr-self-review/bypassed
+  exit 0
+fi
 
 refuse() {
   printf 'PR Self-Review: %s\n\nRun /pr-self-review%s, fix every critical, then retry.\n' \
@@ -1117,7 +1154,7 @@ esac
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `bash scripts/pr-self-review/test/gate.test.sh`
-Expected: PASS — `14 passed, 0 failed`.
+Expected: PASS — the last line reads `0 failed`.
 
 - [ ] **Step 5: Commit**
 
