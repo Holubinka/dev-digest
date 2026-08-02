@@ -34,11 +34,11 @@ Scope is the whole repo: every package, every file the branch touched, committed
 
 | File | Lines | Answers |
 |---|---|---|
-| `README.md` | 242 | This card: scope, boundaries, sources, decisions, how it was tested |
-| `SKILL.md` | 447 | When does it run? What is the procedure? Which mode? What must never be reported? |
+| `README.md` | 257 | This card: scope, boundaries, sources, decisions, how it was tested |
+| `SKILL.md` | 473 | When does it run? What is the procedure? Which mode? What must never be reported? |
 | `routing.md` | 166 | Which subagent opens which skill, what to look for in the ones with no checklist, what is left out on purpose |
 | `gates.md` | 181 | What is each Track A gate, what does its failure look like, what do I try first? |
-| `severity.md` | 132 | Which of the four levels is this, and what does it stop? |
+| `severity.md` | 145 | Which of the four levels is this, and what does it stop? |
 
 `SKILL.md` stays thin because it loads in full whenever the skill activates. The topic files load
 only when the run needs them — a `--gates` run never opens `routing.md`.
@@ -98,7 +98,7 @@ specific claim taken from it.
 | `scripts/pr-self-review/scope.sh` | the four buckets and their exact JSON — `routed` / `checklist` / `skipped` / `flagged`, and that `flagged` entries carry `line: 1` |
 | `scripts/pr-self-review/gates.sh` | the ten gates, the `skip` ≠ `ok` distinction, and that gate findings put the package name in `file` |
 | `scripts/pr-self-review/baseline.sh` | that only an `agent `-sourced finding is diff-anchored, and that the freeze fingerprint is `{file, line, message}` |
-| `scripts/pr-self-review/report.sh` | the six trustworthiness rules, that the verdict never travels by exit code, and that any payload it cannot read — `.scope` not an object, or `.findings` / `.gates` / `.agents` / `.scope.skipped` not each an array of objects — is `incomplete` |
+| `scripts/pr-self-review/report.sh` | the six trustworthiness rules, that the verdict never travels by exit code, that a `full` run which dispatched no agent over routed files is `incomplete`, and that any payload it cannot read — `.scope` not an object, or `.findings` / `.gates` / `.agents` / `.scope.skipped` not each an array of objects — is `incomplete` too |
 | `scripts/pr-self-review/gate.sh` | what the hook actually refuses, and that freshness is the load-bearing half |
 | `scripts/pr-self-review/registry.sh` | the five registry checks and their severities |
 | `.claude/skills/README.md` | the authoring standard: thin `SKILL.md`, one topic file per question, `name` matching the directory, no top-level `version` |
@@ -179,6 +179,21 @@ Decisions made while writing, beyond what the spec fixed:
   `findings.json` while `--slurpfile n` reads it lets the shell truncate the file first, so `$n`
   is `[]`, `$n[0]` is `null`, and jq's `[carried] + null` silently drops everything the re-check
   just found — turning a blocked branch green through the very mechanism written to stop that.
+- **`report.sh` rule 4 also fires when a `full` run dispatched nothing.** `mode: "full"` with an
+  empty `agents[]` over a **non-empty** `.scope.routed` is `incomplete`, and the report prints
+  `NO SUBAGENT RAN`. `gate.sh` checks `mode != full` and never reads `.coverage.agents`, so
+  without this such a verdict opens a PR on a review that ran Track A only — the seeding decision
+  three bullets up is what made it reachable, since the same run used to die at step 5 instead.
+  The rule is narrow deliberately: an empty `agents[]` over an **empty** `routed[]` is a real
+  pass, because a diff of nothing but lockfiles routes no file and that run did cover everything
+  there was. `mode: "gates"` never trips it — that mode already says half a review.
+- **The `--only critical` guard uses `-s` on the two JSON inputs and `-f` on `recheck`.** An empty
+  `recheck` is not an error: a branch blocked solely by Track A has no Track B critical to narrow,
+  and then an empty `$re` matches nothing in `index()`, so every previous finding is carried and
+  none dropped — the right answer. `-s` there hard-stopped that run, which is this repo's own
+  state most days. The corrupt-`latest.json` case that leaves the same 0 bytes is caught where it
+  actually happens, on the exit status of the extraction `jq`. A guard that refuses a correct run
+  teaches people to delete the guard.
 - **`baseline.sh` tolerates a missing or non-string `source`.** Half the findings are written by
   a model. A bare `startswith` raises `requires string inputs`, and under `set -e` that discarded
   the entire payload, deterministic criticals included. One malformed model finding must not take

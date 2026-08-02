@@ -244,6 +244,11 @@ review that dispatched no subagent at all — the one place a copy-paste defeats
 gate. Pasted the other way round it merely refuses a PR that would have been allowed, costing one
 turn. Cheap error, expensive error; pick the cheap one.
 
+`report.sh` now catches the expensive half of that mistake, but only the half it can see: `full`
+with an empty `agents[]` over a **non-empty** `.routed[]` is recorded as `incomplete` and prints
+`NO SUBAGENT RAN`. A `full` claimed after subagents ran on *some* of the diff is still yours to
+get right — nothing downstream can tell partial coverage from complete.
+
 `report.sh` writes `.pr-self-review/latest.json` for the hook and `.pr-self-review/report.md` for
 people, prints the short form, and always exits 0. **The verdict never reaches you through an
 exit code** — read it from the output or from `latest.json`.
@@ -292,11 +297,23 @@ finding is the one thing this baseline cannot survive.
 ```sh
 jq -r '[.findings[] | select(.severity == "critical")
                     | select(((.source // "") | tostring) | startswith("agent ")) | .file] | unique[]' \
-  .pr-self-review/latest.json > "$TMP/recheck"
+  .pr-self-review/latest.json > "$TMP/recheck" \
+  || { echo 'could not read .pr-self-review/latest.json — it is missing or not JSON.' >&2
+       echo 'There is no previous verdict to narrow. Run /pr-self-review --full.' >&2; exit 1; }
 ```
 
 Only **Track B** criticals go on that list. A gate critical needs no narrowing — step 2 re-runs
 every gate in full anyway, and `skills-lock.json` is not a file a subagent reviews.
+
+**Check the exit status here, and do not later treat an empty `recheck` as an error.** Those are
+two different states that both leave the file at 0 bytes, and only one of them is wrong. A branch
+blocked **solely by Track A** — this repo's own state most days, where both criticals are
+`gate registry` — has no Track B critical to narrow, so the extraction legitimately writes
+nothing. That run must continue: an empty list means every previous finding is carried and none
+dropped, which is the correct answer, and §3.0 already names "`--only critical` with nothing to
+re-check" as one of the three paths the step-0 seed exists to keep alive. A `latest.json` that is
+missing or corrupt leaves the same 0 bytes and is a real stop — which is what the `||` above is
+for.
 
 **Both `--only critical` snippets guard `.source` the same way `baseline.sh` does**, and for the
 same reason: this command reads `latest.json`, whose findings were written by a model, and
@@ -315,15 +332,16 @@ No `latest.json` means there is no last run to narrow — say so and run `--full
   carried — they re-ran:
 
   ```sh
-  for f in .pr-self-review/latest.json "$TMP/findings.json" "$TMP/recheck"; do
+  for f in .pr-self-review/latest.json "$TMP/findings.json"; do
     [ -s "$f" ] && continue
     echo "carry-forward: $f is missing or empty. STOP." >&2
-    echo "  No recheck list and every carried critical is dropped; no latest.json" >&2
-    echo "  and there is nothing to carry; an EMPTY findings.json makes \$n[0] null," >&2
-    echo "  jq exits 0, and the re-check's own findings are the ones that vanish." >&2
-    echo "  Re-run /pr-self-review --full." >&2
+    echo "  No latest.json and there is nothing to carry forward at all; an EMPTY" >&2
+    echo "  findings.json makes \$n[0] null, jq exits 0, and the re-check's own" >&2
+    echo "  findings are the ones that vanish. Re-run /pr-self-review --full." >&2
     exit 1
   done
+  [ -f "$TMP/recheck" ] || { echo 'carry-forward: no recheck file — the extraction' >&2
+                             echo '  above never ran. Run it first.' >&2; exit 1; }
   jq -n --slurpfile p .pr-self-review/latest.json --slurpfile n "$TMP/findings.json" \
         --rawfile r "$TMP/recheck" \
     '($r | split("\n") | map(select(length > 0))) as $re
@@ -338,7 +356,7 @@ No `latest.json` means there is no last run to narrow — say so and run `--full
          rm -f "$TMP/merged.json"; exit 1; }
   ```
 
-  **The command must end the run when it fails, not merely decline to overwrite.** Four things
+  **The command must end the run when it fails, not merely decline to overwrite.** Five things
   had to be true at once here, and each was wrong at some point:
 
   1. **Never redirect into `findings.json` while `--slurpfile n` is reading it.** The shell
@@ -362,10 +380,16 @@ No `latest.json` means there is no last run to narrow — say so and run `--full
      findings survive, and the **re-check's own** findings — the only reason the run happened —
      are the ones that disappear. That is the exact mirror of 1, and no exit-status check can
      see it. The `for` loop above is what catches it.
+  5. **`-s` on the two JSON inputs, `-f` on `recheck`, and never the other way round.** An empty
+     `latest.json` or `findings.json` is always a lost file. An empty `recheck` is the ordinary
+     state of a branch whose only criticals came from Track A, and `-s` there hard-stops a run
+     that would have produced exactly the right answer — an empty `$re` matches nothing in
+     `index()`, so everything is carried and nothing dropped. A guard that refuses a correct run
+     teaches people to delete the guard.
 
-  Those four are one failure mode wearing four hats: something upstream goes wrong, `null` or a
-  short array flows on unremarked, and an empty or truncated findings list becomes a `pass` on a
-  branch that has none. `report.sh` rule 6 catches the shapes that reach it as null, non-array,
+  The first four are one failure mode wearing four hats: something upstream goes wrong, `null`
+  or a short array flows on unremarked, and an empty or truncated findings list becomes a `pass`
+  on a branch that has none. `report.sh` rule 6 catches the shapes that reach it as null, non-array,
   or an array with an unreadable element, but a *truncated yet well-formed* array is
   indistinguishable from a clean run by then. The net does not cover this one. Get it right at
   the site.
@@ -427,6 +451,8 @@ Stop when you catch yourself doing any of these.
 | "The `jq` probably worked, `mv` it into place" | §4 — a failed `jq` leaves a 0-byte file that reads as zero findings |
 | "`findings.json` is 0 bytes, so the agents found nothing" | §3.5 — 0 bytes is a crash; a run that found nothing writes `[]` |
 | "The agent returned prose, I'll drop it in the array as-is" | §3.6 — a string among the objects is `BROKEN INPUT` |
+| "No subagent ran, but the diff was small — call it `full`" | §3.6 — routed files with no agent is `NO SUBAGENT RAN` |
+| "`recheck` came back empty, something must be broken" | §4 — no Track B critical is the ordinary case; carry on |
 | "`BROKEN INPUT` — I'll just re-run step 6 with the array" | §3.6 — that hides which step lost it |
 | "I'll re-freeze the baseline so the branch goes green" | §4 — the baseline only shrinks |
 | "It's on line 300 of a file I touched at line 40" | §3.5 — that is baseline, not yours |

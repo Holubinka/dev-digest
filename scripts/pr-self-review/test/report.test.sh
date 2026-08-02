@@ -18,6 +18,11 @@ payload() { # mode findings agents
 
 crit='{"severity":"critical","source":"gate lint","file":"client/src/a.tsx","line":1,"message":"bad","fix":"pnpm lint --fix"}'
 
+# What a real `full` run's bookkeeping looks like. The fixture routes one file,
+# so a `full` payload needs a dispatched agent to be a pass at all — see the
+# rule-4-second-half block below.
+okagent='[{"name":"frontend","status":"ok","files":1}]'
+
 # --- a clean full run passes ---------------------------------------------------
 repo="$(make_repo)"
 out="$(cd "$repo" && printf '%s' "$(payload full '[]' '[{"name":"frontend","status":"ok","files":1}]')" | bash "$REPORT")"
@@ -131,7 +136,7 @@ done
 # Rule 6 must not break the rule it sits next to: an empty report is a valid
 # result here, and zero findings print as zero.
 repo="$(make_repo)"
-out="$(cd "$repo" && printf '%s' "$(payload full '[]' '[]')" | bash "$REPORT")"
+out="$(cd "$repo" && printf '%s' "$(payload full '[]' "$okagent")" | bash "$REPORT")"
 assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'pass' \
   'an empty findings array is still a pass'
 assert_contains "$out" '0 critical' 'and it still prints zero'
@@ -170,10 +175,10 @@ done
 # reach the end, which means it must not exit non-zero on the way.
 for breakage in 'del(.findings)' '.agents = ["frontend crashed"]' '.scope = null'; do
   repo="$(make_repo)"
-  ( cd "$repo" && printf '%s' "$(payload full '[]' '[]')" | bash "$REPORT" >/dev/null )
+  ( cd "$repo" && printf '%s' "$(payload full '[]' "$okagent")" | bash "$REPORT" >/dev/null )
   assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'pass' \
     "[$breakage] the earlier run over the same tree passed"
-  ( cd "$repo" && printf '%s' "$(payload full '[]' '[]')" | jq "$breakage" | bash "$REPORT" >/dev/null )
+  ( cd "$repo" && printf '%s' "$(payload full '[]' "$okagent")" | jq "$breakage" | bash "$REPORT" >/dev/null )
   assert_eq "$?" '0' "[$breakage] the broken run still exits 0, so it reaches the write"
   assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'incomplete' \
     "[$breakage] the broken run overwrites the stale pass"
@@ -194,6 +199,62 @@ assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.counts.critical' '1' 
 assert_contains "$out" 'pnpm lint --fix' 'and still printed with its fix line'
 assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.coverage.agents | length' '1' \
   'the readable agent entry survives too'
+rm -rf "$repo"
+
+# --- rule 4's other half: a `full` run that dispatched no subagent -------------
+# `mode: "full"` is the mode gate.sh requires for a PR, and gate.sh checks the
+# mode and NOTHING about coverage — it never reads .coverage.agents. So a full
+# run with an empty agents[] over routed files opens a PR on a review that ran
+# Track A only. It became reachable when findings.json and agents.json started
+# being seeded as [] before step 3: the same run used to die at step 5.
+#
+# All three combinations are pinned, because the rule has to be narrow. An
+# empty agents[] is LEGITIMATE when routed[] is empty — a diff of nothing but
+# lockfiles routes no file, and that run really did cover everything.
+repo="$(make_repo)"
+out="$(cd "$repo" && printf '%s' "$(payload full '[]' '[]')" | bash "$REPORT")"
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'incomplete' \
+  'full + no agent + routed files is not a pass'
+assert_contains "$out" 'NO SUBAGENT RAN' 'and the report says so, loudly'
+assert_contains "$out" '1 file(s)' 'and names how many files went unreviewed'
+rm -rf "$repo"
+
+repo="$(make_repo)"
+out="$(cd "$repo" && printf '%s' "$(payload full '[]' '[]')" | jq '.scope.routed = []' | bash "$REPORT")"
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'pass' \
+  'full + no agent + NO routed files is a legitimate pass'
+case "$out" in
+  *'NO SUBAGENT RAN'*) assert_eq 'marked' 'not marked' 'nothing to review is not a coverage gap' ;;
+  *)                   assert_eq 'not marked' 'not marked' 'nothing to review is not a coverage gap' ;;
+esac
+rm -rf "$repo"
+
+repo="$(make_repo)"
+( cd "$repo" && printf '%s' "$(payload full '[]' "$okagent")" | bash "$REPORT" >/dev/null )
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'pass' \
+  'full + a dispatched agent + routed files still passes'
+rm -rf "$repo"
+
+repo="$(make_repo)"
+( cd "$repo" && printf '%s' "$(payload gates '[]' '[]')" | bash "$REPORT" >/dev/null )
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'pass' \
+  'a gates run with no agent is untouched — that mode already means half a review'
+rm -rf "$repo"
+
+# --- an empty .scope.skipped is a real payload, not a broken one ---------------
+# scope.sh initialises skipped to [] and only ever appends, so a branch that
+# skipped nothing produces exactly this. The payload() fixture always carries
+# one entry, so without this assertion a future tightening of rule 6 to
+# `(.skipped | length) > 0 and all(...)` would silently block every clean
+# small branch and no test would notice.
+repo="$(make_repo)"
+out="$(cd "$repo" && printf '%s' "$(payload full '[]' "$okagent")" | jq '.scope.skipped = []' | bash "$REPORT")"
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'pass' \
+  'an empty skipped list is a pass, not a broken input'
+case "$out" in
+  *'BROKEN INPUT'*) assert_eq 'marked broken' 'not marked' 'an empty skipped list is not broken input' ;;
+  *)                assert_eq 'not marked' 'not marked' 'an empty skipped list is not broken input' ;;
+esac
 rm -rf "$repo"
 
 # --- a recorded bypass surfaces once, then is cleared --------------------------

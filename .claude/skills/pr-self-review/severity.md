@@ -113,18 +113,31 @@ over a key prop.
 |---|---|---|---|
 | `pass` | no critical, every agent ok | allowed | allowed **only if** `mode` is `full` |
 | `blocked` | one or more criticals survive | refused | refused |
-| `incomplete` | any agent status is not `ok`, **or the payload was not an object with `.findings`, `.gates` and `.agents` all arrays** | refused | refused |
+| `incomplete` | any agent status is not `ok`; **or a `full` run dispatched no agent over routed files**; **or the payload was not something `report.sh` could read** | refused | refused |
 
 `incomplete` outranks `blocked` deliberately: if a crashed subagent counted as a pass, breaking
 a subagent would be the cheapest way through the gate.
 
-The second trigger is the same argument turned on the pipeline itself. `report.sh` computes the
-verdict from those three keys, and everything upstream is a chain of `jq` steps over slurped
-files — if one fails or a file comes back empty, `null` reaches a `+` or an iteration, jq absorbs
-it silently, and what arrives looks exactly like a clean run. Each key alone can forge a pass: a
-null `.gates` reports green with no Track A at all, and a null `.agents` is swallowed by
-`.agents[]?` so a lost crashed-subagent record reads clean. An empty *array* is still `pass`:
-zero findings really are a valid result, and rule 6 must not break the rule beside it.
+The second trigger is that argument taken one step further: an agent that never ran is no more
+reviewed than one that crashed. `mode: "full"` with an empty `agents[]` over a **non-empty**
+`.scope.routed` is Track A wearing the mode a PR requires, and `gate.sh` checks the mode and
+never the coverage. An empty `agents[]` over an empty `routed[]` is untouched — a diff of nothing
+but lockfiles routes no file, and that run really did cover everything there was.
+
+The third is the same argument turned on the pipeline itself. `report.sh` computes the verdict
+from `.findings`, `.gates`, `.agents` and `.scope`, and everything upstream is a chain of `jq`
+steps over slurped files written partly by a model — if one fails or a file comes back empty,
+`null` or a bare string reaches a `+`, an iteration or a `.status` read, and what arrives looks
+exactly like a clean run or kills the script outright. So the payload must be an object whose
+`.scope` is an object and whose `.findings`, `.gates`, `.agents` and `.scope.skipped` are each an
+**array of objects**. Each part alone can forge a pass: a null `.gates` reports green with no
+Track A at all; a null `.agents` is swallowed by `.agents[]?` so a lost crashed-subagent record
+reads clean; a null or `{}` `.scope` prints green with an empty SKIPPED list. And the element
+check is what stops `{"agents":["frontend crashed"]}` — an array, so a container-only rule waved
+it through, and the `.status` read then crashed the script, which wrote no verdict at all and
+left an earlier `pass` over the same tree standing for the hook to honour. An empty *array* is
+still `pass`: zero findings really are a valid result, and rule 6 must not break the rule beside
+it.
 
 Freshness sits on top of all three. A verdict is only usable while `headSha` and `worktreeHash`
 still match the working tree, so one edit after a pass makes it stale and the hook refuses again.

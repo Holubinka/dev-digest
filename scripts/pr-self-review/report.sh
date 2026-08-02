@@ -8,7 +8,8 @@
 #   2. every critical carries one concrete Fix: line
 #   3. skipped files are always printed — a green report with no skipped
 #      list is lying
-#   4. a failed subagent is visible and forces `incomplete`, which blocks
+#   4. a subagent that failed — or that a `full` run never dispatched over
+#      routed files at all — is visible and forces `incomplete`, which blocks
 #   5. the report states what it does not do: conventions, not correctness
 #   6. a payload the script cannot read — anything but an object whose
 #      .scope is an object and whose .findings, .gates, .agents and
@@ -58,6 +59,22 @@
 # `jq '.findings = []'` on empty input exits 0 printing nothing, so the repair
 # silently produced an empty payload and latest.json became a bare newline —
 # no verdict recorded at all.
+#
+# Rule 4 has a second half for the same reason rule 6 exists at all. A payload
+# saying `mode: "full"` with an EMPTY .agents over a NON-EMPTY .scope.routed is
+# a run that reviewed no file with a subagent and then claimed the mode a PR
+# requires. gate.sh checks `mode != full` and nothing else — it never reads
+# .coverage.agents — so such a verdict opens a PR on a review that ran Track A
+# only. The path is ordinary rather than exotic: seeding findings.json and
+# agents.json as `[]` before step 3 (which is what lets a --gates run reach the
+# report at all) means a full run whose step 3 was skipped or never dispatched
+# now sails through where it used to die.
+#
+# The rule is narrow on purpose. An empty .agents is LEGITIMATE when there was
+# nothing to review — a diff of nothing but lockfiles routes no file, and that
+# run is a real `full` pass. Only routed files unreviewed by any agent trips
+# it, and `mode: "gates"` never does: that mode already means "enough for a
+# push, not enough for a PR", which is exactly what this run is.
 #
 # Zero findings print as zero. Inventing one so the run looks worthwhile is
 # prohibited; INSIGHTS.md records that reviews here legitimately find nothing.
@@ -109,6 +126,23 @@ elif ! printf '%s' "$payload" | jq -e '
   # printed. It can never turn the run green: input_ok is already 0.
 fi
 
+# --- rule 4, second half: a `full` run that dispatched nothing --------------
+# Evaluated only on a readable payload: a repaired .agents is empty for a
+# reason BROKEN INPUT already explains, and stacking two banners would blame
+# the wrong step.
+unrun=0
+routed_n=0
+if [ "$input_ok" -eq 1 ]; then
+  routed_n="$(printf '%s' "$payload" | jq '.scope.routed | length' 2>/dev/null)" || routed_n=0
+  [ -n "$routed_n" ] || routed_n=0
+  if printf '%s' "$payload" | jq -e '
+        .mode == "full"
+    and (.agents | length) == 0
+    and (.scope.routed | length) > 0' >/dev/null 2>&1; then
+    unrun=1
+  fi
+fi
+
 # gate.sh appends one line per bypass; a report consumes and clears them, so a
 # bypass is reported exactly once, on the next run after it happened.
 bypassed='[]'
@@ -116,12 +150,12 @@ bypassed='[]'
 
 latest="$(printf '%s' "$payload" | jq \
   --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson bypassed "$bypassed" \
-  --argjson inputOk "$input_ok" '
+  --argjson inputOk "$input_ok" --argjson unrun "$unrun" '
   ( [.findings[] | select(.severity == "critical")] | length ) as $c
   | ( [.agents[]? | select(.status != "ok")] | length ) as $broken
   | {
       mode: .mode,
-      verdict: (if $inputOk == 0 or $broken > 0 then "incomplete"
+      verdict: (if $inputOk == 0 or $broken > 0 or $unrun == 1 then "incomplete"
                 elif $c > 0 then "blocked"
                 else "pass" end),
       baseSha: .scope.base, headSha: .scope.head, worktreeHash: .scope.worktreeHash,
@@ -160,6 +194,17 @@ render() {
     printf '  The counts and gates above are not a review result. Some step\n'
     printf '  between scope.sh and here failed or produced an empty file, so the\n'
     printf '  verdict is incomplete rather than pass. Re-run the review.\n'
+  fi
+
+  # Rule 4's other half. Also loud, and for the same reason: the counts are a
+  # true summary of Track A and say nothing at all about the half that is
+  # missing.
+  if [ "$unrun" -eq 1 ]; then
+    printf '\nNO SUBAGENT RAN — mode is "full", but agents[] is empty and the diff\n'
+    printf '  routed %s file(s) for review. A full run means both tracks covered the\n' "$routed_n"
+    printf '  whole diff; this one covered Track A only, so the verdict is incomplete\n'
+    printf '  rather than pass. Either dispatch step 3 and re-run, or record the run\n'
+    printf '  honestly as mode "gates" — enough for a push, not enough for a PR.\n'
   fi
 
   printf '\nGATES\n'
