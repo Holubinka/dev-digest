@@ -15,13 +15,13 @@ import React from "react";
 import {
   Icon,
   SEV,
-  SeverityBadge,
   CategoryTag,
   ConfidenceNum,
   type Severity,
   type Category,
 } from "@devdigest/ui";
 import type { ListFinding } from "@devdigest/shared";
+import { FindingSeverityBadge } from "@/components/severity-badge";
 import { githubBlobUrl } from "@/lib/github-urls";
 import { FileRef } from "./FileRef";
 import { CARD_MAX_HEIGHT, CARD_WIDTH, s } from "./styles";
@@ -198,7 +198,10 @@ export function FindingsPreview({
             {visible.map((f, i) => (
               <div key={f.id} style={s.item(i === 0)} role="listitem">
                 <div style={s.itemTitleRow}>
-                  <SeverityBadge severity={f.severity as Severity} compact />
+                  {/* `ListFinding.severity` is plain `string` — the column is
+                      `text`. `SeverityBadge` has no fallback, so a cast here
+                      would be a widening one wearing a narrowing shape. */}
+                  <FindingSeverityBadge severity={f.severity} compact />
                   <span style={s.itemTitle}>{f.title}</span>
                   <CategoryTag category={f.category as Category} />
                 </div>
