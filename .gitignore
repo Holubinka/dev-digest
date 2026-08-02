@@ -23,3 +23,14 @@ test-results/
 
 # emdash worktree config (local)
 .emdash.json
+
+# pr-self-review verdicts — local, per-branch, never shared. Load-bearing:
+# report.sh records the worktree hash *inside* this directory, and scope.sh
+# hashes every file it can see. If this stays visible to git, the recorded
+# hash can never match the recomputed one (that would need a hash preimage),
+# and gate.sh refuses every push forever with a stale-verdict message that
+# points at an edit that does not exist. Includes baseline.json: it is
+# per-checkout state, and a shared baseline would be a merge conflict on
+# every branch. Do not remove this as clutter — see gate.sh's self-diagnosis
+# for the failure this prevents.
+.pr-self-review/
