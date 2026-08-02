@@ -8,10 +8,10 @@ SCOPE="$HERE/../scope.sh"
 
 # --- a changed client component routes to frontend, and to security ------------
 repo="$(make_repo)"
-git -C "$repo" checkout -qb feat/x
+sgit "$repo" checkout -qb feat/x
 mkdir -p "$repo/client/src/app"
 printf 'export const A = 1\n' >"$repo/client/src/app/a.tsx"
-git -C "$repo" add -A && git -C "$repo" commit -qm "add a"
+sgit "$repo" add -A && sgit "$repo" commit -qm "add a"
 
 out="$(cd "$repo" && bash "$SCOPE")"
 assert_json "$out" '.routed | length' '1' 'one routed file'
@@ -26,10 +26,10 @@ rm -rf "$repo"
 
 # --- a lockfile is skipped, never routed ---------------------------------------
 repo="$(make_repo)"
-git -C "$repo" checkout -qb feat/x
+sgit "$repo" checkout -qb feat/x
 mkdir -p "$repo/client"
 printf 'lockfileVersion: 9\n' >"$repo/client/pnpm-lock.yaml"
-git -C "$repo" add -A && git -C "$repo" commit -qm "lock"
+sgit "$repo" add -A && sgit "$repo" commit -qm "lock"
 
 out="$(cd "$repo" && bash "$SCOPE")"
 assert_json "$out" '.routed | length' '0' 'the lockfile is not routed'
@@ -41,9 +41,9 @@ rm -rf "$repo"
 
 # --- a committed .env is a critical flag, and its contents are never read -------
 repo="$(make_repo)"
-git -C "$repo" checkout -qb feat/x
+sgit "$repo" checkout -qb feat/x
 printf 'OPENAI_API_KEY=sk-real\n' >"$repo/.env"
-git -C "$repo" add -f .env && git -C "$repo" commit -qm "env"
+sgit "$repo" add -f .env && sgit "$repo" commit -qm "env"
 
 out="$(cd "$repo" && bash "$SCOPE")"
 assert_json "$out" '[.flagged[] | select(.file == ".env")] | length' '1' 'the .env is flagged'
@@ -54,9 +54,9 @@ rm -rf "$repo"
 
 # --- .env.example is ordinary, and lands on the checklist -----------------------
 repo="$(make_repo)"
-git -C "$repo" checkout -qb feat/x
+sgit "$repo" checkout -qb feat/x
 printf 'OPENAI_API_KEY=\n' >"$repo/.env.example"
-git -C "$repo" add -A && git -C "$repo" commit -qm "example"
+sgit "$repo" add -A && sgit "$repo" commit -qm "example"
 
 out="$(cd "$repo" && bash "$SCOPE")"
 assert_json "$out" '.flagged | length' '0' '.env.example is not a secret'
@@ -66,10 +66,10 @@ rm -rf "$repo"
 
 # --- an uncommitted edit is in scope, and moves the worktree hash ---------------
 repo="$(make_repo)"
-git -C "$repo" checkout -qb feat/x
+sgit "$repo" checkout -qb feat/x
 mkdir -p "$repo/server/src/modules/pulls"
 printf 'export const s = 1\n' >"$repo/server/src/modules/pulls/service.ts"
-git -C "$repo" add -A && git -C "$repo" commit -qm "service"
+sgit "$repo" add -A && sgit "$repo" commit -qm "service"
 before="$(cd "$repo" && bash "$SCOPE" | jq -r '.worktreeHash')"
 printf 'export const s = 2\n' >"$repo/server/src/modules/pulls/service.ts"
 
@@ -91,10 +91,10 @@ rm -rf "$repo"
 repo="$(make_repo)"
 mkdir -p "$repo/client/src"
 printf 'a\nb\nc\nd\n' >"$repo/client/src/x.ts"
-git -C "$repo" add -A && git -C "$repo" commit -qm "x predates the branch"
-git -C "$repo" checkout -qb feat/x
+sgit "$repo" add -A && sgit "$repo" commit -qm "x predates the branch"
+sgit "$repo" checkout -qb feat/x
 printf 'a\nb\nCHANGED\nd\n' >"$repo/client/src/x.ts"
-git -C "$repo" add -A && git -C "$repo" commit -qm "edit line 3"
+sgit "$repo" add -A && sgit "$repo" commit -qm "edit line 3"
 printf 'a\nb\nCHANGED\nALSO-CHANGED\n' >"$repo/client/src/x.ts"   # uncommitted, line 4
 
 out="$(cd "$repo" && bash "$SCOPE")"
@@ -114,9 +114,9 @@ rm -rf "$repo"
 repo="$(make_repo)"
 mkdir -p "$repo/client/src"
 printf 'a\nb\n' >"$repo/client/src/gone.ts"
-git -C "$repo" add -A && git -C "$repo" commit -qm "gone.ts predates the branch"
-git -C "$repo" checkout -qb feat/x
-git -C "$repo" rm -q "client/src/gone.ts"
+sgit "$repo" add -A && sgit "$repo" commit -qm "gone.ts predates the branch"
+sgit "$repo" checkout -qb feat/x
+sgit "$repo" rm -q "client/src/gone.ts"
 
 out="$(cd "$repo" && bash "$SCOPE")"; code=$?
 assert_eq "$code" '0' 'a staged deletion does not crash scope.sh'
@@ -125,7 +125,7 @@ assert_json "$out" '[.routed[] | select(.path == "client/src/gone.ts")] | length
 assert_json "$out" '[.routed[] | select(.path == "client/src/gone.ts")][0].lines | length' '0' \
   'and carries no lines, because there is nothing left to anchor to'
 
-git -C "$repo" commit -qm "delete gone.ts"
+sgit "$repo" commit -qm "delete gone.ts"
 out="$(cd "$repo" && bash "$SCOPE")"; code=$?
 assert_eq "$code" '0' 'a committed deletion does not crash scope.sh either'
 rm -rf "$repo"

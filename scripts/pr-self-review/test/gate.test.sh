@@ -17,16 +17,16 @@ hook() { jq -n --arg c "$1" '{tool_name:"Bash", tool_input:{command:$c}}'; }
 new_repo() { # -> path, on branch feat/x, .pr-self-review already gitignored
   local repo
   repo="$(make_repo)"
-  git -C "$repo" checkout -qb feat/x
+  sgit "$repo" checkout -qb feat/x
   printf '.pr-self-review/\n' >"$repo/.gitignore"
-  git -C "$repo" add -A
-  git -C "$repo" commit -qm "ignore .pr-self-review"
+  sgit "$repo" add -A
+  sgit "$repo" commit -qm "ignore .pr-self-review"
   printf '%s' "$repo"
 }
 
 write_verdict() { # repo mode verdict [headSha] [worktreeHash]
   local repo="$1" head="${4:-}" hash="${5:-}"
-  [ -n "$head" ] || head="$(git -C "$repo" rev-parse HEAD)"
+  [ -n "$head" ] || head="$(sgit "$repo" rev-parse HEAD)"
   [ -n "$hash" ] || hash="$(cd "$repo" && bash "$HERE/../scope.sh" | jq -r '.worktreeHash')"
   mkdir -p "$repo/.pr-self-review"
   jq -n --arg m "$2" --arg v "$3" --arg h "$head" --arg w "$hash" \
@@ -138,7 +138,7 @@ rm -rf "$repo"
 repo="$(new_repo)"
 write_verdict "$repo" full pass
 printf 'more\n' >"$repo/README.md"
-git -C "$repo" add -A && git -C "$repo" commit -qm "later"
+sgit "$repo" add -A && sgit "$repo" commit -qm "later"
 res="$(run x "$repo" 'git push')"
 assert_eq "$(printf '%s' "$res" | cut -f1)" '2' 'a commit after the review invalidates it'
 assert_contains "$(printf '%s' "$res" | cut -f2)" 'stale' 'and the reason is named'
@@ -168,7 +168,7 @@ rm -rf "$repo"
 # check-ignore guard in gate.sh this would report "the working tree changed"
 # forever — an unsatisfiable loop, since re-running the review only rewrites
 # the same self-invalidating file.
-repo="$(make_repo)"; git -C "$repo" checkout -qb feat/x
+repo="$(make_repo)"; sgit "$repo" checkout -qb feat/x
 write_verdict "$repo" full pass
 res="$(run x "$repo" 'git push')"
 assert_eq "$(printf '%s' "$res" | cut -f1)" '2' 'an un-ignored .pr-self-review still blocks'
