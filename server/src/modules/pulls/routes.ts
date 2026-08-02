@@ -7,13 +7,8 @@ import * as t from '../../db/schema.js';
 import { getContext } from '../_shared/context.js';
 import { IdParams } from '../_shared/schemas.js';
 import { AppError, NotFoundError } from '../../platform/errors.js';
-import {
-  deriveReviewStatus,
-  rollupSeverities,
-  topFindings,
-  type ListFinding,
-  type SeverityCounts,
-} from './status.js';
+import { rollupSeverities, topFindings, type ListFinding, type SeverityCounts } from './status.js';
+import { toPrMeta } from './helpers.js';
 
 /** How many findings the list previews per PR in its hover card. */
 const LIST_FINDINGS_PREVIEW = 3;
@@ -201,37 +196,17 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
     }
 
     const now = Date.now();
-    return rows.map((r) => {
-      const review = latestReviewByPr.get(r.id);
-      const findings = findingsByPr.get(r.id);
-      return {
-        id: r.id,
-        number: r.number,
-        title: r.title,
-        author: r.author,
-        branch: r.branch,
-        base: r.base,
-        head_sha: r.headSha,
-        additions: r.additions,
-        deletions: r.deletions,
-        files_count: r.filesCount,
-        status: deriveReviewStatus({
-          ghStatus: r.status,
-          lastReviewedSha: r.lastReviewedSha,
-          headSha: r.headSha,
-          updatedAt: r.updatedAt,
-          now,
-        }),
-        opened_at: r.openedAt?.toISOString() ?? null,
-        updated_at: r.updatedAt?.toISOString() ?? null,
-        score: review ? review.score : null,
-        cost_usd: totalCostByPr.get(r.id) ?? null,
-        findings_critical: findings ? findings.counts.critical : null,
-        findings_warning: findings ? findings.counts.warning : null,
-        findings_suggestion: findings ? findings.counts.suggestion : null,
-        findings_top: findings ? findings.top : null,
-      };
-    });
+    return rows.map((r) =>
+      toPrMeta(
+        r,
+        {
+          review: latestReviewByPr.get(r.id),
+          costUsd: totalCostByPr.get(r.id) ?? null,
+          findings: findingsByPr.get(r.id),
+        },
+        now,
+      ),
+    );
   });
 
   app.get('/pulls/:id', { schema: { params: IdParams } }, async (req): Promise<PrDetail> => {
