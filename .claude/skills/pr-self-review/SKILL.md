@@ -167,8 +167,10 @@ Each subagent's brief carries, and carries nothing else:
   ever reached the brief and the agent fell back on its own skill's impact reasoning. `minor`
   blocks nothing and never reaches step 4, so a critical graded down is indistinguishable from a
   critical never found. The vocabulary rule still matters on its own: a finding returned as
-  `"high"` passes `baseline.sh` untouched, is counted in none of `report.sh`'s four buckets and
-  printed in none of its four sections — it lands in `latest.json` invisible;
+  `"high"` passes `baseline.sh` untouched and is counted in none of `report.sh`'s four buckets.
+  That one is enforced now — rule 6 reads the vocabulary, so the run is `incomplete` rather than
+  `pass` and the finding prints under `UNGRADED` — but an `incomplete` run blocks and costs a
+  re-dispatch, so quote the four names anyway;
 - **`source` must begin `agent security · ` or `agent conventions · `** — those two literals and
   no others — then the skill and section: `agent conventions · onion-architecture §7`, never
   "the architecture skill".
@@ -291,10 +293,11 @@ people, prints the short form, and always exits 0. **The verdict never reaches y
 exit code** — read it from the output or from `latest.json`.
 
 If the report prints `BROKEN INPUT`, the payload was not something `report.sh` could read: it
-needs `.scope` to be an object and `.findings`, `.gates`, `.agents` and `.scope.skipped` to each
-be an **array of objects**. A key that arrived null, a key that arrived as a bare string, or an
-array with a stray string among the objects — a subagent that returned prose instead of a finding
-does exactly that — all land here. The unreadable parts are dropped, the readable ones still
+needs `.scope` to be an object, `.findings`, `.gates`, `.agents` and `.scope.skipped` to each
+be an **array of objects**, and every finding graded with one of the four severity names. A key
+that arrived null, a key that arrived as a bare string, an array with a stray string among the
+objects — a subagent that returned prose instead of a finding does exactly that — or a finding
+graded `"high"` all land here. The unreadable parts are dropped, the readable ones still
 print, and the verdict is `incomplete` rather than `pass`. Do not paper over it by re-running
 step 6 with a hand-written array: find which step produced the bad shape and fix that.
 
@@ -369,6 +372,7 @@ Stop when you catch yourself doing any of these.
 | "The `jq` probably worked, `mv` it into place" | modes.md — a failed `jq` leaves a 0-byte file that reads as zero findings |
 | "`findings.json` is 0 bytes, so the agents found nothing" | §3.5 — 0 bytes is a crash; a run that found nothing writes `[]` |
 | "The agent returned prose, I'll drop it in the array as-is" | §3.6 — a string among the objects is `BROKEN INPUT` |
+| "It came back `high`; that is obviously a major" | §3.3 — regrade it at the source, or it is `BROKEN INPUT` |
 | "No subagent ran, but the diff was small — call it `full`" | §3.6 — routed files with no agent is `NO SUBAGENT RAN` |
 | "`recheck` came back empty, something must be broken" | modes.md — no Track B critical is the ordinary case; carry on |
 | "`BROKEN INPUT` — I'll just re-run step 6 with the array" | §3.6 — that hides which step lost it |

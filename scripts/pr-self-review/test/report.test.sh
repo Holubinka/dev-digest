@@ -174,6 +174,28 @@ case "$out" in
 esac
 rm -rf "$repo"
 
+# And the case the equality cannot decide: a diff that routed nothing. The
+# roster is only ever written inside `.scope.routed[].domains`, so a docs-only
+# branch has an EMPTY one — and `$ran - []` is then every agent that ran, while
+# SKILL.md §3.3 says to record both of them unconditionally. Measured on a
+# branch touching only `docs/a.md` and `scripts/x.sh`: `UNEXPECTED AGENT —
+# agents[] records conventions, security`, verdict `incomplete`, push and PR
+# both refused, and the diagnosis naming as strangers the two agents that ARE
+# the roster. That is the shape of this feature's own documentation commits.
+repo="$(make_repo)"
+out="$(cd "$repo" && printf '%s' "$(payload full '[]' \
+  '[{"name":"security","status":"ok","files":0},{"name":"conventions","status":"ok","files":0}]')" |
+  jq '.scope.routed = []' | bash "$REPORT")"
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'pass' \
+  'a full run whose diff routed nothing passes, whatever agents[] recorded'
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.unexpected | length' '0' \
+  'an empty roster calls no agent unexpected'
+case "$out" in
+  *'UNEXPECTED AGENT'*) assert_eq 'marked' 'not marked' 'and the report does not accuse the roster' ;;
+  *)                    assert_eq 'not marked' 'not marked' 'and the report does not accuse the roster' ;;
+esac
+rm -rf "$repo"
+
 # A gates run is exempt from both halves — Track B did not run, and saying so
 # honestly in `mode` is the whole point of the mode.
 repo="$(make_repo)"
@@ -257,6 +279,63 @@ for missing in 'del(.findings)' '.findings = null' '.findings = {}' '.findings =
   assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'incomplete' \
     "[$missing] is incomplete, not pass"
   assert_contains "$out" 'BROKEN INPUT' "[$missing] says so in the report"
+  rm -rf "$repo"
+done
+
+# --- rule 6, the severity vocabulary: a grade nothing counts is not a pass -----
+# The last live member of the same defect class. The buckets are keyed by the
+# four names, so a finding graded `"high"` is counted in none of them and
+# printed in none of the four sections — it reached latest.json invisible and
+# the run read `PASS  0 critical · 0 major · 0 minor`. Measured on exactly that
+# payload, carrying a real path traversal. SKILL.md §3.3 states the consequence
+# in prose; this is what enforces it. A subagent falling back on its own skill's
+# CRITICAL/HIGH/MEDIUM vocabulary is the ordinary way it happens, and the
+# acceptance run already had the security agent mis-grade a traversal.
+for grade in '"high"' '"HIGH"' '"Critical"' '"blocker"' 'null' '5'; do
+  repo="$(make_repo)"
+  bad="$(jq -nc --argjson s "$grade" '{severity:$s, source:"agent security · security §path traversal",
+          file:"client/src/a.tsx", line:1, message:"path traversal", fix:"normalize the path"}')"
+  out="$(cd "$repo" && printf '%s' "$(payload full "[$bad]" "$okagent")" | bash "$REPORT")"
+  code=$?
+  assert_eq "$code" '0' "[severity $grade] still exits 0"
+  assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'incomplete' \
+    "[severity $grade] is incomplete, not pass"
+  assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.pushBlocked' 'true' \
+    "[severity $grade] stops the push, like every unreadable payload"
+  assert_contains "$out" 'BROKEN INPUT' "[severity $grade] says so in the report"
+  rm -rf "$repo"
+done
+
+# And the finding itself is not lost on the way. Dropping it would delete the
+# defect the rule just caught; regrading it would invent the decision the
+# payload failed to make. It is printed whole, under its own section.
+repo="$(make_repo)"
+highcrit='{"severity":"high","source":"agent security · security §path traversal","file":"client/src/a.tsx","line":1,"message":"path traversal","fix":"normalize the path"}'
+out="$(cd "$repo" && printf '%s' "$(payload full "[$highcrit]" "$okagent")" | bash "$REPORT")"
+assert_contains "$out" 'UNGRADED — 1' 'an ungraded finding gets a section of its own'
+assert_contains "$out" 'path traversal' 'and its message is printed, not swallowed'
+assert_contains "$out" 'normalize the path' 'with the fix line beside it'
+assert_contains "$out" '"high"' 'and the grade nothing counts, named as the reason'
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.findings | length' '1' \
+  'and it is still in latest.json, not dropped by the repair'
+rm -rf "$repo"
+
+# The other side of the vocabulary: all four names are readable, and a payload
+# graded with any of them prints no UNGRADED section. Drop one from the list in
+# report.sh and this fails — the vocabulary is exactly four.
+for grade in critical major minor note; do
+  repo="$(make_repo)"
+  ok_f="$(jq -nc --arg s "$grade" '{severity:$s, source:"gate lint", file:"client/src/a.tsx",
+          line:1, message:"m", fix:"f"}')"
+  out="$(cd "$repo" && printf '%s' "$(payload full "[$ok_f]" "$okagent")" | bash "$REPORT")"
+  case "$out" in
+    *'BROKEN INPUT'*) assert_eq "$grade broken" "$grade readable" "[severity $grade] is a legal grade" ;;
+    *)                assert_eq "$grade readable" "$grade readable" "[severity $grade] is a legal grade" ;;
+  esac
+  case "$out" in
+    *'UNGRADED'*) assert_eq 'marked' 'not marked' "[severity $grade] needs no UNGRADED section" ;;
+    *)            assert_eq 'not marked' 'not marked' "[severity $grade] needs no UNGRADED section" ;;
+  esac
   rm -rf "$repo"
 done
 

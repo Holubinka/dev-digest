@@ -14,8 +14,10 @@
 #      blocks
 #   5. the report states what it does not do: conventions, not correctness
 #   6. a payload the script cannot read — anything but an object whose
-#      .scope is an object and whose .findings, .gates, .agents and
-#      .scope.skipped are arrays of objects — is `incomplete`, never `pass`
+#      .scope is an object, whose .findings, .gates, .agents and
+#      .scope.skipped are arrays of objects, and whose every finding is
+#      graded with one of the four severity names — is `incomplete`, never
+#      `pass`
 #   7. a failed gate is a verdict on its own. The verdict reads .gates[].status
 #      as well as .findings, so a report that prints FAIL can never record
 #      `pass` — see the block on that below.
@@ -44,6 +46,17 @@
 #              it: an object missing the key is still an object, so without
 #              this the coverage check would silently disable itself on the
 #              one payload shape that most needs it
+#   a severity outside the four names — the last live member of the same class.
+#              The buckets below are keyed by `critical`, `major`, `minor` and
+#              `note`, so a finding graded `"high"` is counted in none of them
+#              and printed in none of the four sections: it reaches latest.json
+#              invisible and the run reads `PASS  0 critical · 0 major · 0
+#              minor`. Measured on exactly that payload, with a real path
+#              traversal in it. A subagent falling back on its own skill's
+#              CRITICAL/HIGH/MEDIUM vocabulary is the ordinary way it happens —
+#              the acceptance run already had the security agent mis-grade a
+#              traversal — and `"high"` is one keystroke from `major`. SKILL.md
+#              §3.3 stated the consequence in prose and nothing enforced it.
 #
 # The ELEMENTS are checked too, not only the container, and that half is the
 # newest. `{"agents":["frontend crashed"]}` is an array, so a container-only
@@ -124,6 +137,10 @@ payload="$(cat)"
 # Checked before anything reads it, and repaired rather than fatal, so that
 # every later step still runs and still writes a verdict — see the header.
 STUB='{"mode":null,"scope":{"skipped":[],"routed":[]},"findings":[],"gates":[],"agents":[]}'
+# The severity vocabulary, written once and passed to every jq that needs it —
+# the predicate below and the UNGRADED section in render(). A fifth name spelled
+# in one of them and not the other is the defect this rule exists to catch.
+SEVERITIES='["critical","major","minor","note"]'
 input_ok=1
 
 if [ -z "$payload" ] || ! printf '%s' "$payload" | jq -e 'type == "object"' >/dev/null 2>&1; then
@@ -132,9 +149,11 @@ if [ -z "$payload" ] || ! printf '%s' "$payload" | jq -e 'type == "object"' >/de
   # and latest.json would be written as a bare newline — no verdict at all.
   input_ok=0
   payload="$STUB"
-elif ! printf '%s' "$payload" | jq -e '
+elif ! printf '%s' "$payload" | jq -e --argjson vocab "$SEVERITIES" '
       def arr_of_obj: if type == "array" then all(type == "object") else false end;
-        (.findings | arr_of_obj)
+        (.findings | if type == "array"
+                     then all(type == "object" and (.severity | IN($vocab[])))
+                     else false end)
     and (.gates    | arr_of_obj)
     and (.agents   | arr_of_obj)
     and (if (.scope | type) == "object"
@@ -158,6 +177,11 @@ elif ! printf '%s' "$payload" | jq -e '
   # The repair keeps every element it can read and drops only the ones it
   # cannot, so a well-formed critical sitting beside a stray string is still
   # printed. It can never turn the run green: input_ok is already 0.
+  #
+  # A finding whose only unreadable part is its GRADE survives it untouched —
+  # it is an object, so `objs` keeps it — and render() prints it under UNGRADED.
+  # Dropping it would delete the defect the rule just caught, and regrading it
+  # would invent the decision the payload failed to make.
 fi
 
 # --- rule 4, second half: a `full` run that dispatched nothing --------------
@@ -195,6 +219,22 @@ fi
 #
 # Skipped when `unrun` already fired: with an empty agents[] EVERY domain is
 # uncovered, and two banners saying the same thing blame the wrong step.
+#
+# And skipped when the roster is EMPTY, which is the case the equality cannot
+# decide. The roster only exists inside `.scope.routed[].domains`, so a diff
+# that routes nothing — docs, shell scripts, a lockfile — writes no roster at
+# all, and `$ran - []` is then every agent that ran. SKILL.md §3.3 says to
+# record both agents unconditionally, so a legitimate `full` run over a
+# docs-only branch reported `UNEXPECTED AGENT — agents[] records conventions,
+# security`, `incomplete`, and refused both the push and the PR. Measured on a
+# branch touching only `docs/a.md` and `scripts/x.sh`, which is the shape this
+# feature's own documentation commits have. The diagnosis was wrong too: the
+# names it printed ARE the roster.
+#
+# Nothing is lost by the exemption. An empty roster means no file reached Track
+# B, so there is no coverage claim left to check — and `$roster - $ran` was
+# already `[]` in that case, which is why the missing half was silent and the
+# surplus half was not.
 uncovered='[]'
 unexpected='[]'
 if [ "$input_ok" -eq 1 ] && [ "$unrun" -eq 0 ]; then
@@ -202,7 +242,9 @@ if [ "$input_ok" -eq 1 ] && [ "$unrun" -eq 0 ]; then
     if .mode == "full"
     then ([.scope.routed[]? | .domains[]? | select(type == "string")] | unique) as $roster
        | ([.agents[]?      | .name?    | select(type == "string")] | unique) as $ran
-       | {uncovered: ($roster - $ran), unexpected: ($ran - $roster)}
+       | (if ($roster | length) == 0
+          then {uncovered: [], unexpected: []}
+          else {uncovered: ($roster - $ran), unexpected: ($ran - $roster)} end)
     else {uncovered: [], unexpected: []} end' 2>/dev/null)" ||
     coverage='{"uncovered":[],"unexpected":[]}'
   [ -n "$coverage" ] || coverage='{"uncovered":[],"unexpected":[]}'
@@ -254,7 +296,7 @@ printf '%s\n' "$latest" >"$OUT/latest.json"
 rm -f "$OUT/bypassed"
 
 render() {
-  local verdict counts
+  local verdict counts ungraded
   verdict="$(printf '%s' "$latest" | jq -r '.verdict | ascii_upcase')"
   counts="$(printf '%s' "$latest" | jq -r \
     '"\(.counts.critical) critical · \(.counts.major) major · \(.counts.minor) minor"')"
@@ -268,8 +310,11 @@ render() {
   if [ "$input_ok" -eq 0 ]; then
     printf '\nBROKEN INPUT — this script was not handed a readable payload.\n'
     printf '  It needs an object whose .scope is an object and whose .findings,\n'
-    printf '  .gates, .agents and .scope.skipped are each an array of objects.\n'
-    printf '  Anything it could not read has been dropped from the sections below.\n'
+    printf '  .gates, .agents and .scope.skipped are each an array of objects,\n'
+    printf '  every finding graded critical, major, minor or note.\n'
+    printf '  Anything it could not read has been dropped from the sections below;\n'
+    printf '  a finding whose GRADE it could not read is kept, and printed under\n'
+    printf '  UNGRADED — that one is a real finding with a severity nothing counts.\n'
     printf '  The counts and gates above are not a review result. Some step\n'
     printf '  between scope.sh and here failed or produced an empty file, so the\n'
     printf '  verdict is incomplete rather than pass. Re-run the review.\n'
@@ -331,6 +376,23 @@ render() {
       (if .verifier then "\n     Verifier: \(.verifier)" else "" end) +
       (if .fix then "\n     Fix: \(.fix)" else "" end)'
   done
+
+  # The fifth section, and the one the four buckets above cannot show. A finding
+  # graded outside the vocabulary belongs to no bucket, so without this it is
+  # printed nowhere at all — which is how a real path traversal graded `"high"`
+  # reached a report reading `PASS  0 critical · 0 major · 0 minor`. Rule 6 has
+  # already made the verdict `incomplete`; this is where the finding itself is.
+  ungraded="$(printf '%s' "$payload" | jq --argjson vocab "$SEVERITIES" \
+    '[.findings[]? | select(type == "object")
+      | select((.severity | IN($vocab[])) | not)] | length' 2>/dev/null)" || ungraded=0
+  [ -n "$ungraded" ] || ungraded=0
+  if [ "$ungraded" -gt 0 ]; then
+    printf '\nUNGRADED — %s\n' "$ungraded"
+    printf '%s' "$payload" | jq -r --argjson vocab "$SEVERITIES" \
+      '.findings[]? | select(type == "object") | select((.severity | IN($vocab[])) | not) |
+       "  \(.file):\(.line)  [\(.source)]  severity \(.severity | tojson) is not one of critical, major, minor, note\n     \(.message)" +
+       (if .fix then "\n     Fix: \(.fix)" else "" end)'
+  fi
 
   printf '\nSKIPPED\n'
   printf '%s' "$payload" | jq -r '.scope.skipped[]? | "  \(.path) (\(.reason))"'

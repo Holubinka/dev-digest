@@ -253,5 +253,40 @@ assert_json "$latest" '.mode' 'full' 'as a full run'
 assert_eq "$(hook "$repo" 'gh pr create')" '0' 'so the PR the roster exists to gate goes through'
 rm -rf "$repo"
 
+# =============================================================================
+# 7. The same contract on a diff that routes NOTHING. scope.sh writes the roster
+#    only inside .routed[].domains, so a docs-only branch writes an empty one —
+#    and this is the only place both halves of that meet on such a diff.
+#
+#    It regressed here and nowhere else: `$ran - []` is every agent that ran, so
+#    a legitimate `full` run recording the two agents SKILL.md §3.3 says to
+#    record unconditionally came back `UNEXPECTED AGENT — agents[] records
+#    conventions, security`, incomplete, with the push AND the PR refused. The
+#    banner's diagnosis was wrong in exactly the case that occurs: the names it
+#    called strangers are the roster. Documentation commits have this shape.
+# =============================================================================
+repo="$(make_repo)"
+printf '.pr-self-review/\n' >"$repo/.gitignore"
+sgit "$repo" add -A && sgit "$repo" commit -qm "gitignore the verdict"
+sgit "$repo" checkout -qb feat/docs
+mkdir -p "$repo/docs" "$repo/scripts"
+printf '# a doc\n'  >"$repo/docs/a.md"
+printf 'echo hi\n'  >"$repo/scripts/x.sh"
+sgit "$repo" add -A && sgit "$repo" commit -qm "docs and a shell script"
+
+assert_json "$(cd "$repo" && bash "$SCRIPTS/scope.sh")" '.routed | length' '0' \
+  'the fixture really does route nothing, so the roster really is empty'
+chain "$repo" full '[]' "$BOTH"
+latest="$(cat "$repo/.pr-self-review/latest.json")"
+
+assert_json "$latest" '.verdict' 'pass' \
+  'a full run over a diff that routed nothing is a pass'
+assert_json "$latest" '.unexpected | length' '0' \
+  'and neither roster agent is reported as unexpected'
+assert_json "$latest" '.uncovered | length' '0' 'nor is anything reported uncovered'
+assert_eq "$(hook "$repo" 'git push')" '0' 'the push goes through'
+assert_eq "$(hook "$repo" 'gh pr create')" '0' 'and so does the PR'
+rm -rf "$repo"
+
 rm -f "$runner"
 finish
