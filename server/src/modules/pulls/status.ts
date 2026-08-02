@@ -30,7 +30,15 @@ export function rollupSeverities(rows: { severity: string }[]): SeverityCounts {
   return c;
 }
 
-/** Rank per severity for the list's hover card (lower = shown first). */
+/**
+ * Rank per severity for the list's hover card (lower = shown first).
+ *
+ * Membership is tested with `Object.hasOwn`, never `in`: this is a plain object
+ * literal, so `in` walks `Object.prototype` and answers true for `constructor`,
+ * `toString`, `valueOf`, `hasOwnProperty`, `__proto__`, `isPrototypeOf`,
+ * `toLocaleString` and `propertyIsEnumerable`. `severity` is an unconstrained
+ * `text` column filled from agent JSON, so any of them can reach here.
+ */
 const SEVERITY_RANK: Record<string, number> = { CRITICAL: 0, WARNING: 1, SUGGESTION: 2 };
 
 /** Longest rationale the list payload carries per finding; the rest is elided. */
@@ -90,7 +98,7 @@ export function topFindings(
   limit: number,
 ): ListFinding[] {
   return rows
-    .filter((r) => r.severity in SEVERITY_RANK)
+    .filter((r) => Object.hasOwn(SEVERITY_RANK, r.severity))
     .sort(
       (a, b) =>
         (SEVERITY_RANK[a.severity] ?? 9) - (SEVERITY_RANK[b.severity] ?? 9) ||

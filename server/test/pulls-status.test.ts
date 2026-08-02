@@ -116,6 +116,35 @@ describe('topFindings', () => {
     expect(topFindings([f('a', 'WEIRD', 0.9), f('b', 'WARNING', 0.1)], 3).map((p) => p.id)).toEqual(['b']);
   });
 
+  /**
+   * The case the 'WEIRD' test above cannot reach, and the reason it pins
+   * nothing on its own. The allowlist read `r.severity in SEVERITY_RANK`, and
+   * `in` walks the prototype chain, so every name below answered true on the
+   * plain object literal `SEVERITY_RANK` is. The row survived the filter,
+   * `SEVERITY_RANK[severity]` resolved to a method on `Object.prototype`, the
+   * comparator's first term was `NaN`, and the sort fell straight through to
+   * confidence — so a bogus row at 0.9 outranked a real CRITICAL and took one
+   * of the three `findings_top` slots on `GET /repos/:id/pulls`.
+   *
+   * `findings.severity` is an unconstrained `text` column filled from LLM agent
+   * JSON, so any of these strings can arrive. Named individually, not derived
+   * from `Object.getOwnPropertyNames(Object.prototype)`, so a failure says
+   * which key leaked.
+   */
+  it.each([
+    'constructor',
+    'toString',
+    'valueOf',
+    'hasOwnProperty',
+    '__proto__',
+    'isPrototypeOf',
+    'toLocaleString',
+    'propertyIsEnumerable',
+  ])('drops the inherited key %s, which the prototype chain answers for', (key) => {
+    const picked = topFindings([f('bogus', key, 0.9), f('real', 'CRITICAL', 0.1)], 3);
+    expect(picked.map((p) => p.id)).toEqual(['real']);
+  });
+
   it('truncates a long rationale so the list payload stays bounded', () => {
     const [only] = topFindings([{ ...f('a', 'WARNING', 0.9), rationale: 'x'.repeat(500) }], 3);
     expect(only!.rationale.length).toBeLessThanOrEqual(201);

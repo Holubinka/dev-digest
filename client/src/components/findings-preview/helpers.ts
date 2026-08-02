@@ -18,6 +18,13 @@ export const SEVERITY_LEVELS = [
 
 export type SeverityLevel = (typeof SEVERITY_LEVELS)[number];
 
+/**
+ * Membership is tested with `Object.hasOwn`, never `in`. `Object.fromEntries`
+ * returns an ordinary object, so it carries `Object.prototype` and `in` answers
+ * true for `constructor`, `toString`, `valueOf`, `hasOwnProperty`, `__proto__`,
+ * `isPrototypeOf`, `toLocaleString` and `propertyIsEnumerable`. `severity` is a
+ * plain `text` column filled from agent JSON, so any of them can reach here.
+ */
 const RANK: Record<string, number> = Object.fromEntries(
   SEVERITY_LEVELS.map((level, i) => [level, i]),
 );
@@ -39,7 +46,7 @@ const RANK: Record<string, number> = Object.fromEntries(
  */
 export function rankFindings<T extends ListFinding>(findings: T[]): T[] {
   return findings
-    .filter((f) => f.severity in RANK)
+    .filter((f) => Object.hasOwn(RANK, f.severity))
     .sort(
       (a, b) =>
         (RANK[a.severity] ?? 9) - (RANK[b.severity] ?? 9) ||
