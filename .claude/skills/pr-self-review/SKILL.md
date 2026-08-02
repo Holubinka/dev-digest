@@ -121,8 +121,14 @@ Each subagent's brief carries, and carries nothing else:
 - the skills named for its domain in [routing.md](routing.md), and nothing else;
 - the precedence rule and the empty-report rule from §5, quoted;
 - the output contract: **a JSON array and no prose**, each element
-  `{severity, source, file, line, message, fix}`. `source` names the skill and section —
-  `onion-architecture §3.2`, not "the architecture skill". `fix` is one concrete action;
+  `{severity, source, file, line, message, fix}`. **`source` must begin `agent <domain> · `**,
+  then the skill and section — `agent backend · onion-architecture §3.2`, never "the
+  architecture skill". `fix` is one concrete action;
+
+  That prefix is not decoration. `baseline.sh` anchors a finding to the diff **only** when its
+  `source` starts with `agent `, because that is what marks it as a model's opinion about a
+  line rather than a deterministic fact about the repo. Drop the prefix and the finding stops
+  being diff-anchored, and a pre-existing violation on an untouched line blocks the branch;
 - read-only. It reports; it does not edit.
 
 Collect the arrays into `$TMP/findings.json`, and build `$TMP/agents.json` as
@@ -149,29 +155,20 @@ Track A findings do not go through this. They are already deterministic — see
 ```sh
 jq -n --slurpfile s "$TMP/scope.json" --slurpfile g "$TMP/gates.json" \
       --slurpfile a "$TMP/findings.json" \
-  '{ scope: $s[0],
-     findings: ( ($s[0].flagged + $g[0].findings + $a[0])
-                 | map(if (.source | startswith("gate")) then .line = 0 else . end) ) }' \
+  '{ scope: $s[0], findings: ($s[0].flagged + $g[0].findings + $a[0]) }' \
   | bash scripts/pr-self-review/baseline.sh > "$TMP/final.json"
 ```
 
-Three things about that command are load-bearing:
+Two things about that command are load-bearing:
 
 - **`scope.flagged[]` are findings.** Merge them or a committed `.env` is never reported.
-- **`.line = 0` on every Track A finding is not cosmetic — it is the rule that makes "a gate
-  failure is critical by definition" true.** `baseline.sh` exempts only `line: 0` from
-  diff-anchoring. `scope.sh` emits `line: 1` for a whole-file flag whose path is never in
-  `.routed[]`, and `registry.sh` emits `line: 1` pointing into `skills-lock.json`, which a branch
-  almost never touches. Left unnormalised, both silently become `note`, and a branch with a
-  committed `.env` and two broken lock entries reports `pass`. `line: 0` is `baseline.sh`'s own
-  word for "belongs to no single line", which is what a whole-file flag and a whole-repo gate
-  both are. `startswith("gate")` selects exactly the Track A sources — `gate scope`,
-  `gate registry`, `gate lint` — and never a skill name.
 - **`gates.findings` already contains the registry findings.** Do not call `registry.sh` again.
 
-`baseline.sh` then drops anything frozen in `.pr-self-review/baseline.json` and demotes any
-finding on a line the branch did not touch to `note` with `anchored: false` — visible, unable to
-block.
+`baseline.sh` then drops anything frozen in `.pr-self-review/baseline.json`, and demotes any
+**model** finding on a line the branch did not touch to `note` with `anchored: false` — visible,
+unable to block. Deterministic findings are exempt from that rule and keep their severity, which
+is why step 3's output contract insists on the `agent ` prefix: it is the only thing telling
+`baseline.sh` which findings are a model's opinion about a diff line.
 
 **6 — Render.**
 
@@ -196,9 +193,7 @@ say which criticals block and where; the user decides what happens next.
 ```sh
 jq -n --slurpfile s "$TMP/scope.json" --slurpfile g "$TMP/gates.json" \
       --slurpfile a "$TMP/findings.json" \
-  '{ scope: $s[0],
-     findings: ( ($s[0].flagged + $g[0].findings + $a[0])
-                 | map(if (.source | startswith("gate")) then .line = 0 else . end) ) }' \
+  '{ scope: $s[0], findings: ($s[0].flagged + $g[0].findings + $a[0]) }' \
   | bash scripts/pr-self-review/baseline.sh --freeze
 ```
 
@@ -215,7 +210,7 @@ finding is the one thing this baseline cannot survive.
 
 ```sh
 jq -r '[.findings[] | select(.severity == "critical")
-                    | select((.source | startswith("gate")) | not) | .file] | unique[]' \
+                    | select(.source | startswith("agent ")) | .file] | unique[]' \
   .pr-self-review/latest.json > "$TMP/recheck"
 ```
 
@@ -238,7 +233,7 @@ No `latest.json` means there is no last run to narrow — say so and run `--full
     '($r | split("\n") | map(select(length > 0))) as $re
      | [ $p[0].findings[]
          | . as $f
-         | select(($f.source | startswith("gate")) | not)
+         | select($f.source | startswith("agent "))
          | select(($re | index($f.file)) | not) ] + $n[0]' > "$TMP/findings.json"
   ```
 
@@ -298,7 +293,7 @@ Stop when you catch yourself doing any of these.
 | "I'll fix the two criticals while I'm here" | §intro — the verdict is stale the moment you edit |
 | "Track A failed, but let's see what the agents find" | §3.2 — it already blocks; the agents are wasted spend |
 | "`scope.flagged` is just metadata" | §3.5 — it holds the committed-secret criticals |
-| "Every gate finding already has `line: 0`" | §3.5 — `gate scope` and `gate registry` do not |
+| "The source can just name the skill" | §3.3 — without the `agent ` prefix it is never diff-anchored |
 | "I'll re-freeze the baseline so the branch goes green" | §4 — the baseline only shrinks |
 | "It's on line 300 of a file I touched at line 40" | §3.5 — that is baseline, not yours |
 | "Run it on `main`, it's only a check" | §1 — there is no base and no PR |
@@ -309,7 +304,8 @@ Stop when you catch yourself doing any of these.
 - [ ] Track A ran, and a failure stopped Track B before any subagent was dispatched (§3.2)
 - [ ] Every dispatched agent has an entry in `agents[]`, and a broken one says so (§3.3)
 - [ ] Every subagent `critical` carries a `verifier` line (§3.4)
-- [ ] `scope.flagged[]` was merged, and every Track A finding has `line: 0` (§3.5)
+- [ ] `scope.flagged[]` was merged into the findings before `baseline.sh` (§3.5)
+- [ ] Every subagent finding's `source` begins `agent <domain> · ` (§3.3)
 - [ ] Every finding has `file`, `line`, a `source` naming skill and section, and a `message`
 - [ ] Every surviving `critical` carries one concrete `fix`
 - [ ] No finding restates an upstream rule that a repo skill contradicts (§5)

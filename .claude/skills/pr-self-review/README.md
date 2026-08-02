@@ -96,7 +96,7 @@ specific claim taken from it.
 | `specs/03-pr-self-review-skill.md` | the whole design: two tracks, the domain table, the severity model, the verdict file as the seam, and every rejected alternative |
 | `scripts/pr-self-review/scope.sh` | the four buckets and their exact JSON — `routed` / `checklist` / `skipped` / `flagged`, and that `flagged` entries carry `line: 1` |
 | `scripts/pr-self-review/gates.sh` | the ten gates, the `skip` ≠ `ok` distinction, and that gate findings put the package name in `file` |
-| `scripts/pr-self-review/baseline.sh` | that only `line: 0` is exempt from diff-anchoring, and that the freeze fingerprint is `{file, line, message}` |
+| `scripts/pr-self-review/baseline.sh` | that only an `agent `-sourced finding is diff-anchored, and that the freeze fingerprint is `{file, line, message}` |
 | `scripts/pr-self-review/report.sh` | the five trustworthiness rules, and that the verdict never travels by exit code |
 | `scripts/pr-self-review/gate.sh` | what the hook actually refuses, and that freshness is the load-bearing half |
 | `scripts/pr-self-review/registry.sh` | the five registry checks and their severities |
@@ -148,14 +148,17 @@ Decisions made while writing, beyond what the spec fixed:
 - **`--only critical` records `mode: "gates"`.** `latest.json` has two mode values and `gate.sh`
   refuses a PR on anything but `full`. A partial Track B sweep must never open a PR, and Track A
   did run whole, which is precisely what `gates` already means.
-- **Every Track A finding is normalised to `line: 0` before `baseline.sh`.** Found by running the
-  scripts against this branch, not by reading them. `scope.flagged[]` carries `line: 1` for a
-  path that is never in `.routed[]`, and `registry.sh` carries `line: 1` into `skills-lock.json`,
-  which a branch almost never edits — so diff-anchoring demoted both to `note` and a tree with a
-  committed `.env` and two broken lock entries reported `pass`. Setting `line: 0` on every
-  `source` beginning with `gate` reproduces the verdict this branch is recorded as having
-  produced by hand: **2 critical, 4 major**. `line: 0` is `baseline.sh`'s own word for "belongs
-  to no single line". One `jq` clause in `SKILL.md` §3.5; no script change.
+- **`baseline.sh` now anchors only what a model produced.** Found by running the scripts against
+  this branch, not by reading them: `scope.flagged[]` carries `line: 1` for a path that is never
+  in `.routed[]`, and `registry.sh` carries `line: 1` into `skills-lock.json`, which a branch
+  almost never edits. Diff-anchoring demoted both to `note`, so a tree with a committed `.env`
+  and two broken lock entries reported `pass`. The rule is now "demote only when `source` begins
+  `agent `" — deterministic sources already scope themselves, and the baseline exists for the
+  sixteen pre-existing `container.db` calls, which come from a subagent. Fixed in the script with
+  four new tests rather than worked around in this skill.
+- **A subagent's `source` must begin `agent <domain> · `.** That prefix is what
+  `baseline.sh` keys on, so it is part of the output contract in `SKILL.md` §3.3, not a
+  formatting preference. The skill and section follow it, so attribution survives.
 - **The run's scratch files go in `.pr-self-review/run`, and the path is written out literally
   rather than held in a shell variable.** Two reasons, both measured. Shell state does not
   survive between Bash calls in this harness, so a `TMP=` set in step 1 is gone by step 2. And

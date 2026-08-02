@@ -17,11 +17,11 @@ suites, the vendor mirror and the registry either exit 0 or they do not. Nothing
 result and nothing may downgrade it. It blocks `git push` as well as the PR, because
 `gate.sh` refuses a push on any non-`pass` verdict.
 
-That "nothing may downgrade it" is one `jq` clause, not a wish. Diff-anchoring in `baseline.sh`
-would otherwise downgrade it silently, because a gate failure belongs to no line the branch
-touched — so [SKILL.md](SKILL.md) §3.5 sets `line: 0` on every finding whose `source` starts with
-`gate`. Skip that step and a committed `.env` and two broken `skills-lock.json` entries all
-arrive as `note`, and the verdict reads `pass`.
+That "nothing may downgrade it" is enforced in `baseline.sh`, which anchors a finding to the diff
+**only** when its `source` begins `agent `. A deterministic finding was never about a diff line —
+`gate arch` carries its own known-violations file, `gate registry` is repo-wide, and a
+`gate scope` flag is about a path that is deliberately never routed — so none of them are
+anchored, and none can be quietly demoted.
 
 **A Track B critical must survive an adversarial verifier.** A model finding that stops the
 user's work has to earn it, so the burden of proof sits on the finding: a second subagent is
@@ -86,11 +86,11 @@ Two different things arrive here, and confusing them wastes a reader's time.
 **Judged notes** — an observation with no action attached. `docs/architecture.md` changed, so
 check whether its diagram still holds. A `skills-lock.json` directory with no lock entry.
 
-**Mechanical notes** — `baseline.sh` demotes any finding whose line the branch did not touch,
-sets `anchored: false`, and leaves it in the report. It was not judged minor by anyone; it is a
-pre-existing condition of a file this branch happens to have edited elsewhere. A finding on line
-300 of a file you changed at line 40 is baseline, not yours. This applies to Track B only —
-Track A is exempt, see the top of this file.
+**Mechanical notes** — `baseline.sh` demotes any **model** finding whose line the branch did not
+touch, sets `anchored: false`, and leaves it in the report. It was not judged minor by anyone; it
+is a pre-existing condition of a file this branch happens to have edited elsewhere. A finding on
+line 300 of a file you changed at line 40 is baseline, not yours. Track A never reaches this
+rule — see the top of this file.
 
 Do not manufacture notes to make a thin report look fuller — [SKILL.md](SKILL.md) §5.
 

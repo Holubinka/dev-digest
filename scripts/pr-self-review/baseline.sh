@@ -2,12 +2,29 @@
 #
 # Keeps only the findings this branch is responsible for.
 #
-#   frozen    a fingerprint in .pr-self-review/baseline.json is dropped
-#   off-diff  a finding on a line the branch did not touch drops to `note`
-#             and is marked anchored:false — visible, unable to block
+#   frozen    a fingerprint in .pr-self-review/baseline.json is dropped,
+#             whatever produced it
+#   off-diff  a *model* finding on a line the branch did not touch drops to
+#             `note` and is marked anchored:false — visible, unable to block
 #
-# `line: 0` means "belongs to no single line" (a whole-package gate failure)
-# and is exempt from anchoring. Always exits 0.
+# Anchoring applies only to what a model produced: `source` beginning with
+# "agent ". Deterministic sources are exempt, because they were never about a
+# diff line in the first place and already scope themselves —
+#
+#   gate arch      carries its own .dependency-cruiser-known-violations.json
+#   gate registry  is repo-wide state, tied to no line at all
+#   gate scope     is a Tier-2 flag: the fact of the change IS the finding, so
+#                  the path is deliberately never in .routed[]
+#
+# Anchoring those silently turned a committed .env and two broken
+# skills-lock.json entries into notes, and the verdict read `pass` on a branch
+# that had three criticals. `line: 0` stays exempt for the same reason it
+# always was: it means "belongs to no single line".
+#
+# The baseline exists for the sixteen pre-existing container.db calls in
+# pulls/routes.ts, and those come from a subagent. Only model findings need it.
+#
+# Always exits 0.
 #
 #   baseline.sh            filter, print the survivors
 #   baseline.sh --freeze   record today's findings as the baseline instead
@@ -40,7 +57,9 @@ printf '%s' "$payload" | jq \
       | select(
           ($frozen | any(.file == $f.file and .line == $f.line and .message == $f.message)) | not
         )
-      | if .line == 0 then
+      | if ($f.source | startswith("agent ")) | not then
+          .
+        elif .line == 0 then
           .
         elif ($touched[.file] // []) | index($f.line) then
           .
