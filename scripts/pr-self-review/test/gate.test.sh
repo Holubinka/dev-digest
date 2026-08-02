@@ -51,6 +51,22 @@ repo="$(new_repo)"
 assert_eq "$(run x "$repo" 'ls -la' | cut -f1)" '0' 'the hook ignores commands it does not guard'
 rm -rf "$repo"
 
+# --- a command that cannot publish is not guarded, even with no verdict --------
+repo="$(new_repo)"
+assert_eq "$(run x "$repo" 'git push --dry-run' | cut -f1)" '0' 'git push --dry-run cannot publish'
+assert_eq "$(run x "$repo" 'gh pr create --help' | cut -f1)" '0' 'gh pr create --help cannot publish either'
+rm -rf "$repo"
+
+# --- the substring-matching contract, pinned so hardening cannot drift it ------
+# These are documented gaps, not bugs: `guard=push` only fires on a literal,
+# contiguous "git push" — see the comment above the case in gate.sh.
+repo="$(new_repo)"
+assert_eq "$(run x "$repo" 'git -C /tmp/foo push' | cut -f1)" '0' \
+  'git -C <path> push is a known false negative — unguarded today, on record'
+assert_eq "$(run x "$repo" 'gh pr list' | cut -f1)" '0' \
+  'gh pr list is not a publishing command and stays ignored'
+rm -rf "$repo"
+
 # --- no verdict at all blocks the push -----------------------------------------
 repo="$(new_repo)"
 res="$(run x "$repo" 'git push origin feat/x')"
@@ -70,6 +86,12 @@ write_verdict "$repo" gates pass
 res="$(run x "$repo" 'gh pr create --fill')"
 assert_eq "$(printf '%s' "$res" | cut -f1)" '2' 'gh pr create needs a full run'
 assert_contains "$(printf '%s' "$res" | cut -f2)" 'full' 'and says which mode is missing'
+rm -rf "$repo"
+
+# --- a fresh full pass DOES allow a PR (the fourth cell of the 2x2) ------------
+repo="$(new_repo)"
+write_verdict "$repo" full pass
+assert_eq "$(run x "$repo" 'gh pr create' | cut -f1)" '0' 'a fresh full pass lets gh pr create through'
 rm -rf "$repo"
 
 # --- a blocked verdict stops both ----------------------------------------------
@@ -101,6 +123,30 @@ printf 'dirty\n' >>"$repo/README.md"
 assert_eq "$(run x "$repo" 'git push' | cut -f1)" '2' 'an uncommitted edit invalidates it'
 rm -rf "$repo"
 
+# --- an un-ignored .pr-self-review names its own defect, not a phantom edit ----
+# Plain make_repo, not new_repo: no .gitignore, so latest.json becomes an
+# untracked file the instant write_verdict writes it, and the hash it records
+# (taken before the write) can never match a hash taken after. Without the
+# check-ignore guard in gate.sh this would report "the working tree changed"
+# forever — an unsatisfiable loop, since re-running the review only rewrites
+# the same self-invalidating file.
+repo="$(make_repo)"; git -C "$repo" checkout -qb feat/x
+write_verdict "$repo" full pass
+res="$(run x "$repo" 'git push')"
+assert_eq "$(printf '%s' "$res" | cut -f1)" '2' 'an un-ignored .pr-self-review still blocks'
+assert_contains "$(printf '%s' "$res" | cut -f2)" 'gitignore' \
+  'but names the real, fixable cause instead of a phantom worktree edit'
+rm -rf "$repo"
+
+# --- a corrupt verdict file blocks honestly, not with a made-up reason ---------
+repo="$(new_repo)"
+mkdir -p "$repo/.pr-self-review"
+printf '{"mode":"full", "verd' >"$repo/.pr-self-review/latest.json"
+res="$(run x "$repo" 'git push')"
+assert_eq "$(printf '%s' "$res" | cut -f1)" '2' 'a corrupt verdict file still blocks'
+assert_contains "$(printf '%s' "$res" | cut -f2)" 'corrupt' 'and says so, not "HEAD moved"'
+rm -rf "$repo"
+
 # --- the escape hatch works ----------------------------------------------------
 repo="$(new_repo)"
 write_verdict "$repo" full blocked
@@ -110,6 +156,19 @@ assert_eq "$([ -f "$repo/.pr-self-review/bypassed" ] && printf yes || printf no)
   'and the bypass is written down rather than passing silently'
 assert_contains "$(cat "$repo/.pr-self-review/bypassed")" 'git push' \
   'the record names the command that was let through'
+rm -rf "$repo"
+
+# --- a multi-line bypassed command still writes exactly one log line -----------
+# report.sh reads .pr-self-review/bypassed with `jq -R . | jq -s .` — one
+# entry per line. A raw multi-line command would fragment into several
+# bypass entries on the next report.
+repo="$(new_repo)"
+write_verdict "$repo" full blocked
+multiline_cmd=$'git push\nrm -rf /tmp/whatever'
+code="$(cd "$repo" && printf '%s' "$(hook "$multiline_cmd")" | PR_SELF_REVIEW_SKIP=1 bash "$GATE" >/dev/null 2>&1; printf '%s' $?)"
+assert_eq "$code" '0' 'a multi-line bypassed command still bypasses'
+assert_eq "$(wc -l <"$repo/.pr-self-review/bypassed" | tr -d ' ')" '1' \
+  "the bypass log keeps report.sh's one-entry-per-line contract"
 rm -rf "$repo"
 
 finish
