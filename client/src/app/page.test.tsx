@@ -1,5 +1,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
+import { NextIntlClientProvider } from "next-intl";
+import messages from "../../messages/en/home.json";
 
 const hooks = vi.hoisted(() => ({
   useRepos: vi.fn(),
@@ -37,10 +39,20 @@ function mockRepos(state: Record<string, unknown>) {
   });
 }
 
+/** The real `messages/en/home.json`, so the assertions below stay the copy a
+    reader actually sees rather than a fixture that can drift from it. */
+function renderHome() {
+  return render(
+    <NextIntlClientProvider locale="en" messages={{ home: messages }}>
+      <HomePage />
+    </NextIntlClientProvider>,
+  );
+}
+
 describe("HomePage", () => {
   it("shows skeletons while the repo list loads, and commits to no other branch", () => {
     mockRepos({ isLoading: true });
-    const { container } = render(<HomePage />);
+    const { container } = renderHome();
     expect(container.querySelectorAll(".skeleton").length).toBe(3);
     expect(screen.queryByText("No repositories yet")).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -48,7 +60,7 @@ describe("HomePage", () => {
 
   it("offers to add a repository when there genuinely are none", () => {
     mockRepos({ data: [] });
-    render(<HomePage />);
+    renderHome();
     expect(screen.getByText("No repositories yet")).toBeInTheDocument();
     fireEvent.click(screen.getByText("Add repository"));
     expect(hooks.push).toHaveBeenCalledWith("/onboarding");
@@ -61,7 +73,7 @@ describe("HomePage", () => {
    */
   it("reports a failed load as an error, not as an empty workspace", () => {
     mockRepos({ isError: true, error: new Error("boom") });
-    render(<HomePage />);
+    renderHome();
     expect(screen.getByRole("alert")).toBeInTheDocument();
     expect(screen.getByText("Couldn't load your repositories")).toBeInTheDocument();
     expect(screen.queryByText("No repositories yet")).not.toBeInTheDocument();
@@ -71,14 +83,14 @@ describe("HomePage", () => {
   it("retries the query from the error state", () => {
     const refetch = vi.fn();
     mockRepos({ isError: true, error: new Error("boom"), refetch });
-    render(<HomePage />);
+    renderHome();
     fireEvent.click(screen.getByText("Retry"));
     expect(refetch).toHaveBeenCalled();
   });
 
   it("redirects to the first repo once the list arrives", () => {
     mockRepos({ data: [{ id: "repo-1", full_name: "acme/payments-api" }] });
-    render(<HomePage />);
+    renderHome();
     expect(hooks.replace).toHaveBeenCalledWith("/repos/repo-1/pulls");
     expect(screen.getByText("Open acme/payments-api")).toBeInTheDocument();
   });
