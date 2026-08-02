@@ -192,6 +192,26 @@ routed="[]"; checklist="[]"; skipped="[]"; flagged="[]"; packages="[]"
 while IFS= read -r path; do
   [ -n "$path" ] || continue
 
+  # Which packages Track A gates, decided BEFORE the two `continue`s below.
+  # `packages` used to be appended after them, so a path that was skipped or
+  # flagged never contributed its package — and a branch that touched *only*
+  # such paths produced `packages: []`, which gates.sh reads as "no package in
+  # the diff" and answers with `skip` on all eight package gates. Measured on a
+  # branch editing `server/src/vendor/shared/` and `client/src/vendor/shared/`
+  # in step: no typecheck, no tests, no subagent, `verdict pass`, push allowed —
+  # on the file class CLAUDE.md protects hardest, where a one-sided contract
+  # edit is exactly what must not reach main untyped.
+  #
+  # A gate is cheap and a package in the diff is a fact about the diff, not
+  # about whether this script chose to read the file. Erring toward running the
+  # gates is the safe direction: the worst case is that a lockfile or a PNG
+  # under client/ costs one typecheck.
+  case "$path" in
+    client/*)        packages="$(printf '%s' "$packages" | jq '. + ["client"]')" ;;
+    server/*)        packages="$(printf '%s' "$packages" | jq '. + ["server"]')" ;;
+    reviewer-core/*) packages="$(printf '%s' "$packages" | jq '. + ["reviewer-core"]')" ;;
+  esac
+
   reason="$(skip_reason "$path")"
   if [ -n "$reason" ]; then
     skipped="$(printf '%s' "$skipped" | jq --arg p "$path" --arg r "$reason" \
@@ -209,12 +229,6 @@ while IFS= read -r path; do
       '. + [{severity:$s, source:"gate scope", file:$f, line:1, message:$m, fix:$x}]')"
     continue
   fi
-
-  case "$path" in
-    client/*)        packages="$(printf '%s' "$packages" | jq '. + ["client"]')" ;;
-    server/*)        packages="$(printf '%s' "$packages" | jq '. + ["server"]')" ;;
-    reviewer-core/*) packages="$(printf '%s' "$packages" | jq '. + ["reviewer-core"]')" ;;
-  esac
 
   doms="$(domains_for "$path")"
   if [ -z "$doms" ]; then

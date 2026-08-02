@@ -103,6 +103,31 @@ assert_json "$out" '[.skipped[] | select(.path == "client/pnpm-lock.yaml")] | le
   'the lockfile is reported as skipped'
 assert_json "$out" '[.skipped[] | select(.path == "client/pnpm-lock.yaml")][0].reason' \
   'lockfile' 'the skip reason is named'
+assert_json "$out" '.packages | join(",")' 'client' \
+  'but the package it belongs to is still gated — a dependency bump is what typecheck is for'
+rm -rf "$repo"
+
+# --- a branch of nothing but flagged paths still gates its packages ------------
+# `packages` used to be appended AFTER the skip and flag branches, so a path
+# that was flagged never contributed its package. Measured on a branch editing
+# `server/src/vendor/shared/` and `client/src/vendor/shared/` in step:
+# `packages: []`, which gates.sh reads as "no package in the diff" — all eight
+# package gates `skip`, `routed: []`, `verdict pass`, push allowed. No
+# typecheck, no test, no subagent, on the file class CLAUDE.md protects
+# hardest, where a one-sided contract edit is exactly what must not reach main
+# untyped.
+repo="$(make_repo)"
+sgit "$repo" checkout -qb feat/x
+mkdir -p "$repo/server/src/vendor/shared" "$repo/client/src/vendor/shared"
+printf 'export type A = { a: string }\n' >"$repo/server/src/vendor/shared/contract.ts"
+printf 'export type A = { a: string }\n' >"$repo/client/src/vendor/shared/contract.ts"
+sgit "$repo" add -A && sgit "$repo" commit -qm "the vendored contract, both copies"
+
+out="$(cd "$repo" && bash "$SCOPE")"
+assert_json "$out" '.flagged | length' '2' 'both vendored copies are flagged'
+assert_json "$out" '.routed | length' '0' 'and neither is routed — the change itself is the finding'
+assert_json "$out" '.packages | sort | join(",")' 'client,server' \
+  'while both packages are still gated: a flagged path is not an ungated one'
 rm -rf "$repo"
 
 # --- a committed .env is a critical flag, and its contents are never read -------
