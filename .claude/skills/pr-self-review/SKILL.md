@@ -59,15 +59,30 @@ Two of these need care, so their procedures are written out in §4 rather than l
 
 ## 3. The procedure
 
-Every step writes into one scratch directory. Use `.pr-self-review/run`, and pass it literally in
-every command rather than as a shell variable — **shell state does not survive between Bash
-calls** in this harness, so a `TMP=` set in step 1 is gone by step 2. Use `mkdir -p
-.pr-self-review/run` once at the start; the snippets below write `$TMP` for readability.
+**0 — Set up the scratch directory.** Run this first, in every mode, before anything else:
 
-That location is not arbitrary. `.pr-self-review/` is gitignored, and `scope.sh` hashes every
-*untracked* file's content into `worktreeHash`. Scratch files anywhere else in the repo would
-change the hash between the scope and the verdict, and `gate.sh` would then refuse the push it
-was just given a pass for. `/tmp` works too; nowhere else in the tree does.
+```sh
+mkdir -p .pr-self-review/run
+printf '[]' > .pr-self-review/run/findings.json
+printf '[]' > .pr-self-review/run/agents.json
+```
+
+Seeding those two empty is what lets a run that never dispatches a subagent still reach step 6.
+Only step 3 writes them, but steps 5 and 6 both read them through `jq --slurpfile`, which exits 2
+on a missing path — so without the seed, `--gates`, `--only critical` with nothing to re-check,
+and any run cut short by a failing Track A gate all die at step 5 with an empty `final.json`, and
+`report.sh` then writes no `latest.json` at all. That is the mode `gate.sh` names in its own
+refusal message, so it is the path a blocked user is most likely to take.
+
+**The scratch path is written out literally in every command, never held in a shell variable** —
+shell state does not survive between Bash calls in this harness, so a `TMP=` set in step 1 is
+gone by step 2. The snippets below write `$TMP` only for readability; substitute
+`.pr-self-review/run`.
+
+That location is not arbitrary either. `.pr-self-review/` is gitignored, and `scope.sh` hashes
+every *untracked* file's content into `worktreeHash`. Scratch files anywhere else in the repo
+would change the hash between the scope and the verdict, and `gate.sh` would then refuse the push
+it was just given a pass for. `/tmp` works too; nowhere else in the tree does.
 
 Run the steps in order and stop at the first that says stop.
 
@@ -91,8 +106,9 @@ bash scripts/pr-self-review/gates.sh < "$TMP/scope.json" > "$TMP/gates.json"
 
 It runs only the gates whose package appears in `.packages`, plus the registry gate, which
 always runs. **If any `.gates[].status` is `fail`, skip steps 3 and 4** — Track A already blocks
-the push, and subagents would be paid for nothing. Set `agents` to `[]` and go to step 5.
-`--gates` also skips 3 and 4, with `agents` `[]`. Read failures with [gates.md](gates.md).
+the push, and subagents would be paid for nothing. `--gates` skips them too. In both cases step 0
+already left `findings.json` and `agents.json` as `[]`, so go straight to step 5 and change
+nothing else. Read failures with [gates.md](gates.md).
 
 **3 — One subagent per domain, in parallel.**
 
@@ -121,9 +137,17 @@ Each subagent's brief carries, and carries nothing else:
 - the skills named for its domain in [routing.md](routing.md), and nothing else;
 - the precedence rule and the empty-report rule from §5, quoted;
 - the output contract: **a JSON array and no prose**, each element
-  `{severity, source, file, line, message, fix}`. **`source` must begin `agent <domain> · `**,
-  then the skill and section — `agent backend · onion-architecture §3.2`, never "the
-  architecture skill". `fix` is one concrete action;
+  `{severity, source, file, line, message, fix}`. `fix` is one concrete action;
+- **the four legal `severity` values, quoted into the brief: `critical`, `major`, `minor`,
+  `note`.** Nothing else is a severity. This has to be stated because the subagent is given
+  domain skills and nothing else — it never sees [severity.md](severity.md) — and three of the
+  skills it *is* given (`react-best-practices`, `zod`, `security`) ship CRITICAL / HIGH / MEDIUM
+  vocabularies of their own. A finding returned as `"high"` passes `baseline.sh` untouched, is
+  counted in none of `report.sh`'s four buckets and printed in none of its four sections: it
+  lands in `latest.json` and is invisible everywhere a human looks. Tell the agent to map its
+  skill's own label to one of the four before returning;
+- **`source` must begin `agent <domain> · `**, then the skill and section —
+  `agent backend · onion-architecture §3.2`, never "the architecture skill".
 
   That prefix is not decoration. `baseline.sh` anchors a finding to the diff **only** when its
   `source` starts with `agent `, because that is what marks it as a model's opinion about a
@@ -174,10 +198,21 @@ is why step 3's output contract insists on the `agent ` prefix: it is the only t
 
 ```sh
 jq -n --slurpfile s "$TMP/scope.json" --slurpfile g "$TMP/gates.json" \
-      --slurpfile f "$TMP/final.json" --slurpfile a "$TMP/agents.json" --arg mode full \
+      --slurpfile f "$TMP/final.json" --slurpfile a "$TMP/agents.json" --arg mode gates \
   '{mode: $mode, scope: $s[0], gates: $g[0].gates, findings: $f[0], agents: $a[0]}' \
   | bash scripts/pr-self-review/report.sh
 ```
+
+**`--arg mode` is the one value you must set by hand, and the snippet deliberately reads
+`gates`.** Change it to `full` *only* when steps 3 and 4 actually dispatched subagents across the
+whole diff. Every other case — `--gates`, `--only critical`, and any run where a failing Track A
+gate skipped step 3 — stays `gates`.
+
+The default is the cautious one on purpose. `gate.sh` refuses `gh pr create` on any mode but
+`full`, so a snippet hardcoded to `full` and pasted after a gates-only run would open a PR on a
+review that dispatched no subagent at all — the one place a copy-paste defeats the PR half of the
+gate. Pasted the other way round it merely refuses a PR that would have been allowed, costing one
+turn. Cheap error, expensive error; pick the cheap one.
 
 `report.sh` writes `.pr-self-review/latest.json` for the hook and `.pr-self-review/report.md` for
 people, prints the short form, and always exits 0. **The verdict never reaches you through an
@@ -234,8 +269,16 @@ No `latest.json` means there is no last run to narrow — say so and run `--full
      | [ $p[0].findings[]
          | . as $f
          | select($f.source | startswith("agent "))
-         | select(($re | index($f.file)) | not) ] + $n[0]' > "$TMP/findings.json"
+         | select(($re | index($f.file)) | not) ] + $n[0]' > "$TMP/merged.json"
+  mv "$TMP/merged.json" "$TMP/findings.json"
   ```
+
+  **Write to `merged.json` and `mv`. Never redirect into `findings.json` while `--slurpfile n`
+  is reading it** — the shell truncates the redirection target before `jq` starts, so `$n` comes
+  back `[]`, `$n[0]` is `null`, and `[carried] + null` is silently just `[carried]` in jq. The
+  re-check's own findings disappear, the count drops, and `report.sh` writes `pass` on a branch
+  whose criticals were never fixed. That is the exact failure the carry-forward exists to
+  prevent, arriving through the other door.
 
   Bind the finding to `$f` before the `index`. After the pipe into `index()`, a bare `.file`
   reads off `$re`, not off the finding — `jq` answers `Cannot index array with string "file"`,
@@ -248,8 +291,9 @@ No `latest.json` means there is no last run to narrow — say so and run `--full
 
 ## 5. Two rules that live only here
 
-**A repo skill overrules an upstream one.** `drizzle-orm-patterns` will show a query sitting in a
-handler; `onion-architecture` §3.2 forbids exactly that. Both load for the same file in the same
+**A repo skill overrules an upstream one.** `drizzle-orm-patterns` Example 1 builds the client
+and runs `db.select()` at module scope, beside the schema; `onion-architecture` §3.2 puts every
+query in a `repository.ts`. Both load for the same file in the same
 subagent. When a skill under `.claude/skills/` that we authored — `onion-architecture`,
 `frontend-architecture`, `engineering-insights` — disagrees with a pinned upstream copy, **ours
 wins and the upstream rule is not reported at all.** Not reported as a minor, not reported "for

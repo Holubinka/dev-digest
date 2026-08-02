@@ -88,6 +88,27 @@ out="$(cd "$repo" && printf '%s' "$(input "[$odd]")" | bash "$BASELINE")"
 assert_json "$out" '.[0].severity' 'major' 'a source with no "agent " prefix is not anchored'
 rm -rf "$repo"
 
+# --- a malformed model finding does not take the payload with it ---------------
+# Half the findings are written by a model, so `source` can be absent or the
+# wrong type. A bare startswith() raises "requires string inputs" and `set -e`
+# then discards the whole array — including the deterministic .env critical
+# sitting beside it. The array must survive, and so must the critical.
+repo="$(make_repo)"
+bad='{"severity":"major","file":"server/src/modules/pulls/routes.ts","line":300,"message":"no source key"}'
+out="$(cd "$repo" && printf '%s' "$(input "[$bad,$flag]")" | bash "$BASELINE")"; code=$?
+assert_eq "$code" 0 'a finding with no source does not abort the script'
+assert_json "$out" 'length' '2' 'and the payload survives intact'
+assert_json "$out" '[.[] | select(.file == ".env")][0].severity' 'critical' \
+  'the deterministic critical beside it is not lost'
+rm -rf "$repo"
+
+repo="$(make_repo)"
+odd_type='{"severity":"minor","source":42,"file":"server/src/modules/pulls/routes.ts","line":300,"message":"numeric source"}'
+out="$(cd "$repo" && printf '%s' "$(input "[$odd_type]")" | bash "$BASELINE")"; code=$?
+assert_eq "$code" 0 'a non-string source does not abort the script either'
+assert_json "$out" '.[0].severity' 'minor' 'and it is treated as deterministic'
+rm -rf "$repo"
+
 # --- a frozen finding is dropped whatever produced it --------------------------
 repo="$(make_repo)"
 ( cd "$repo" && printf '%s' "$(input "[$flag]")" | bash "$BASELINE" --freeze )

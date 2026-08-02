@@ -24,6 +24,14 @@
 # The baseline exists for the sixteen pre-existing container.db calls in
 # pulls/routes.ts, and those come from a subagent. Only model findings need it.
 #
+# The `source` test is defensive because half the findings are written by a
+# model: a missing or non-string `source` would make bare startswith() raise
+# "requires string inputs", and under `set -e` that discards the WHOLE payload
+# — including the deterministic criticals sitting beside the malformed entry.
+# One bad model finding must not take the committed .env with it. An entry with
+# no usable source is treated as deterministic, which is the safe direction:
+# it stays visible at full severity instead of vanishing.
+#
 # Always exits 0.
 #
 #   baseline.sh            filter, print the survivors
@@ -57,7 +65,7 @@ printf '%s' "$payload" | jq \
       | select(
           ($frozen | any(.file == $f.file and .line == $f.line and .message == $f.message)) | not
         )
-      | if ($f.source | startswith("agent ")) | not then
+      | if (((($f.source // "") | tostring) | startswith("agent ")) | not) then
           .
         elif .line == 0 then
           .

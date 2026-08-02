@@ -34,8 +34,9 @@ Scope is the whole repo: every package, every file the branch touched, committed
 
 | File | Lines | Answers |
 |---|---|---|
-| `SKILL.md` | 317 | When does it run? What is the procedure? Which mode? What must never be reported? |
-| `routing.md` | 165 | Which subagent opens which skill, what to look for in the ones with no checklist, what is left out on purpose |
+| `README.md` | 204 | This card: scope, boundaries, sources, decisions, how it was tested |
+| `SKILL.md` | 357 | When does it run? What is the procedure? Which mode? What must never be reported? |
+| `routing.md` | 166 | Which subagent opens which skill, what to look for in the ones with no checklist, what is left out on purpose |
 | `gates.md` | 181 | What is each Track A gate, what does its failure look like, what do I try first? |
 | `severity.md` | 124 | Which of the four levels is this, and what does it stop? |
 
@@ -76,7 +77,7 @@ report is about a branch, not a paragraph.
 |---|---|---|
 | `/code-review` | Is the logic right? | none — this checks conventions, and its report says so in its own last line |
 | `/security-review` | Is there a vulnerability? | the `security` domain agent overlaps deliberately; that agent is scoped to the diff and blocks, `/security-review` is broader and does not |
-| `superpowers:requesting-code-review` | Generic pre-merge review | **superseded here.** Same intent, no knowledge of `pnpm arch`, the twice-vendored `shared/`, or `skills-lock.json`. Do not run both. |
+| `superpowers:requesting-code-review` | Generic pre-merge review | superseded here — [SKILL.md](SKILL.md) §6 states the boundary |
 | `superpowers:dispatching-parallel-agents` | How do I fan out? | used, not duplicated — it is the step-3 mechanism |
 | `superpowers:verification-before-completion` | What counts as evidence? | supplies the report's evidence rule |
 | `engineering-insights` | What did this session learn? | runs **after** a review, when a finding is worth recording. Never during. |
@@ -109,24 +110,22 @@ specific claim taken from it.
 
 ## 7. Conflicts this skill resolves
 
-**A repo skill overrules an upstream one.** `drizzle-orm-patterns` shows queries beside handlers;
-`onion-architecture` §3.2 forbids it. Both load for the same file in the same subagent. Ours
-wins, and the upstream rule is **not reported at all** — not as a minor, not "for completeness".
-`SKILL.md` §5 is the only place this is written down, on purpose.
+Each of these is decided in exactly one file. This section says which, and nothing more — a
+second copy of a rule is the drift this skill exists to argue against, and it would be a poor
+joke to put one here.
 
-**Upstream severity labels are not this scale.** `react-best-practices`, `zod` and `security`
-each ship their own CRITICAL / HIGH / MEDIUM ranking of how important a rule is in general. This
-scale ranks what a finding *stops in this repo today*. Everything maps through
-[severity.md](severity.md) before it reaches a report.
+| Conflict | Decided in |
+|---|---|
+| A repo skill and a pinned upstream one disagree about the same file | [SKILL.md](SKILL.md) §5 |
+| An upstream skill's own CRITICAL / HIGH / MEDIUM label vs. what a finding stops here | [severity.md](severity.md) |
+| A Track A critical and a Track B critical are both "critical" | [severity.md](severity.md) |
+| This skill vs. `superpowers:requesting-code-review` | [SKILL.md](SKILL.md) §6 |
+| `--only critical` narrows the review — does it narrow the verdict? | [SKILL.md](SKILL.md) §4 |
 
-**A Track A critical and a Track B critical are not the same thing.** The first is a command's
-exit code and blocks a push. The second is a model's opinion, must survive an adversarial
-verifier, and blocks only the PR. Treating them alike would either let false criticals stop work
-or let real gate failures be argued with.
-
-**`--only critical` narrows the review, not the verdict.** Findings for files it did not re-check
-are carried forward from the previous run. Without that rule, repeatedly narrowing a re-check is
-a way to turn a blocked branch green without fixing a line.
+The one thing worth adding here, because it is about the *set* rather than any single rule: all
+five are resolved by asking what a decision **stops**, never by which source is more
+authoritative in the abstract. That is why a Track A critical and a Track B critical are
+different objects, and why an upstream skill's CRITICAL is not ours.
 
 ## 8. Version and changelog
 
@@ -166,6 +165,24 @@ Decisions made while writing, beyond what the spec fixed:
   `.pr-self-review/` (gitignored) left the hash byte-identical, while the same file in a fresh
   `tmp-probe/` changed it — which would have made `gate.sh` refuse the very push it had just
   passed.
+- **Step 0 seeds `findings.json` and `agents.json` as `[]`.** Steps 5 and 6 read both through
+  `jq --slurpfile`, which exits 2 on a missing path, but only step 3 writes them. Without the
+  seed every mode that dispatches no subagent — `--gates`, a `--only critical` with nothing to
+  re-check, and any run a failing Track A gate cut short — died at step 5 and wrote no
+  `latest.json` at all. `--gates` is the mode `gate.sh` names in its own refusal message, so it
+  was the most likely path of anyone the hook had just blocked.
+- **Step 6's snippet reads `--arg mode gates`, and `full` is the edit you make by hand.** A
+  snippet hardcoded to `full` and pasted after a gates-only run forges the one field that lets a
+  PR through. Defaulting the other way costs a wasted turn. Cheap error over expensive error, the
+  same asymmetry `gate.sh` reasons from in its own comments.
+- **The `--only critical` carry-forward writes `merged.json` and renames.** Redirecting into
+  `findings.json` while `--slurpfile n` reads it lets the shell truncate the file first, so `$n`
+  is `[]`, `$n[0]` is `null`, and jq's `[carried] + null` silently drops everything the re-check
+  just found — turning a blocked branch green through the very mechanism written to stop that.
+- **`baseline.sh` tolerates a missing or non-string `source`.** Half the findings are written by
+  a model. A bare `startswith` raises `requires string inputs`, and under `set -e` that discarded
+  the entire payload, deterministic criticals included. One malformed model finding must not take
+  the committed `.env` with it.
 - **No `enforcement.md` and no `report-format.md`.** The scripts are the executable copy of both.
 
 ## 9. How this skill was tested

@@ -92,21 +92,22 @@ Its content lives in `rules/*.md`, not in `SKILL.md`. Open the named file, not t
 
 ### `drizzle-orm-patterns` → `data`
 
-Read [SKILL.md](SKILL.md) §5 before this one: where it and `onion-architecture` disagree, ours
-wins and its rule is not reported.
+Read the precedence rule in [SKILL.md](SKILL.md) §5 before this one — it decides every conflict
+between this skill and `onion-architecture`.
 
 - §Best Practices — do the new queries follow it?
 - §Constraints and Warnings — does the diff hit one of them?
 - §Quick Reference — right dialect? This repo is Postgres: `pgTable`, `drizzle-orm/pg-core`.
-- §Examples — its examples put queries beside handlers. That shape is what `onion-architecture`
-  §3.2 forbids here, so it is a source of false findings, not a standard.
+- §Examples — Example 1 builds the client and runs `db.select()` at module scope, in the same
+  file as the schema. `onion-architecture` §3.2 puts every query in a `repository.ts`, so that
+  example is a source of false findings here, not a standard.
 
 ### `postgresql-table-design` → `data`, only for a new migration or a schema change
 
 - §Core Rules and §Constraints — does a new column carry the constraint that section asks for?
 - §Data Types — is the type that section's choice for this shape of value?
 - §Indexing — does a new foreign key or filtered column have an index?
-- §PostgreSQL "Gotchas" — does the migration walk into one?
+- §PostgreSQL “Gotchas” — does the migration walk into one? (curly quotes in the real heading)
 - §JSONB Guidance — is JSONB standing in for a column that should exist?
 
 ### `zod` → `contracts`
