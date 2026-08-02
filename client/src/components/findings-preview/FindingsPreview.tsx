@@ -145,7 +145,6 @@ export function FindingsPreview({
     setShown((n) => (n < findings.length ? n + PAGE_SIZE : n));
   };
 
-  const canLink = Boolean(repoFullName && headSha);
   const visible = findings.slice(0, shown);
 
   return (
@@ -205,9 +204,14 @@ export function FindingsPreview({
                     file={f.file}
                     startLine={f.start_line}
                     endLine={f.end_line}
+                    // Tested inline rather than through a `canLink` boolean:
+                    // TypeScript narrows the operands of the condition it can
+                    // see, so both props are `string` here without a non-null
+                    // assertion. Hoisting the same test into a `boolean` throws
+                    // that narrowing away and the `!`s come back.
                     href={
-                      canLink
-                        ? githubBlobUrl(repoFullName!, headSha!, f.file, f.start_line, f.end_line)
+                      repoFullName && headSha
+                        ? githubBlobUrl(repoFullName, headSha, f.file, f.start_line, f.end_line)
                         : undefined
                     }
                   />
