@@ -6,17 +6,10 @@
 
 import React from "react";
 import { useTranslations } from "next-intl";
-import {
-  Icon,
-  CategoryTag,
-  MonoLink,
-  ConfidenceNum,
-  Button,
-  Markdown,
-  type Category,
-} from "@devdigest/ui";
+import { Icon, MonoLink, ConfidenceNum, Button, Markdown } from "@devdigest/ui";
 import type { FindingRecord, FindingActionKind } from "@devdigest/shared";
 import { FindingSeverityBadge, severityColor } from "@/components/severity-badge";
+import { FindingCategoryTag } from "@/components/category-tag";
 import { lineLabel } from "./helpers";
 import { githubBlobUrl } from "@/lib/github-urls";
 import { s } from "./styles";
@@ -58,7 +51,7 @@ export function FindingCard({
         <div style={s.headerMain}>
           <div style={s.titleRow}>
             <span style={s.title(muted, dismissed)}>{f.title}</span>
-            <CategoryTag category={f.category as Category} />
+            <FindingCategoryTag category={f.category} />
             {accepted && <span style={s.acceptedTag}>{t("finding.accepted")}</span>}
             {dismissed && <span style={s.dismissedTag}>{t("finding.dismissed")}</span>}
           </div>

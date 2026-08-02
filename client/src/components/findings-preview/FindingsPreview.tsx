@@ -12,16 +12,10 @@
 "use client";
 
 import React from "react";
-import {
-  Icon,
-  SEV,
-  CategoryTag,
-  ConfidenceNum,
-  type Severity,
-  type Category,
-} from "@devdigest/ui";
+import { Icon, SEV, ConfidenceNum, type Severity } from "@devdigest/ui";
 import type { ListFinding } from "@devdigest/shared";
 import { FindingSeverityBadge } from "@/components/severity-badge";
+import { FindingCategoryTag } from "@/components/category-tag";
 import { githubBlobUrl } from "@/lib/github-urls";
 import { FileRef } from "./FileRef";
 import { CARD_MAX_HEIGHT, CARD_WIDTH, s } from "./styles";
@@ -198,12 +192,13 @@ export function FindingsPreview({
             {visible.map((f, i) => (
               <div key={f.id} style={s.item(i === 0)} role="listitem">
                 <div style={s.itemTitleRow}>
-                  {/* `ListFinding.severity` is plain `string` — the column is
-                      `text`. `SeverityBadge` has no fallback, so a cast here
-                      would be a widening one wearing a narrowing shape. */}
+                  {/* `severity` and `category` are both plain `string` — both
+                      columns are `text`. Neither renderer has a usable fallback,
+                      so a cast here would be a widening one wearing a narrowing
+                      shape. Both guards key on own properties. */}
                   <FindingSeverityBadge severity={f.severity} compact />
                   <span style={s.itemTitle}>{f.title}</span>
-                  <CategoryTag category={f.category as Category} />
+                  <FindingCategoryTag category={f.category} />
                 </div>
                 <div style={s.itemMetaRow}>
                   <FileRef
