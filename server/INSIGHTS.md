@@ -84,6 +84,33 @@ machine, not a property of the repository.
 CI invokes `pnpm exec vitest run …` directly for this reason. If you want the flag, set
 it yourself: `git update-index --skip-worktree server/package.json`.
 
+### dependency-cruiser has three ways to check nothing and still print a green tick
+
+**Symptom.** `.dependency-cruiser.cjs` reports `✔ no dependency violations found` for rules
+that should obviously be failing, or floods you with violations that are plainly legal.
+
+**Cause.** Three independent traps, all hit while writing the arch gate on 2026-08-01:
+
+1. **`exclude` deletes the module *and every edge pointing at it*; `doNotFollow` keeps the
+   edge.** A config with `exclude: { path: 'node_modules|…' }` removed every npm package from
+   the graph, so all four rules whose `to` names a package — `no-sql-outside-repository`,
+   `no-fastify-outside-http`, `core-stays-pure`, `not-to-dev-dep` — matched nothing and
+   reported clean. Use `doNotFollow: { path: 'node_modules' }`. The tell is the module count:
+   123 with `exclude`, 149 with `doNotFollow`.
+2. **Capture-group backreferences are `$1`, not a regex `\1`.** The slice-isolation rule
+   `to: { path: '^src/modules/([^/]+)/', pathNot: '^src/modules/(\\1|_shared)/' }` flagged 35
+   *same-module* imports. `$1` reduces it to the one genuine cross-slice import.
+3. **The resolver strips the `node:` prefix.** `import 'node:fs/promises'` lands in the graph
+   as `fs/promises`, so a rule matching `^node:fs` matches nothing. Write `^(node:)?fs(/|$)`.
+
+Also load-bearing: `options.tsConfig.fileName` resolves the `@devdigest/*` path aliases.
+Without it `reviewer-core` never enters the graph at all and `core-stays-pure` is decoration.
+
+**Fix.** Before trusting a new rule, point its `to` at something you know exists inside that
+`from` scope and confirm it reports; then revert the probe. `pnpm arch:strict` shows the full
+picture, and the module count in the footer is the fastest sanity check that the graph is the
+size you expect.
+
 ## Recurring Errors & Fixes
 
 ### A review run fails with `401 Missing Authentication header`

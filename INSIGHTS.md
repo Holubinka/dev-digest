@@ -30,6 +30,40 @@ depend on the model.
 
 Used on 2026-08-01 to gate the `AGENTS.md` migration before renaming all five files.
 
+### A lint rule's `comment` field beats a guidance document, because it arrives at the failure
+
+Measured on 2026-08-01 while baselining the `onion-architecture` skill. Four agents were given
+backend tasks with the skill removed from the tree. All four found
+`server/.dependency-cruiser.cjs` on their own and named it the decisive source — one wrote that
+its rules "are what actually pin the SQL to `repository.ts`"; another lifted its argument for
+constructor injection out of the `no-fs-in-service` comment; a third reconstructed the whole
+baseline policy from the config header and refused to re-freeze it.
+
+The mechanism is that **dependency-cruiser prints a rule's `comment` alongside the violation**.
+Prose there reaches someone who has already hit the problem, needs it, and cannot skip it — the
+opposite of a document that must be found and loaded first.
+
+So: when a convention can be expressed as a check, put the *reasoning* in the check's message,
+not only in the doc. The doc still earns its place by compressing the answer (the same four
+tasks cost 56% fewer tokens and 67% fewer tool calls with the skill loaded), but it should not
+be where the reasoning lives alone.
+
+### Proving a new CI rule can fail, before trusting it to pass
+
+A rule that matches nothing is indistinguishable from a rule that passes. Both print a green
+tick. This bit twice on 2026-08-01 while adding the dependency-cruiser arch gate: four of
+twelve rules were silently dead, and the config looked healthier than the one that worked.
+
+The cheap check is to arm each rule against a target you know exists, watch it report, then
+revert. For the three rules that legitimately report zero — the ratchets guarding a property
+the codebase already satisfies — invert the `to` selector instead and confirm the *inverted*
+form matches (they returned 2, 11 and 1 hits, so their selectors reach real edges).
+
+Generalises past dependency-cruiser to any gate: a grep-based CI check, a `test.each` over an
+empty fixture list, a lint rule with a typo in its glob. Record in the skill or workflow which
+rules have been seen to fail, so the next editor knows which greens are meaningful. The same
+instinct as the entry above about proving an instruction file was actually loaded.
+
 ## What Doesn't Work
 
 ### Committing a documentation layer by path while the files it references stay untracked
@@ -144,6 +178,29 @@ lessons introduce.
 **Fix.** Nothing to do — do not go hunting for the package. Treat the ignore rule as a
 placeholder.
 
+### A skill is worth only what it adds over `AGENTS.md` + `INSIGHTS.md`, and that is small
+
+Measured on 2026-08-01 while building `.claude/skills/frontend-architecture/`. Four
+placement/architecture scenarios were put to subagents told not to open `.claude/skills/`.
+**All four answered correctly** — colocation and promotion, "extract on a seam, not a line
+count", URL state, hooks behind `src/lib/hooks/`. Two of them found repo facts the skill
+draft had wrong, and two noticed the skill existed by reading `INSIGHTS.md` and flagged it.
+
+Two things follow, and they cut in opposite directions:
+
+- **Write the baseline first, then cut.** The draft was 355 lines; the tested release is 257,
+  because the folder-anatomy walkthrough and the full `src` tree were reproduced unaided from
+  `client/AGENTS.md`. Documenting what the model already does is pure context cost.
+- **The value that survived was the answer's *shape*, not its content.** Baseline answers ran
+  800–1500 words, reasoned from scratch, and would have produced four defensible-but-different
+  structures. With the skill they came back as tables — path plus one line of why, under 400
+  words — and identical across runs. Consistency and speed, not knowledge.
+
+Caveat on the method: the baseline was **contaminated**. Insights from the same work were
+already committed to `client/INSIGHTS.md` and the agents cited them by line number. So this
+measures marginal value over the repo docs, which is the decision that matters, but it is not
+a clean room. Full write-up in `.claude/skills/frontend-architecture/README.md` §8.
+
 ## Tool & Library Notes
 
 ### GitHub's "Download ZIP" flattens the `CLAUDE.md` symlinks into 9-byte text files
@@ -203,6 +260,25 @@ the local Postgres port override (`5432` → `5434`) had to stay out of `7914c18
 unstaged. Prose counts as part of the change — `CLAUDE.md`, `e2e/CLAUDE.md` and
 `e2e/INSIGHTS.md` each named 5434 and had to be corrected, or the commit would have
 documented a port the committed `docker-compose.yml` does not publish.
+
+### `SKILL.md` frontmatter has no top-level `version` field — it goes under `metadata`
+
+The [Agent Skills spec](https://agentskills.io/specification) allows exactly six keys:
+`name`, `description` (both required), `license`, `compatibility`, `metadata`,
+`allowed-tools`. Anything else is off-spec. `name` must also **match the parent directory
+name**, lowercase with hyphens.
+
+So a skill version is `metadata: { version: "1.0.0" }`, not `version: "1.0.0"`.
+`.claude/skills/fastify-best-practices/SKILL.md` already carried a `metadata` block, so the
+precedent existed. Counter-example in the tree: `typescript-expert/SKILL.md` has top-level
+`category`, `risk`, `source`, `date_added` — vendored from upstream and off-spec; do not
+copy it. `next-best-practices` has `user-invocable: false`, which is a Claude Code extension
+rather than spec.
+
+Two more limits from [Anthropic's authoring guide](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices)
+that are easy to blow past: keep the `SKILL.md` body **under 500 lines**, and keep file
+references **one level deep** — an agent previewing a nested chain with `head -100` reads
+part of a file and acts on it.
 
 ### Killing the web server takes the API down with it — `dev.sh` traps EXIT
 
@@ -342,6 +418,55 @@ only with a registered key: `ssh -T git@github.com` answered `Permission denied
   finding on a PR, so the card reuses it instead of introducing the codebase's first
   `querystring` route, first keyset cursor and first `useInfiniteQuery`. Worth checking what
   an existing route already returns before specifying a paginated one.
+- Added `.claude/skills/frontend-architecture/` (SKILL + examples + README) and rebuilt it
+  against the two authoring guides: baseline-tested, versioned via `metadata.version`, all
+  41 research sources in the README. The two entries above under Codebase Patterns and Tool
+  & Library Notes are what that cost to learn.
+- The convention now lives in `.claude/skills/README.md`: a per-skill `README.md` card
+  (focus · coverage · related skills · sources · version · how it was tested), the
+  frontmatter contract, and the instruction to measure a baseline before calling a skill
+  done. `react-testing-library/` and `zod/` already had READMEs; this makes it a rule.
+- Split `SKILL.md` into a thin hub (137 lines: six principles, a five-step procedure, the
+  folder table, the sibling-skill boundary) plus three topic files —
+  `folder-structure.md`, `component-organization.md`, `nextjs-organization.md`. Activating
+  the skill now loads ~140 lines instead of ~600; detail loads on demand, one level deep.
+  A navigation test confirmed a fresh agent opens exactly one topic file per question.
+- `examples.md` was dissolved into the topic files rather than kept alongside them — a
+  good/bad pair belongs next to the rule it demonstrates, not one hop away.
+- `references.md` was folded into the skill's `README.md` and deleted. Two files holding the
+  same 41 links is the drift the skill itself warns about — and the repo's own
+  `.claude/skills/README.md` had listed both as separate recommended files.
+- Added `.claude/skills/onion-architecture/` — the backend counterpart to
+  `frontend-architecture`, same layout (thin `SKILL.md` + four topic files + a README card
+  with 38 tiered sources). It ships with a machine gate rather than prose alone:
+  `server/.dependency-cruiser.cjs`, `pnpm arch`, and `.github/workflows/server-arch.yml`.
+- `dependency-cruiser` was already a `server/` dependency — the `depgraph` adapter cruises
+  *user* repos with it — so the arch gate cost no new package. Worth checking what a repo
+  already installs before adding a tool for a second purpose.
+- The gate found **20 violations of a rule `server/AGENTS.md` had already stated**: four of
+  eight modules query Drizzle straight from `routes.ts`, `adapters/` reaches into `modules/`
+  in three places, and three services have no hermetic tests because each constructs its own
+  repository and so offers no seam. An unmeasured convention does not hold.
+- Those 20 are frozen in `server/.dependency-cruiser-known-violations.json` via
+  `depcruise-baseline`, so CI went green on day one without a four-module refactor first. The
+  file is the backlog and only shrinks; re-freezing to silence a *new* violation defeats it.
+- `server/AGENTS.md`'s Layering section shrank from eight lines to four and now points at the
+  skill. The eagerly-loaded file should carry the pointer, not the argument.
+- Ran the skill's RED/GREEN baseline properly: the skill directory was **moved out of the tree**
+  and `server/AGENTS.md` reverted for the RED half, rather than telling agents not to use it.
+  Telling an agent to ignore a skill it can see is not a baseline. The four RED agents each
+  independently reported the skill was missing, which is how I know the condition held.
+- **All four RED agents got the right answer with no skill.** It bought −56% tokens and −67%
+  tool calls (S3: 49 tool calls → 9), and in two scenarios a better decision, but it rescued
+  nothing. Numbers in `.claude/skills/onion-architecture/README.md` §9.
+- The GREEN run **corrected the skill**: `ports-and-adapters.md` §2 offered three homes for a
+  port interface without noting two are unreachable when the consumer is a service or executor.
+  Verified by probe afterwards rather than taking the agent's word for it.
+- Then **acted on the measurement instead of filing it**: `enforcement.md` (128 lines) was
+  deleted, because a RED agent had rebuilt nearly all of it from `.dependency-cruiser.cjs`,
+  `package.json` and `INSIGHTS.md` with no skill at all. Its two unique parts moved rather than
+  died — the escalation order to `SKILL.md` §2, the graph commands to the config header. A
+  baseline whose findings do not change the artifact was not worth running.
 
 ## Open Questions
 

@@ -251,6 +251,34 @@ Two consequences worth knowing before changing either: adding a per-PR findings 
 unnecessary — `GET /pulls/:id/reviews` already returns all of them — and `FindingsCell` no
 longer holds to "hovering costs no request", so a change there is a change to list traffic.
 
+### The `@/*` alias exists but most of the tree ignores it
+
+`client/tsconfig.json` maps `@/*` → `./src/*`, yet on 2026-08-01 `src/` held **43** imports
+beginning `../../../../` against only **29** using the alias. The worst are seven levels
+deep, e.g. `src/app/settings/[section]/_components/SettingsView/_components/SettingsApiKeys/
+SettingsApiKeys.tsx:6` importing `"../../../../../../../lib/hooks"`.
+
+This is not cosmetic: route-colocated folders are exactly the ones that get moved or renamed
+when a route changes, and every `../` count silently encodes the current depth. Use `@/` for
+anything outside the current folder, keep relative paths for same-folder siblings
+(`./constants`, `./helpers`), and fix the ones in files you already touch. Counted with
+`grep -rn 'from "\.\./\.\./\.\./\.\./' --include='*.ts' --include='*.tsx' src`.
+
+### Nine `index.ts` files are aggregating barrels, and `@/lib/hooks` is the costly one
+
+`export *` barrels live in `lib/hooks/`, `components/{app-shell,findings-preview,page-shell,
+run-cost-badge,showcase}/`, `_components/RunFindings/`, and both `vendor/` roots.
+
+`src/lib/hooks/index.ts` re-exports five domain modules, so `import { useSettings } from
+"@/lib/hooks"` also pulls `agents`, `reviews`, `trace` and `repo-intel` into the graph.
+Its own header comment says both forms "resolve here" — true, but not equivalent. Import the
+domain file directly (`@/lib/hooks/reviews`) in new code.
+
+Leaf barrels that re-export a single component — `FindingCard/index.ts`,
+`components/diff-viewer/index.ts` — are a different thing and are fine. The distinction is
+`export *` over several modules, not the existence of an `index.ts`. Find them with
+`grep -rln 'export \*' --include='index.ts' src`.
+
 ### `FindingCard`'s `SEV_COLOR` duplicates the vendored `SEV` token
 
 `src/vendor/ui/primitives/tokens.ts:6` exports `SEV` with `{ c, bg, icon, label }` for all
@@ -528,6 +556,18 @@ attribute.
 - Verified against real data only: the largest PR in this workspace carries 3 findings, so
   the >10 scroll path is covered by tests and not by the browser. No rows were seeded to
   make the card look fuller.
+- Wrote `.claude/skills/frontend-architecture/` (SKILL + examples + references) to answer
+  "where does this file go" for React and the App Router, and trimmed the overlapping
+  "Code Organization" section out of `react-best-practices` so the two do not contradict
+  each other. Route-colocation is prescribed because it is what `client/` already does.
+- Grounding it against the real tree surfaced three drifts, all recorded under Codebase
+  Patterns above: the unused `@/*` alias, the nine `export *` barrels, and `SEV_COLOR`
+  duplicating the vendored `SEV`. None was visible from reading a single file — they only
+  appear when you count across `src/`.
+- The skill was dogfooded before being called done: a fresh agent was asked where a new
+  `SeverityLegend` goes and answered the colocated path plus the promotion move without
+  prompting. It also caught the `SEV` duplication independently, which is what sent me
+  back to fix the examples.
 - Audited the whole of `client/` against `frontend-architecture`, `react-best-practices` and
   `next-best-practices`, then fixed the five live defects it turned up. Roadmap for the rest
   (resilience, tooling, duplication, a11y) is in the plan file, not here.
