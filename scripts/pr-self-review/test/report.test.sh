@@ -71,9 +71,13 @@ assert_eq "$([ -f "$repo/.pr-self-review/report.md" ] && printf yes || printf no
 rm -rf "$repo"
 
 # --- a payload missing .gates still exits 0 and still writes a report ----------
-# .gates[] used to be the one unguarded iteration on the render path — a
-# payload without it crashed under set -e and left report.md truncated with
-# no marker that it was incomplete. Exit 2 is reserved for gate.sh alone.
+# What this case pins is the exit-0-and-a-file-on-disk contract, which must
+# hold for every input however broken: exit 2 is reserved for gate.sh alone,
+# and the hook needs a verdict to read. It no longer pins anything about the
+# render path it was written for — `.gates[]` was once the one unguarded
+# iteration there, and a payload without it crashed under set -e — because the
+# same input is now caught earlier, by rule 6, and recorded as `incomplete`.
+# The loop below asserts that half.
 repo="$(make_repo)"
 out="$(cd "$repo" && printf '%s' "$(payload full '[]' '[]')" | jq 'del(.gates)' | bash "$REPORT")"
 code=$?
@@ -82,20 +86,37 @@ assert_eq "$([ -f "$repo/.pr-self-review/report.md" ] && printf yes || printf no
   'the report is still written when .gates is missing'
 rm -rf "$repo"
 
-# --- rule 6: a payload with no findings array is incomplete, never pass --------
-# The class guard. Three defects in this feature's history ended the same way:
-# a jq step failed or a slurped file came back empty, `null` reached a `+`, jq
-# took null as the identity, and an empty findings array produced `pass`. Every
-# case below would have been a clean `pass` before this rule existed.
+# --- rule 6: a payload the script cannot read is incomplete, never pass --------
+# The class guard. Several defects in this feature's history ended the same
+# way: a jq step failed or a slurped file came back empty, `null` reached a
+# `+`, jq took null as the identity, and an empty findings array produced
+# `pass`. Every case below would have been a clean `pass` before this rule
+# existed — or worse, an exit 5 leaving an earlier `pass` on disk untouched.
 #
-# .gates and .agents are checked too, because each alone can forge a pass:
-# a null .gates reports PASS with an empty GATES section — no Track A at all —
-# and a null or non-array .agents is swallowed by `.agents[]?`, so $broken is 0
-# and a run whose crashed-subagent bookkeeping was lost reads clean, which
-# defeats rule 4.
+# .gates, .agents and .scope are checked too, because each alone can forge a
+# pass: a null .gates reports PASS with an empty GATES section — no Track A at
+# all — a null or non-array .agents is swallowed by `.agents[]?`, so $broken is
+# 0 and a run whose crashed-subagent bookkeeping was lost reads clean, which
+# defeats rule 4; and a .scope that is null, {} or missing .skipped prints a
+# green report with an EMPTY skipped list, which rule 3 calls lying.
+#
+# The ELEMENT shapes are the newest half, and the reason the container check
+# was not enough. `["crashed"]` is an array, so it satisfied a container-only
+# rule 6 and then raised `Cannot index string with "status"` in the jq that
+# computes the verdict — no latest.json written at all, so a `pass` from an
+# earlier run over the same tree survived and gate.sh honoured it. Both shapes
+# are pinned here, "crashed" and ["crashed"], because they are one bracket
+# apart and the bracketed one is worse.
 for missing in 'del(.findings)' '.findings = null' '.findings = {}' '.findings = "none"' \
+               '.findings = ["prose, not a finding"]' \
                'del(.gates)'    '.gates = null'    '.gates = "x"' \
-               'del(.agents)'   '.agents = null'   '.agents = "crashed"'; do
+               '.gates = ["lint blew up"]' \
+               'del(.agents)'   '.agents = null'   '.agents = "crashed"' \
+               '.agents = ["frontend crashed"]' \
+               'del(.scope)'    '.scope = null'    '.scope = "nope"' \
+               '.scope = {}'    '.scope = {"flagged":[]}' \
+               '.scope.skipped = null' '.scope.skipped = "lockfile"' \
+               '.scope.skipped = ["client/pnpm-lock.yaml"]'; do
   repo="$(make_repo)"
   out="$(cd "$repo" && printf '%s' "$(payload full '[]' '[]')" | jq "$missing" | bash "$REPORT")"
   code=$?
@@ -141,15 +162,38 @@ for bad_stdin in '' 'not json at all' '[1,2,3]' 'null'; do
 done
 
 # --- rule 6 overwrites a stale passing verdict rather than leaving it ----------
-# Crashing would not be enough. gate.sh reads latest.json, and a pass from an
-# earlier run over the same tree is still fresh — same headSha, same
-# worktreeHash — so it would be honoured. The file must be rewritten.
+# Crashing would not be enough — it is the whole failure. gate.sh reads
+# latest.json, and a pass from an earlier run over the same tree is still
+# fresh — same headSha, same worktreeHash — so it would be honoured. A
+# report.sh that dies writes nothing and leaves that pass in place
+# byte-identical. The file must be rewritten, which means the script must
+# reach the end, which means it must not exit non-zero on the way.
+for breakage in 'del(.findings)' '.agents = ["frontend crashed"]' '.scope = null'; do
+  repo="$(make_repo)"
+  ( cd "$repo" && printf '%s' "$(payload full '[]' '[]')" | bash "$REPORT" >/dev/null )
+  assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'pass' \
+    "[$breakage] the earlier run over the same tree passed"
+  ( cd "$repo" && printf '%s' "$(payload full '[]' '[]')" | jq "$breakage" | bash "$REPORT" >/dev/null )
+  assert_eq "$?" '0' "[$breakage] the broken run still exits 0, so it reaches the write"
+  assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'incomplete' \
+    "[$breakage] the broken run overwrites the stale pass"
+  rm -rf "$repo"
+done
+
+# --- the repair drops what it cannot read and keeps the rest -------------------
+# Rule 6 blocks either way, so the repair is free to be generous: an unreadable
+# element must not take the well-formed findings beside it down with it. That
+# is the same reasoning baseline.sh states for its own defensive guards.
 repo="$(make_repo)"
-( cd "$repo" && printf '%s' "$(payload full '[]' '[]')" | bash "$REPORT" >/dev/null )
-assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'pass' 'the earlier run passed'
-( cd "$repo" && printf '%s' "$(payload full '[]' '[]')" | jq 'del(.findings)' | bash "$REPORT" >/dev/null )
+out="$(cd "$repo" && printf '%s' "$(payload full "[$crit, \"prose, not a finding\"]" \
+  '["frontend crashed", {"name":"backend","status":"ok","files":2}]')" | bash "$REPORT")"
 assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.verdict' 'incomplete' \
-  'the broken run overwrites the stale pass'
+  'a stray string anywhere makes the run incomplete'
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.counts.critical' '1' \
+  'and the readable critical beside it is still counted'
+assert_contains "$out" 'pnpm lint --fix' 'and still printed with its fix line'
+assert_json "$(cat "$repo/.pr-self-review/latest.json")" '.coverage.agents | length' '1' \
+  'the readable agent entry survives too'
 rm -rf "$repo"
 
 # --- a recorded bypass surfaces once, then is cleared --------------------------

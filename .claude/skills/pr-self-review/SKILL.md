@@ -177,14 +177,30 @@ Track A findings do not go through this. They are already deterministic — see
 **5 — Merge, then filter against the baseline.**
 
 ```sh
+for f in scope.json gates.json findings.json; do
+  jq -e 'type == "array" or type == "object"' "$TMP/$f" >/dev/null 2>&1 && continue
+  echo "STOP: $TMP/$f is missing, empty or not JSON. --slurpfile reads it as null," >&2
+  echo "      + takes null as its identity, and every finding it should have added" >&2
+  echo "      vanishes into a report that reads pass. Fix the step that wrote it." >&2
+  exit 1
+done
+
 jq -n --slurpfile s "$TMP/scope.json" --slurpfile g "$TMP/gates.json" \
       --slurpfile a "$TMP/findings.json" \
   '{ scope: $s[0], findings: ($s[0].flagged + $g[0].findings + $a[0]) }' \
   | bash scripts/pr-self-review/baseline.sh > "$TMP/final.json"
 ```
 
-Two things about that command are load-bearing:
+Three things about that command are load-bearing:
 
+- **The guard is the command, not preamble to it.** A 0-byte `findings.json` — step 3 died
+  mid-write, or its redirect truncated the file and the writer never came back — makes `$a[0]`
+  `null`, and `X + null` is `X` with **exit 0**. Every subagent finding disappears and the run
+  reads `pass` whenever Track A is clean. Nothing downstream can tell that array from a genuinely
+  clean one; `report.sh` rule 6 sees a well-formed array of the wrong length and waves it through,
+  and it is right to — it cannot know what was supposed to be in there. Here, before the `+`, is
+  the last place the loss is visible. Same for `scope.json` and `gates.json`: an empty one takes
+  `flagged[]` or the whole of Track A with it, just as quietly.
 - **`scope.flagged[]` are findings.** Merge them or a committed `.env` is never reported.
 - **`gates.findings` already contains the registry findings.** Do not call `registry.sh` again.
 
@@ -197,11 +213,25 @@ is why step 3's output contract insists on the `agent ` prefix: it is the only t
 **6 — Render.**
 
 ```sh
+for f in scope.json gates.json final.json agents.json; do
+  jq -e 'type == "array" or type == "object"' "$TMP/$f" >/dev/null 2>&1 && continue
+  echo "STOP: $TMP/$f is missing, empty or not JSON. --slurpfile reads it as null," >&2
+  echo "      so the key it fills lands as null in the payload — and a lost agents.json" >&2
+  echo "      is a lost crashed-agent record, which is the verdict itself. Fix the step" >&2
+  echo "      that wrote it." >&2
+  exit 1
+done
+
 jq -n --slurpfile s "$TMP/scope.json" --slurpfile g "$TMP/gates.json" \
       --slurpfile f "$TMP/final.json" --slurpfile a "$TMP/agents.json" --arg mode gates \
   '{mode: $mode, scope: $s[0], gates: $g[0].gates, findings: $f[0], agents: $a[0]}' \
   | bash scripts/pr-self-review/report.sh
 ```
+
+`report.sh` rule 6 does catch the `null`s this guard prevents, and records `incomplete` rather
+than `pass`. The guard still earns its place: it says **which file** was lost, here, where you
+can still fix the step that lost it, instead of leaving you a broken verdict and four candidate
+steps to bisect.
 
 **`--arg mode` is the one value you must set by hand, and the snippet deliberately reads
 `gates`.** Change it to `full` *only* when steps 3 and 4 actually dispatched subagents across the
@@ -218,9 +248,13 @@ turn. Cheap error, expensive error; pick the cheap one.
 people, prints the short form, and always exits 0. **The verdict never reaches you through an
 exit code** — read it from the output or from `latest.json`.
 
-If the report prints `BROKEN INPUT`, no findings array reached the script: some step above lost
-it, and the verdict is `incomplete` rather than `pass`. Do not paper over it by re-running step 6
-with a hand-written array — find which step produced an empty file and fix that.
+If the report prints `BROKEN INPUT`, the payload was not something `report.sh` could read: it
+needs `.scope` to be an object and `.findings`, `.gates`, `.agents` and `.scope.skipped` to each
+be an **array of objects**. A key that arrived null, a key that arrived as a bare string, or an
+array with a stray string among the objects — a subagent that returned prose instead of a finding
+does exactly that — all land here. The unreadable parts are dropped, the readable ones still
+print, and the verdict is `incomplete` rather than `pass`. Do not paper over it by re-running
+step 6 with a hand-written array: find which step produced the bad shape and fix that.
 
 **7 — Print the report and stop.** Do not fix anything unless asked. If the verdict is `blocked`,
 say which criticals block and where; the user decides what happens next.
@@ -230,6 +264,14 @@ say which criticals block and where; the user decides what happens next.
 **`--freeze`.** Run steps 1–4 exactly as `--full`, then replace step 5 with:
 
 ```sh
+for f in scope.json gates.json findings.json; do
+  jq -e 'type == "array" or type == "object"' "$TMP/$f" >/dev/null 2>&1 && continue
+  echo "STOP: $TMP/$f is missing, empty or not JSON. Freezing what a truncated file" >&2
+  echo "      merged to would record a SHORTER baseline than the run actually saw," >&2
+  echo "      and the baseline only ever shrinks. Fix the step that wrote it." >&2
+  exit 1
+done
+
 jq -n --slurpfile s "$TMP/scope.json" --slurpfile g "$TMP/gates.json" \
       --slurpfile a "$TMP/findings.json" \
   '{ scope: $s[0], findings: ($s[0].flagged + $g[0].findings + $a[0]) }' \
@@ -273,7 +315,15 @@ No `latest.json` means there is no last run to narrow — say so and run `--full
   carried — they re-ran:
 
   ```sh
-  [ -f "$TMP/recheck" ] || { echo 'carry-forward: no recheck list' >&2; exit 1; }
+  for f in .pr-self-review/latest.json "$TMP/findings.json" "$TMP/recheck"; do
+    [ -s "$f" ] && continue
+    echo "carry-forward: $f is missing or empty. STOP." >&2
+    echo "  No recheck list and every carried critical is dropped; no latest.json" >&2
+    echo "  and there is nothing to carry; an EMPTY findings.json makes \$n[0] null," >&2
+    echo "  jq exits 0, and the re-check's own findings are the ones that vanish." >&2
+    echo "  Re-run /pr-self-review --full." >&2
+    exit 1
+  done
   jq -n --slurpfile p .pr-self-review/latest.json --slurpfile n "$TMP/findings.json" \
         --rawfile r "$TMP/recheck" \
     '($r | split("\n") | map(select(length > 0))) as $re
@@ -288,7 +338,7 @@ No `latest.json` means there is no last run to narrow — say so and run `--full
          rm -f "$TMP/merged.json"; exit 1; }
   ```
 
-  **The command must end the run when it fails, not merely decline to overwrite.** Three things
+  **The command must end the run when it fails, not merely decline to overwrite.** Four things
   had to be true at once here, and each was wrong at some point:
 
   1. **Never redirect into `findings.json` while `--slurpfile n` is reading it.** The shell
@@ -306,12 +356,19 @@ No `latest.json` means there is no last run to narrow — say so and run `--full
   3. **Bind the finding to `$f` before the `index`.** After the pipe into `index()`, a bare
      `.file` reads off `$re`, not off the finding — `jq` answers
      `Cannot index array with string "file"`.
+  4. **Guard the inputs before the `jq`, not only its exit status.** For the failure that
+     matters most the `||` branch is unreachable: with a 0-byte `findings.json`, `$n[0]` is
+     `null`, `[carried] + null` is `[carried]`, and jq **exits 0**. `mv` runs, the carried
+     findings survive, and the **re-check's own** findings — the only reason the run happened —
+     are the ones that disappear. That is the exact mirror of 1, and no exit-status check can
+     see it. The `for` loop above is what catches it.
 
-  Those three are one failure mode wearing three hats: something upstream goes wrong, `null` or a
+  Those four are one failure mode wearing four hats: something upstream goes wrong, `null` or a
   short array flows on unremarked, and an empty or truncated findings list becomes a `pass` on a
-  branch that has none. `report.sh` rule 6 catches the shapes that reach it as null or non-array,
-  but a *truncated yet well-formed* array is indistinguishable from a clean run by then. The net
-  does not cover this one. Get it right at the site.
+  branch that has none. `report.sh` rule 6 catches the shapes that reach it as null, non-array,
+  or an array with an unreadable element, but a *truncated yet well-formed* array is
+  indistinguishable from a clean run by then. The net does not cover this one. Get it right at
+  the site.
 
 - Step 6 records **`mode: "gates"`, not `"full"`.** Track A ran whole, Track B did not, and
   `gates` is exactly the mode `gate.sh` already treats as *enough for a push, not enough for a
@@ -368,6 +425,8 @@ Stop when you catch yourself doing any of these.
 | "`scope.flagged` is just metadata" | §3.5 — it holds the committed-secret criticals |
 | "The source can just name the skill" | §3.3 — without the `agent ` prefix it is never diff-anchored |
 | "The `jq` probably worked, `mv` it into place" | §4 — a failed `jq` leaves a 0-byte file that reads as zero findings |
+| "`findings.json` is 0 bytes, so the agents found nothing" | §3.5 — 0 bytes is a crash; a run that found nothing writes `[]` |
+| "The agent returned prose, I'll drop it in the array as-is" | §3.6 — a string among the objects is `BROKEN INPUT` |
 | "`BROKEN INPUT` — I'll just re-run step 6 with the array" | §3.6 — that hides which step lost it |
 | "I'll re-freeze the baseline so the branch goes green" | §4 — the baseline only shrinks |
 | "It's on line 300 of a file I touched at line 40" | §3.5 — that is baseline, not yours |

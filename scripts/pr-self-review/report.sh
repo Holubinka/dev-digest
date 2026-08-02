@@ -10,28 +10,45 @@
 #      list is lying
 #   4. a failed subagent is visible and forces `incomplete`, which blocks
 #   5. the report states what it does not do: conventions, not correctness
-#   6. a payload that is not an object carrying three arrays — .findings,
-#      .gates and .agents — is `incomplete`, never `pass`
+#   6. a payload the script cannot read — anything but an object whose
+#      .scope is an object and whose .findings, .gates, .agents and
+#      .scope.skipped are arrays of objects — is `incomplete`, never `pass`
 #
 # Rule 6 guards a whole class rather than one bug. The verdict is computed
-# from those three keys, and everything upstream is a chain of jq steps over
-# slurped files. Four separate defects in this feature's own history ended the
-# same way: a step failed or a file came back empty, `null` reached a `+` or an
-# iteration, jq absorbed it silently, and a `pass` was written from nothing.
-# Guarding each site as it is found has lost every time. So the last station on
-# the line refuses to call a payload it cannot read a clean run.
+# from those keys, and everything upstream is a chain of jq steps over slurped
+# files written partly by a model. Six separate defects in this feature's own
+# history ended the same way: a step failed or a file came back empty, `null`
+# or a bare string reached a `+`, an iteration or a `.status` read, and a
+# `pass` was written from nothing. Guarding each site as it is found has lost
+# every time. So the last station on the line refuses to call a payload it
+# cannot read a clean run.
 #
-# All three keys, not just .findings, because each one alone can forge a pass:
+# Every key it reads, not just .findings, because each one alone can forge a
+# pass:
 #   .findings  null/absent — the original case
 #   .gates     null — a 0-byte gates.json makes $g[0].gates null, and the run
 #              reports PASS with an empty GATES section: no Track A at all
 #   .agents    null or a non-array — `.agents[]?` swallows it, $broken is 0,
 #              and a run whose crashed-subagent bookkeeping was lost reports
 #              clean, defeating rule 4
+#   .scope     null, {} or any object without .skipped — every field of the
+#              header comes back null and the SKIPPED section prints EMPTY on
+#              a green report, which is exactly what rule 3 calls lying
+#
+# The ELEMENTS are checked too, not only the container, and that half is the
+# newest. `{"agents":["frontend crashed"]}` is an array, so a container-only
+# rule 6 waved it through; `[.agents[]? | select(.status != "ok")]` then raised
+# `Cannot index string with "status"`, the jq computing the verdict died under
+# set -e, and NO latest.json was written — leaving a PASSING verdict from an
+# earlier run over the same tree on disk byte-identical, same headSha, same
+# worktreeHash, which gate.sh honours. `{"findings":["prose"]}` is the same
+# hole one bracket away; a string in .gates loses the whole GATES section
+# instead. agents.json and findings.json are written freehand by a model, so a
+# bare string where an object belongs is an ordinary slip, not an exotic input.
 #
 # It is deliberately narrow: `.findings: []` is still `pass`, because an empty
 # report is a legitimate result here and rule 6 must not break that. Only a
-# missing, null, or non-array value trips it.
+# missing, null, non-array or non-object-element value trips it.
 #
 # Crashing instead would not do. A crash writes no latest.json, and if a
 # PASSING verdict from an earlier run over the same tree is already on disk,
@@ -54,10 +71,10 @@ mkdir -p "$OUT"
 
 payload="$(cat)"
 
-# --- rule 6: the input must be an object carrying three arrays --------------
+# --- rule 6: the input must be an object the script can actually read -------
 # Checked before anything reads it, and repaired rather than fatal, so that
 # every later step still runs and still writes a verdict — see the header.
-STUB='{"mode":null,"scope":{},"findings":[],"gates":[],"agents":[]}'
+STUB='{"mode":null,"scope":{"skipped":[]},"findings":[],"gates":[],"agents":[]}'
 input_ok=1
 
 if [ -z "$payload" ] || ! printf '%s' "$payload" | jq -e 'type == "object"' >/dev/null 2>&1; then
@@ -67,16 +84,29 @@ if [ -z "$payload" ] || ! printf '%s' "$payload" | jq -e 'type == "object"' >/de
   input_ok=0
   payload="$STUB"
 elif ! printf '%s' "$payload" | jq -e '
-        (.findings | type) == "array"
-    and (.gates    | type) == "array"
-    and (.agents   | type) == "array"' >/dev/null 2>&1; then
+      def arr_of_obj: if type == "array" then all(type == "object") else false end;
+        (.findings | arr_of_obj)
+    and (.gates    | arr_of_obj)
+    and (.agents   | arr_of_obj)
+    and (if (.scope | type) == "object"
+         then (.scope.skipped | arr_of_obj) else false end)' >/dev/null 2>&1; then
+  # Each branch is written `if … else … end` rather than leaning on jq's
+  # short-circuiting `and`, so that a non-array never reaches `all` and a
+  # non-object .scope never reaches `.scope.skipped`. A predicate that raises
+  # is a predicate that cannot report.
   input_ok=0
   payload="$(printf '%s' "$payload" | jq '
-      .findings = (if (.findings | type) == "array" then .findings else [] end)
-    | .gates    = (if (.gates    | type) == "array" then .gates    else [] end)
-    | .agents   = (if (.agents   | type) == "array" then .agents   else [] end)' 2>/dev/null)" ||
+      def objs: if type == "array" then [ .[] | select(type == "object") ] else [] end;
+      .findings |= objs
+    | .gates    |= objs
+    | .agents   |= objs
+    | .scope    = (if (.scope | type) == "object" then .scope else {} end)
+    | .scope.skipped |= objs' 2>/dev/null)" ||
     payload="$STUB"
   [ -n "$payload" ] || payload="$STUB"
+  # The repair keeps every element it can read and drops only the ones it
+  # cannot, so a well-formed critical sitting beside a stray string is still
+  # printed. It can never turn the run green: input_ok is already 0.
 fi
 
 # gate.sh appends one line per bypass; a report consumes and clears them, so a
@@ -124,7 +154,9 @@ render() {
   # broken pipeline, and the counts printed on the line above mean nothing.
   if [ "$input_ok" -eq 0 ]; then
     printf '\nBROKEN INPUT — this script was not handed a readable payload.\n'
-    printf '  It needs an object with .findings, .gates and .agents all arrays.\n'
+    printf '  It needs an object whose .scope is an object and whose .findings,\n'
+    printf '  .gates, .agents and .scope.skipped are each an array of objects.\n'
+    printf '  Anything it could not read has been dropped from the sections below.\n'
     printf '  The counts and gates above are not a review result. Some step\n'
     printf '  between scope.sh and here failed or produced an empty file, so the\n'
     printf '  verdict is incomplete rather than pass. Re-run the review.\n'
