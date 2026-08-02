@@ -178,18 +178,26 @@ fi
 rm -rf "$repo"
 
 # --- changed lines are recorded, so findings can be anchored to them ------------
+# The file must pre-date the branch. A file *created* on the branch has every
+# line changed relative to the merge-base, which is correct and would make the
+# "untouched line" assertion below meaningless.
 repo="$(make_repo)"
-git -C "$repo" checkout -qb feat/x
 mkdir -p "$repo/client/src"
 printf 'a\nb\nc\nd\n' >"$repo/client/src/x.ts"
-git -C "$repo" add -A && git -C "$repo" commit -qm "x"
+git -C "$repo" add -A && git -C "$repo" commit -qm "x predates the branch"
+git -C "$repo" checkout -qb feat/x
 printf 'a\nb\nCHANGED\nd\n' >"$repo/client/src/x.ts"
+git -C "$repo" add -A && git -C "$repo" commit -qm "edit line 3"
+printf 'a\nb\nCHANGED\nALSO-CHANGED\n' >"$repo/client/src/x.ts"   # uncommitted, line 4
 
 out="$(cd "$repo" && bash "$SCOPE")"
-assert_json "$out" '[.routed[] | select(.path == "client/src/x.ts")][0].lines | index(3) != null' \
-  'true' 'the edited line is recorded'
-assert_json "$out" '[.routed[] | select(.path == "client/src/x.ts")][0].lines | index(1)' \
-  'null' 'an untouched line is not recorded'
+lines='[.routed[] | select(.path == "client/src/x.ts")][0].lines'
+assert_json "$out" "$lines | index(3) != null" 'true' \
+  'a line committed on the branch is in scope'
+assert_json "$out" "$lines | index(4) != null" 'true' \
+  'an uncommitted edit is in scope too'
+assert_json "$out" "$lines | index(1)" 'null' \
+  'a line the branch never touched is not in scope'
 rm -rf "$repo"
 
 finish
