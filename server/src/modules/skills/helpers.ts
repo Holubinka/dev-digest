@@ -66,7 +66,7 @@ export function toSkillListItemDto(row: SkillWithUsage): SkillListItem {
   const { body: _body, ...rest } = toSkillDto(row.skill);
   return {
     ...rest,
-    agent_count: row.agentCount,
+    agents: row.agentCount,
     injection: detectInjection(row.skill.body),
   };
 }

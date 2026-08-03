@@ -23,7 +23,7 @@ import { skill } from "../../../../../../../test/skills";
 const AGENT = { id: "ag1", name: "Test Quality Reviewer" } as Agent;
 
 const tabSkill = (id: string, over: Partial<SkillListItem> = {}) =>
-  skill({ id, name: id, description: "", agent_count: 1, version: 1, ...over });
+  skill({ id, name: id, description: "", agents: 1, version: 1, ...over });
 
 const ALL = [tabSkill("alpha"), tabSkill("beta"), tabSkill("gamma")];
 const LINKS: AgentSkillLink[] = [

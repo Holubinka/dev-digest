@@ -18,7 +18,7 @@ describe("SkillCard", () => {
   });
 
   it("says so plainly when no agent binds it", () => {
-    renderWithProviders(<SkillCard sk={{ ...SKILL, agent_count: 0 }} />, { skills: messages });
+    renderWithProviders(<SkillCard sk={{ ...SKILL, agents: 0 }} />, { skills: messages });
     expect(screen.getByText("No agents")).toBeInTheDocument();
   });
 
