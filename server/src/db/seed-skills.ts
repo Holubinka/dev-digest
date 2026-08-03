@@ -27,6 +27,72 @@ Work through these steps in order and report what they turn up.
 A test that drives a branch through a public entry point covers it. Do not report
 a branch as uncovered merely because the test reaches it indirectly.`;
 
+/** Mirrors docs/skills/boundary-and-edge-case-rubric.md. */
+export const BOUNDARY_AND_EDGE_CASE_RUBRIC = `# Boundary and edge-case rubric
+
+The branch rubric finds the cases the code spells out as an \`if\`. This one finds
+the cases it does not: the inputs where behaviour changes without any branch
+saying so.
+
+Work through these steps in order.
+
+1. List every value this diff accepts from outside — a parameter, a request
+   field, a row read from the database, a number parsed from text. For each, say
+   what type it is and where its behaviour changes.
+2. For each value, check the boundaries below that apply to it, and name the
+   added or changed test that pins each one. Report every boundary with no such
+   test.
+
+   - **Numbers.** Zero. Negative. The exact value of any \`min\`/\`max\` bound, and
+     one on each side of it. A non-integer where an integer is assumed. \`NaN\` and
+     \`Infinity\`, when they can arrive.
+   - **Money and rounding.** A value that lands exactly halfway — \`1.005\`, \`2.5\`
+     — where binary floating point does not do what decimal arithmetic would.
+     Any \`Math.round\` over a scaled amount needs a test at the half.
+   - **Strings.** Empty. Whitespace only. Longer than any stated cap. Characters
+     outside ASCII, including ones that are two code units.
+   - **Collections.** Empty. Exactly one element. The first and the last element,
+     when position matters. Duplicates, when uniqueness is assumed.
+   - **Absence.** \`null\`, \`undefined\`, and a key that is missing entirely, where
+     the three are not the same thing.
+   - **Time.** A boundary the code can cross while running: midnight, the end of
+     a month or a year, a daylight-saving shift, a timezone that is not the
+     machine's.
+
+3. Report a boundary only when crossing it changes behaviour. A cap that nothing
+   approaches, or a string the system always generates itself, is not a finding.
+
+Cite the changed source line that introduces the value, not the test file and not
+the file where the missing test would live.`;
+
+/** Mirrors docs/skills/assertion-strength-rubric.md. */
+export const ASSERTION_STRENGTH_RUBRIC = `# Assertion strength rubric
+
+Coverage tells you a line ran. This asks the harder question: would the test
+FAIL if the code were wrong?
+
+For every test this diff adds or changes, work through these steps.
+
+1. State what the test claims, in one sentence, from its name and its
+   assertions.
+2. Name the smallest change to the production code that would break that claim.
+   Pick from what the diff actually contains: a flipped comparison, an off-by-one
+   in a bound, two arguments swapped, a dropped \`await\`, a constant changed from
+   \`100\` to \`10\`, an early return added, a sign inverted.
+3. Decide whether the test would fail on that change. If it would still pass,
+   that is the finding: name the change that survives, and say which assertion
+   fails to notice it.
+4. Check the assertion is about the RESULT, not about the journey. Asserting that
+   a function was called, that a value is truthy, or that \`typeof x\` is
+   \`'number'\` survives nearly every change worth catching — \`NaN\` is a number.
+5. Check the expected value is written down rather than computed. If the test
+   derives what it expects the same way the code derives it, the two are wrong
+   together and the test cannot tell you so.
+
+Report at most one finding per test, and name the surviving change in it. A test
+that would catch every change you can think of is a good test — say nothing about
+it.`;
+
 /** Mirrors docs/skills/test-smell-catalogue.md. */
 export const TEST_SMELL_CATALOGUE = `# Test smell catalogue
 
@@ -133,6 +199,18 @@ export const SEED_SKILLS: SeedSkill[] = [
     description: "List every branch this diff adds and name the test that covers it; report the ones with none.",
     type: "rubric",
     body: UNCOVERED_BRANCH_RUBRIC,
+  },
+  {
+    name: "Boundary and edge-case rubric",
+    description: "Check the inputs where behaviour changes without a branch saying so: zero, empty, the exact limit, a rounding half, a timezone.",
+    type: "rubric",
+    body: BOUNDARY_AND_EDGE_CASE_RUBRIC,
+  },
+  {
+    name: "Assertion strength rubric",
+    description: "For each test, name the smallest code change that would still let it pass; report the ones that survive.",
+    type: "rubric",
+    body: ASSERTION_STRENGTH_RUBRIC,
   },
   {
     name: "Test smell catalogue",

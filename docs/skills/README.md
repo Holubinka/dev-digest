@@ -10,6 +10,8 @@ The human-readable originals of the skills this repo seeds, mirroring how
 | File | Type | Bound to |
 |---|---|---|
 | [`uncovered-branch-rubric.md`](./uncovered-branch-rubric.md) | rubric | Test Quality Reviewer |
+| [`boundary-and-edge-case-rubric.md`](./boundary-and-edge-case-rubric.md) | rubric | Test Quality Reviewer |
+| [`assertion-strength-rubric.md`](./assertion-strength-rubric.md) | rubric | Test Quality Reviewer |
 | [`test-smell-catalogue.md`](./test-smell-catalogue.md) | convention | Test Quality Reviewer |
 | [`breaking-change-taxonomy.md`](./breaking-change-taxonomy.md) | rubric | API Contract Reviewer |
 | [`route-signature-checklist.md`](./route-signature-checklist.md) | convention | API Contract Reviewer |
@@ -24,6 +26,19 @@ drifting.
 party would ship a skill — a `SKILL.md`, supporting markdown, and executables that
 have no business being read — so the import path gets exercised by a human rather
 than asserted by a fixture. `scripts/make-skill-zip.sh` zips it.
+
+The four bound to Test Quality Reviewer are deliberately not variations on one
+another — each asks a question the others cannot:
+
+| Skill | The question it asks |
+|---|---|
+| Uncovered branch rubric | which paths the code spells out are never executed |
+| Boundary and edge-case rubric | which inputs change behaviour with no branch saying so |
+| Assertion strength rubric | whether a test that runs would actually fail if the code were wrong |
+| Test smell catalogue | whether the test's shape lets it pass for the wrong reason |
+
+Coverage, completeness, strength, shape. A new test-quality skill that does not
+answer a question outside that list is probably an edit to one of them.
 
 ## Writing a body
 

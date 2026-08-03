@@ -26,6 +26,22 @@ const SKILLS = [
       "List every branch this diff adds and name the test that covers it; report the ones with none.",
   },
   {
+    constant: "BOUNDARY_AND_EDGE_CASE_RUBRIC",
+    file: "boundary-and-edge-case-rubric.md",
+    name: "Boundary and edge-case rubric",
+    type: "rubric",
+    description:
+      "Check the inputs where behaviour changes without a branch saying so: zero, empty, the exact limit, a rounding half, a timezone.",
+  },
+  {
+    constant: "ASSERTION_STRENGTH_RUBRIC",
+    file: "assertion-strength-rubric.md",
+    name: "Assertion strength rubric",
+    type: "rubric",
+    description:
+      "For each test, name the smallest code change that would still let it pass; report the ones that survive.",
+  },
+  {
     constant: "TEST_SMELL_CATALOGUE",
     file: "test-smell-catalogue.md",
     name: "Test smell catalogue",

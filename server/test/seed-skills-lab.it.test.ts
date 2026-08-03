@@ -68,9 +68,14 @@ d('skills-lab seed fixtures', () => {
     expect(rubric!.body).toContain('List every branch');
   });
 
-  it('binds two skills to each reviewer, in prompt order', async () => {
+  it('binds each reviewer its own skills, in prompt order', async () => {
     const expected: Record<string, string[]> = {
-      'Test Quality Reviewer': ['Uncovered branch rubric', 'Test smell catalogue'],
+      'Test Quality Reviewer': [
+        'Uncovered branch rubric',
+        'Boundary and edge-case rubric',
+        'Assertion strength rubric',
+        'Test smell catalogue',
+      ],
       'API Contract Reviewer': ['Breaking change taxonomy', 'Route signature checklist'],
     };
     for (const [agentName, skillNames] of Object.entries(expected)) {
@@ -82,8 +87,26 @@ d('skills-lab seed fixtures', () => {
         .where(eq(t.agentSkills.agentId, agent!.id))
         .orderBy(t.agentSkills.order);
       expect(rows.map((r) => r.name)).toEqual(skillNames);
-      expect(rows.map((r) => r.order)).toEqual([0, 1]);
+      expect(rows.map((r) => r.order)).toEqual(skillNames.map((_, i) => i));
     }
+  });
+
+  it('keeps the four test-quality skills asking four different questions', async () => {
+    // Coverage, completeness, strength, shape. If a new one duplicates another,
+    // the agent pays tokens for the same instruction twice.
+    const bodies = new Map<string, string>();
+    for (const row of await pg.handle.db
+      .select()
+      .from(t.skills)
+      .where(eq(t.skills.workspaceId, workspaceId))) {
+      bodies.set(row.name, row.body);
+    }
+    expect(bodies.get('Uncovered branch rubric')).toContain('List every branch');
+    expect(bodies.get('Boundary and edge-case rubric')).toContain(
+      'the inputs where behaviour changes',
+    );
+    expect(bodies.get('Assertion strength rubric')).toContain('would the test');
+    expect(bodies.get('Test smell catalogue')).toContain('Mocking the unit under test');
   });
 
   it('records version 1 of every seeded skill body', async () => {
@@ -91,7 +114,7 @@ d('skills-lab seed fixtures', () => {
       .select()
       .from(t.skills)
       .where(eq(t.skills.workspaceId, workspaceId));
-    expect(skills).toHaveLength(4);
+    expect(skills).toHaveLength(6);
     for (const skill of skills) {
       const versions = await pg.handle.db
         .select()

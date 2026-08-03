@@ -224,6 +224,19 @@ assertion vacuous" is not something a scope-only prompt thinks to ask. Build the
 around the rule you are demonstrating, and prefer rules about the quality of what is there
 over rules about the quantity of what is missing.
 
+**Addition, 2026-08-03.** Two more skills — a boundary/edge-case rubric and an
+assertion-strength rubric — were bound to Test Quality Reviewer, and the effect is measurable
+rather than decorative. #101 went from ONE consolidated finding to five: three named branches
+plus two the earlier set could not produce at all ("non-integer total, rounding not
+exercised", "NaN and Infinity for total"). On #103 the vacuous assertion moved from WARNING to
+CRITICAL, because a rubric that says "name the change that would still pass" states the
+problem directly where a smell catalogue only matches a shape.
+
+Each of the four asks a question the others cannot — coverage, completeness, strength, shape —
+and that is the test for whether a fifth is worth adding. The cost is real and worth quoting:
+the skills block went from 651 to 1764 tokens, and `tokens_in` on #101 from 2252 to 3357. At
+these fixture sizes the skills are now half the prompt.
+
 ## Codebase Patterns
 
 ### The two `docker-compose.yml` files are byte-identical duplicates

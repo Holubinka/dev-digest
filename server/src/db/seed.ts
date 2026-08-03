@@ -276,8 +276,15 @@ export async function seed(db: Db): Promise<{ workspaceId: string; userId: strin
     skillIdByName.set(skill.name, row!.id);
   }
 
+  // Order is prompt order: find what is not covered at all, then what is covered
+  // but not actually checked, then the shapes that make a test lie.
   const bindings: Record<string, string[]> = {
-    'Test Quality Reviewer': ['Uncovered branch rubric', 'Test smell catalogue'],
+    'Test Quality Reviewer': [
+      'Uncovered branch rubric',
+      'Boundary and edge-case rubric',
+      'Assertion strength rubric',
+      'Test smell catalogue',
+    ],
     'API Contract Reviewer': ['Breaking change taxonomy', 'Route signature checklist'],
   };
   for (const [agentName, skillNames] of Object.entries(bindings)) {
