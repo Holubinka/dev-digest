@@ -128,6 +128,17 @@ describe("ImportSkillDrawer", () => {
     expect(sent.name).toBe("Renamed before saving");
   });
 
+  it("lets the type be chosen, since the parser only ever guesses `custom`", async () => {
+    await uploadSkillZip();
+    expect(screen.getByText("Type")).toBeInTheDocument();
+    fireEvent.change(screen.getByDisplayValue("custom"), { target: { value: "convention" } });
+    fireEvent.click(screen.getByText("Save as disabled"));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const sent = JSON.parse(String((fetchMock.mock.calls[1]![1] as RequestInit).body));
+    expect(sent.type).toBe("convention");
+  });
+
   it("fetches a URL server-side rather than from the browser", async () => {
     renderDrawer();
     fireEvent.click(screen.getByText("From URL"));

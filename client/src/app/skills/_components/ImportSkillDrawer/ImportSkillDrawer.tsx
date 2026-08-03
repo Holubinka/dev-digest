@@ -14,7 +14,6 @@ import {
   Icon,
   SelectInput,
   Tabs,
-  Textarea,
   TextInput,
 } from "@devdigest/ui";
 import type { Skill, SkillImportPreview } from "@devdigest/shared";
@@ -25,6 +24,7 @@ import {
 } from "../../../../lib/hooks/skills";
 import { useToast } from "../../../../lib/toast";
 import { TYPE_VALUES } from "../CreateSkillModal/constants";
+import { SkillBodyEditor } from "../SkillDetail/_components/SkillBodyEditor";
 import { s } from "./styles";
 
 export function ImportSkillDrawer({
@@ -196,21 +196,34 @@ export function ImportSkillDrawer({
               </span>
             </div>
 
-            <FormField label={t("editor.name")} required>
-              <TextInput value={name} onChange={setName} mono />
-            </FormField>
-            <FormField label={t("editor.description")} hint={t("editor.descriptionHint")}>
+            {/* Same shape as the create modal: an import is a creation whose
+                fields arrived pre-filled, so it should not look like a lesser
+                form. The type in particular is always `custom` from the parser
+                — the user is the one who knows what this skill actually is. */}
+            <div style={s.row}>
+              <FormField label={t("editor.name")} required>
+                <TextInput value={name} onChange={setName} mono />
+              </FormField>
+              <FormField label={t("editor.type")}>
+                <SelectInput
+                  value={type}
+                  onChange={(v) => setType(v as Skill["type"])}
+                  options={TYPE_VALUES.map((v) => ({ value: v, label: t(`listItem.type.${v}`) }))}
+                />
+              </FormField>
+            </div>
+            <FormField label={t("editor.description")} hint={t("create.descriptionHint")}>
               <TextInput value={description} onChange={setDescription} />
             </FormField>
-            <FormField label={t("editor.type")}>
-              <SelectInput
-                value={type}
-                onChange={(v) => setType(v as Skill["type"])}
-                options={TYPE_VALUES.map((v) => ({ value: v, label: t(`listItem.type.${v}`) }))}
+            <FormField label={t("body.label")} required>
+              <SkillBodyEditor
+                name={name || draft.core_path}
+                value={body}
+                dirty={body !== draft.body}
+                onChange={setBody}
+                minRows={10}
+                maxRows={16}
               />
-            </FormField>
-            <FormField label={t("body.label")}>
-              <Textarea value={body} onChange={setBody} rows={12} mono />
             </FormField>
 
             {draft.skipped.length > 0 && (

@@ -3,6 +3,13 @@ import type { CSSProperties } from "react";
 /** Co-located styles for the import drawer. */
 export const s = {
   body: { display: "flex", flexDirection: "column", gap: 16 } satisfies CSSProperties,
+  /** Name and type share a row, matching the create modal. */
+  row: {
+    display: "grid",
+    gridTemplateColumns: "1fr 200px",
+    gap: 14,
+    alignItems: "start",
+  } satisfies CSSProperties,
   drop: {
     display: "flex",
     flexDirection: "column",
