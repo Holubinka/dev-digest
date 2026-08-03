@@ -62,9 +62,10 @@ the push and the PR. A critical found by a review subagent stops only the PR.
 - **Secrets never pass through `process.env` or `AppConfig`.** They go through
   `SecretsProvider` (`~/.devdigest/secrets.json`, mode 0600). Do not add an API key to
   the env schema.
-- **The DB schema is intentionally over-provisioned.** Tables for `eval`, `ci`, `skills`,
-  `knowledge` and `context` exist and sit empty until later course lessons. An empty
-  table is not a bug.
+- **The DB schema is intentionally over-provisioned.** Tables for `eval`, `ci` and
+  `context` exist and sit empty until later course lessons. An empty table is not a
+  bug. (`skills` and the conventions half of `knowledge` are filled in now; `memory`
+  is not.)
 
 ## Gotchas
 
@@ -82,6 +83,8 @@ the push and the PR. A critical found by a review subagent stops only the PR.
 - `e2e/specs/*.flow.json` — live browser-test scenarios, not documentation.
 - `.claude/skills/*` named in `skills-lock.json` — pinned upstream copies. Skills absent
   from that lock, `engineering-insights` among them, are ours to edit.
+- `plugins/*/skills/**` and `server/src/db/seed-skills.ts` — generated from
+  `docs/skills/*.md` by `scripts/sync-seed-skills.mjs`. Edit the doc, re-run the script.
 - `CLAUDE.md` in any package — a symlink to that folder's `AGENTS.md`, the compatibility
   shim for Claude Code, which discovers only `CLAUDE.md`. Edit `AGENTS.md`; never replace
   the symlink with a regular file.
@@ -104,3 +107,5 @@ the push and the PR. A critical found by a review subagent stops only the PR.
   unit/integration/e2e split and the `*.it.test.ts` rule.
 - **Read `docs/agent-prompts/README.md`** before editing a built-in agent prompt — the DB
   is the source of truth, the files are the readable copy.
+- **Read `docs/skills/README.md`** before adding or editing a skill body — it says which
+  question each existing skill already answers, and which of them are seeded.
