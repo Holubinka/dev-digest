@@ -97,7 +97,6 @@ export class SkillsRepository {
       .where(and(eq(t.agentSkills.skillId, skillId), eq(t.agents.workspaceId, workspaceId)));
   }
 
-  /** How many agents bind this skill. */
   async countAgents(workspaceId: string, skillId: string): Promise<number> {
     const [row] = await this.db
       .select({ n: countDistinct(t.agentSkills.agentId) })
@@ -239,7 +238,6 @@ export class SkillsRepository {
 
   // ---- skill_versions (immutable body snapshots) --------------------------
 
-  /** All body snapshots for a skill, newest version first. */
   async listVersions(skillId: string): Promise<SkillVersionRow[]> {
     return this.db
       .select()

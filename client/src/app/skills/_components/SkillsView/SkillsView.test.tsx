@@ -1,7 +1,6 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
-import type { SkillListItem } from "@devdigest/shared";
 import messages from "../../../../../messages/en/skills.json";
 import { ToastProvider } from "../../../../lib/toast";
 
@@ -36,19 +35,9 @@ vi.mock("../../../../lib/hooks/skills", () => ({
 }));
 
 import { SkillsView } from "./SkillsView";
+import { skill } from "../../../../test/skills";
 
-const SKILL: SkillListItem = {
-  id: "sk1",
-  name: "uncovered-branch-rubric",
-  description: "List every branch.",
-  type: "rubric",
-  source: "manual",
-  enabled: true,
-  version: 1,
-  evidence_files: null,
-  agent_count: 1,
-  injection: [],
-};
+const SKILL = skill({ description: "List every branch.", version: 1, agent_count: 1 });
 
 function renderView(selectedId?: string) {
   return render(

@@ -18,24 +18,14 @@ vi.mock("../../../../../../../lib/hooks/agents", () => ({
 }));
 
 import { SkillsTab } from "./SkillsTab";
+import { skill } from "../../../../../../../test/skills";
 
 const AGENT = { id: "ag1", name: "Test Quality Reviewer" } as Agent;
 
-const skill = (id: string, over: Partial<SkillListItem> = {}): SkillListItem => ({
-  id,
-  name: id,
-  description: "",
-  type: "rubric",
-  source: "manual",
-  enabled: true,
-  version: 1,
-  evidence_files: null,
-  agent_count: 1,
-  injection: [],
-  ...over,
-});
+const tabSkill = (id: string, over: Partial<SkillListItem> = {}) =>
+  skill({ id, name: id, description: "", agent_count: 1, version: 1, ...over });
 
-const ALL = [skill("alpha"), skill("beta"), skill("gamma")];
+const ALL = [tabSkill("alpha"), tabSkill("beta"), tabSkill("gamma")];
 const LINKS: AgentSkillLink[] = [
   { agent_id: "ag1", skill_id: "alpha", order: 0 },
   { agent_id: "ag1", skill_id: "beta", order: 1 },
@@ -81,9 +71,9 @@ describe("SkillsTab", () => {
   it("refuses to bind a skill whose body trips the injection detector", () => {
     hooks.useSkills.mockReturnValue({
       data: [
-        skill("alpha"),
-        skill("beta"),
-        skill("gamma", {
+        tabSkill("alpha"),
+        tabSkill("beta"),
+        tabSkill("gamma", {
           injection: [
             { rule: "override_instructions", reason: "Tries to cancel", line: 2, excerpt: "x" },
           ],
@@ -130,7 +120,7 @@ describe("SkillsTab", () => {
 
   it("warns that a globally-disabled skill will not reach the model", () => {
     hooks.useSkills.mockReturnValue({
-      data: [skill("alpha", { enabled: false }), skill("beta"), skill("gamma")],
+      data: [tabSkill("alpha", { enabled: false }), tabSkill("beta"), tabSkill("gamma")],
     });
     renderTab();
     expect(screen.getByText("disabled — will not enter the prompt")).toBeInTheDocument();

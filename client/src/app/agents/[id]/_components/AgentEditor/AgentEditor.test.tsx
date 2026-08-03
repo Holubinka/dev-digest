@@ -18,24 +18,12 @@ vi.mock("@/lib/hooks/agents", () => ({
 }));
 vi.mock("@/lib/hooks/skills", () => ({
   useSkills: () => ({
-    data: [
-      {
-        id: "sk1",
-        name: "uncovered-branch-rubric",
-        description: "",
-        type: "rubric",
-        source: "manual",
-        enabled: true,
-        version: 1,
-        evidence_files: null,
-        agent_count: 1,
-        injection: [],
-      },
-    ],
+    data: [skill({ id: "sk1", name: "uncovered-branch-rubric", description: "", version: 1, agent_count: 1 })],
   }),
 }));
 
 import { AgentEditor } from "./AgentEditor";
+import { skill } from "../../../../../test/skills";
 
 afterEach(cleanup);
 

@@ -42,7 +42,6 @@ const MAX_DOCUMENT_BYTES = 2_000_000;
 const MAX_REDIRECTS = 2;
 const TIMEOUT_MS = 5_000;
 
-/** False for every range that is not routable public internet. */
 export function ipv4IsPublic(ip: string): boolean {
   const parts = ip.split('.').map(Number);
   if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
@@ -246,7 +245,6 @@ export class HttpSkillFetcher implements SkillFetcher {
   }
 }
 
-/** First value of a response header, whatever shape Node hands back. */
 function header(res: IncomingMessage, name: string): string | undefined {
   const value = res.headers[name];
   return Array.isArray(value) ? value[0] : value;

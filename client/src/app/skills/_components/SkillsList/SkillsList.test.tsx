@@ -12,25 +12,15 @@ vi.mock("../../../../lib/hooks/skills", () => ({
 }));
 
 import { SkillsList } from "./SkillsList";
+import { skill } from "../../../../test/skills";
 
-const skill = (name: string, over: Partial<SkillListItem> = {}): SkillListItem => ({
-  id: name,
-  name,
-  description: "",
-  type: "rubric",
-  source: "manual",
-  enabled: true,
-  version: 1,
-  evidence_files: null,
-  agent_count: 1,
-  injection: [],
-  ...over,
-});
+const listSkill = (name: string, over: Partial<SkillListItem> = {}) =>
+  skill({ id: name, name, description: "", agent_count: 1, version: 1, ...over });
 
 const ALL = [
-  skill("uncovered-branch-rubric"),
-  skill("test-smell-catalogue", { type: "convention" }),
-  skill("flakiness-patterns", { description: "Real clocks and shared state." }),
+  listSkill("uncovered-branch-rubric"),
+  listSkill("test-smell-catalogue", { type: "convention" }),
+  listSkill("flakiness-patterns", { description: "Real clocks and shared state." }),
 ];
 
 function renderList(props: Partial<React.ComponentProps<typeof SkillsList>> = {}) {

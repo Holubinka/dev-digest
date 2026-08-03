@@ -65,7 +65,6 @@ export class SkillsService {
     return rows.map(toSkillListItemDto);
   }
 
-  /** One skill, with its body — this is the request that opened it. */
   async get(workspaceId: string, id: string): Promise<SkillDetailItem | undefined> {
     const row = await this.repo.getById(workspaceId, id);
     if (!row) return undefined;
@@ -73,7 +72,6 @@ export class SkillsService {
     return toSkillDetailDto({ skill: row, agentCount });
   }
 
-  /** Counted from real rows; a skill nobody has used reports zeros. */
   async stats(workspaceId: string, id: string): Promise<SkillStats | undefined> {
     const row = await this.repo.getById(workspaceId, id);
     if (!row) return undefined;
@@ -161,7 +159,6 @@ export class SkillsService {
     throw new ValidationError('The skill changed while this edit was being saved — try again');
   }
 
-  /** Delete a skill (and its versions and agent bindings, via cascade). */
   async delete(workspaceId: string, id: string): Promise<boolean> {
     return this.repo.deleteById(workspaceId, id);
   }
