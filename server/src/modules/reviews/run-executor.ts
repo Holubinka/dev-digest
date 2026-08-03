@@ -6,7 +6,7 @@ import * as schema from '../../db/schema.js';
 import type { AgentRow } from '../../db/rows.js';
 import type { ReviewRepository, FindingRow, PullRow, ReviewRow } from './repository.js';
 import { REVIEW_STRATEGY } from './constants.js';
-import { skillBodiesFor, taskLine } from './helpers.js';
+import { attachedSkills, skillBodiesFor, taskLine } from './helpers.js';
 import { loadDiff } from './diff-loader.js';
 
 /** Thrown by a run when the user cancels it mid-flight (between map files). */
@@ -383,10 +383,13 @@ export class ReviewRunExecutor {
       runLog.info(`skills: lookup failed — ${err.message}`);
       return [];
     });
+    // One source for both numbers: the names must describe the bodies that
+    // actually went, not the bindings that merely exist.
+    const attached = attachedSkills(links);
     const bodies = skillBodiesFor(links);
     if (bodies.length === 0) return [];
     const tokens = bodies.reduce((n, b) => n + this.container.tokenizer.count(b), 0);
-    const names = links.filter((l) => l.skill.enabled).map((l) => l.skill.name);
+    const names = attached.map((l) => l.skill.name);
     runLog.info(
       `skills: ${bodies.length} skill(s), ${tokens} token(s) attached — ${names.join(', ')}`,
     );

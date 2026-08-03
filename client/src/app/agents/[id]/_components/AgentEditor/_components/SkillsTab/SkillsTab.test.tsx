@@ -144,3 +144,41 @@ describe("SkillsTab", () => {
     expect(screen.getByText("No skills yet. Create one in the Skills Lab.")).toBeInTheDocument();
   });
 });
+
+describe("SkillsTab when the data does not arrive", () => {
+  it("says the load failed instead of claiming the agent has no skills", () => {
+    hooks.useSkills.mockReturnValue({ data: undefined, isError: true, refetch: vi.fn() });
+    hooks.useAgentSkills.mockReturnValue({ data: undefined, isError: true, refetch: vi.fn() });
+    renderTab();
+
+    expect(screen.getByText("Could not load the skills for this agent.")).toBeInTheDocument();
+    expect(screen.queryByText(/No skills yet/)).not.toBeInTheDocument();
+  });
+
+  it("retries both queries, since either one can be the one that failed", () => {
+    const refetchSkills = vi.fn();
+    const refetchLinks = vi.fn();
+    hooks.useSkills.mockReturnValue({ data: undefined, isError: true, refetch: refetchSkills });
+    hooks.useAgentSkills.mockReturnValue({ data: LINKS, isError: false, refetch: refetchLinks });
+    renderTab();
+
+    fireEvent.click(screen.getByText("Retry"));
+    expect(refetchSkills).toHaveBeenCalled();
+    expect(refetchLinks).toHaveBeenCalled();
+  });
+
+  it("does not flash the empty state while the first request is in flight", () => {
+    hooks.useSkills.mockReturnValue({ data: undefined, isLoading: true });
+    hooks.useAgentSkills.mockReturnValue({ data: undefined, isLoading: true });
+    renderTab();
+    expect(screen.queryByText(/No skills yet/)).not.toBeInTheDocument();
+  });
+
+  it("still says so when the workspace genuinely has none", () => {
+    hooks.useSkills.mockReturnValue({ data: [], isLoading: false, isError: false });
+    hooks.useAgentSkills.mockReturnValue({ data: [], isLoading: false, isError: false });
+    renderTab();
+    expect(screen.getByText(/No skills yet/)).toBeInTheDocument();
+  });
+});
+

@@ -93,6 +93,7 @@
     "filterPlaceholder": "Filter skills…",
     "orderHint": "Order matters — earlier skills appear earlier in the assembled prompt. Drag to reorder.",
     "empty": "No skills yet. Create one in the Skills Lab.",
+    "loadError": "Could not load the skills for this agent.",
     "moveUp": "Move up",
     "moveDown": "Move down",
     "bind": "Bind {name}",

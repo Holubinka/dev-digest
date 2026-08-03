@@ -99,12 +99,21 @@ export interface LinkedSkillLike {
  * `enabled` flag says. The service already refuses to enable one, so this is
  * the second lock: a row edited straight in the database, or flagged by a rule
  * added after it was enabled, still cannot reach the prompt.
+ *
+ * `attachedSkills` exists so nothing has to restate those two filters. The Live
+ * Log used to build its name list from `enabled` alone, so a skill dropped for
+ * injection was still announced as attached and the count disagreed with the
+ * names beside it — a log that lies exactly where someone is debugging why a
+ * rule did not apply.
  */
-export function skillBodiesFor(links: LinkedSkillLike[]): string[] {
+export function attachedSkills(links: LinkedSkillLike[]): LinkedSkillLike[] {
   return [...links]
     .sort((a, b) => a.order - b.order)
-    .filter((l) => l.skill.enabled && !hasInjection(l.skill.body))
-    .map((l) => skillBlock(l.skill.name, l.skill.body));
+    .filter((l) => l.skill.enabled && !hasInjection(l.skill.body));
+}
+
+export function skillBodiesFor(links: LinkedSkillLike[]): string[] {
+  return attachedSkills(links).map((l) => skillBlock(l.skill.name, l.skill.body));
 }
 
 /**

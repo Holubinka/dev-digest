@@ -6,7 +6,7 @@
 
 import React from "react";
 import { useTranslations } from "next-intl";
-import { Badge, Checkbox, Icon } from "@devdigest/ui";
+import { Badge, Checkbox, ErrorState, Icon } from "@devdigest/ui";
 import type { Agent, SkillListItem } from "@devdigest/shared";
 import { SkillTypeBadge } from "@/components/skill-type";
 import { useAgentSkills, useSetAgentSkills } from "@/lib/hooks/agents";
@@ -16,11 +16,16 @@ import { s } from "./styles";
 
 export function SkillsTab({ agent }: { agent: Agent }) {
   const t = useTranslations("agents");
-  const { data: skills } = useSkills();
-  const { data: links } = useAgentSkills(agent.id);
+  const skillsQuery = useSkills();
+  const linksQuery = useAgentSkills(agent.id);
+  const skills = skillsQuery.data;
+  const links = linksQuery.data;
   const setSkills = useSetAgentSkills();
   const [filter, setFilter] = React.useState("");
   const [dragging, setDragging] = React.useState<string | null>(null);
+
+  const failed = skillsQuery.isError || linksQuery.isError;
+  const loading = skillsQuery.isLoading || linksQuery.isLoading;
 
   const { linked, unlinked } = partitionSkills(skills ?? [], links ?? []);
   const linkedIds = linked.map((sk) => sk.id);
@@ -58,7 +63,21 @@ export function SkillsTab({ agent }: { agent: Agent }) {
 
       <p style={s.hint}>{t("skills.orderHint")}</p>
 
-      {(skills ?? []).length === 0 && <p style={s.empty}>{t("skills.empty")}</p>}
+      {/* An empty list and a failed request look identical once the data is
+          defaulted to []. Saying "no skills yet" when the request failed sends
+          the user to create one they already have, with no way to retry —
+          `SkillsList` next door already distinguishes the two. */}
+      {failed ? (
+        <ErrorState
+          body={t("skills.loadError")}
+          onRetry={() => {
+            void skillsQuery.refetch();
+            void linksQuery.refetch();
+          }}
+        />
+      ) : (
+        (skills ?? []).length === 0 && !loading && <p style={s.empty}>{t("skills.empty")}</p>
+      )}
 
       {rows.map((sk: SkillListItem) => {
         const index = linkedIds.indexOf(sk.id);
