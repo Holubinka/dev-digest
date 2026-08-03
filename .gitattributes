@@ -1,0 +1,13 @@
+# Generated files — kept in git because a tool needs them, not because anyone
+# reads them. Marking them collapses the diff on GitHub and keeps them out of
+# the repository's language statistics. They are still versioned, still diffable
+# with `git diff`, and still required.
+#
+# drizzle-kit writes a full snapshot of the schema after every migration and
+# diffs the TypeScript schema against the latest one to produce the next `.sql`.
+# Deleting them does not shrink anything worth shrinking: the runtime migrator
+# never opens them (it reads `_journal.json` and the `.sql` files), but without
+# a baseline `drizzle-kit generate` decides the schema does not exist and emits
+# a migration that recreates every table. Migration 0011 is two `CREATE INDEX`
+# lines; its snapshot is 3475.
+server/src/db/migrations/meta/*.json linguist-generated=true
