@@ -252,24 +252,44 @@ function header(res: IncomingMessage, name: string): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-/** Read the body, aborting the moment it goes over the cap — not after. */
+/**
+ * Read the body, stopping the moment it goes over the cap — not after.
+ *
+ * The overflow leaves the loop with `break` and is reported afterwards, rather
+ * than thrown from inside the `try`. Breaking out of a `for await` calls the
+ * iterator's `return()`, which destroys the stream, so the socket closes just
+ * the same — and the refusal is then raised somewhere the `catch` cannot
+ * reinterpret it. Cleanup inside a block whose `catch` rewrites errors is a
+ * standing invitation for the wrong one to surface.
+ */
 async function readCapped(res: IncomingMessage, url: URL): Promise<FetchedMarkdown> {
   const chunks: Buffer[] = [];
   let bytes = 0;
+  let overflowed = false;
 
   try {
     for await (const chunk of res) {
       const buf = chunk as Buffer;
       bytes += buf.byteLength;
       if (bytes > MAX_DOCUMENT_BYTES) {
-        res.destroy();
-        throw new ValidationError(`That document is larger than ${MAX_DOCUMENT_BYTES} bytes`);
+        overflowed = true;
+        break;
       }
       chunks.push(buf);
     }
   } catch (err) {
-    if (err instanceof ValidationError) throw err;
-    throw new ExternalServiceError(`Reading the skill failed: ${(err as Error).message}`);
+    // Leaving the loop tears the stream down — `break` calls the iterator's
+    // `return()`, which destroys it — so a stream that throws on the way out
+    // throws in here, after the refusal has already been decided. That
+    // decision outranks anything the teardown has to say; only a failure
+    // BEFORE it is a genuine read error.
+    if (!overflowed) {
+      throw new ExternalServiceError(`Reading the skill failed: ${(err as Error).message}`);
+    }
+  }
+
+  if (overflowed) {
+    throw new ValidationError(`That document is larger than ${MAX_DOCUMENT_BYTES} bytes`);
   }
 
   return {

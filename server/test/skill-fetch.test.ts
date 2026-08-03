@@ -306,6 +306,32 @@ describe('HttpSkillFetcher', () => {
     await expect(fetcher.fetchMarkdown('https://example.com/skill.md')).rejects.toThrow(/404/);
   });
 
+  /**
+   * The cap used to be enforced by destroying the stream and throwing from
+   * inside the `try`, whose `catch` rewrites anything that is not a
+   * ValidationError. A review flagged that as CRITICAL on the grounds that a
+   * throwing `destroy()` would mask the refusal. Node's `destroy()` does not
+   * throw — measured — so it was not reachable, but the shape invited it, and
+   * this pins the property rather than the argument: whatever the stream does
+   * on the way out, the caller is told the document was too large.
+   */
+  it('reports the cap even when tearing the stream down goes wrong', async () => {
+    const chunk = Buffer.alloc(256 * 1024);
+    const stream = new Readable({
+      read() {
+        this.push(chunk);
+      },
+    });
+    stream.destroy = () => {
+      throw new Error('destroy exploded');
+    };
+    respondWith(response(stream));
+
+    await expect(fetcher.fetchMarkdown('https://example.com/huge.md')).rejects.toThrow(
+      /larger than/,
+    );
+  });
+
   it('aborts an oversized body mid-stream instead of buffering it', async () => {
     const chunk = Buffer.alloc(256 * 1024);
     let sent = 0;
