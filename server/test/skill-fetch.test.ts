@@ -58,16 +58,48 @@ describe('address classification', () => {
     expect(ipv4IsPublic('172.32.0.1')).toBe(true);
   });
 
-  it.each(['::1', '::', 'fd00::1', 'fc00::1', 'fe80::1', '::ffff:127.0.0.1'])(
-    'refuses the IPv6 address %s',
+  it.each([
+    '::1',
+    '::',
+    'fd00::1',
+    'fc00::1',
+    'fe80::1',
+    'ff02::1',
+    '::ffff:127.0.0.1',
+    '::127.0.0.1',
+  ])('refuses the IPv6 address %s', (ip) => {
+    expect(ipv6IsPublic(ip)).toBe(false);
+  });
+
+  /**
+   * `new URL()` re-spells a mapped literal into hex, so these — not the dotted
+   * forms above — are what the guard is actually handed at runtime. Testing
+   * only the dotted spelling is how the bypass survived its own test.
+   */
+  it.each([
+    ['::ffff:7f00:1', '127.0.0.1'],
+    ['::ffff:a9fe:a9fe', '169.254.169.254'],
+    ['::ffff:a00:5', '10.0.0.5'],
+    ['::ffff:c0a8:101', '192.168.1.1'],
+    ['::7f00:1', '127.0.0.1, IPv4-compatible'],
+    ['64:ff9b::7f00:1', '127.0.0.1 behind the NAT64 prefix'],
+  ])('refuses %s, the hex spelling of %s', (ip) => {
+    expect(ipv6IsPublic(ip)).toBe(false);
+  });
+
+  it.each(['2606:2800:220:1:248:1893:25c8:1946', '::ffff:5db8:d822', '2001:4860:4860::8888'])(
+    'allows the public IPv6 address %s',
+    (ip) => {
+      expect(ipv6IsPublic(ip)).toBe(true);
+    },
+  );
+
+  it.each(['', 'nonsense', '1:2:3::4::5', '12345::1', '::ffff:1.2.3', '1:2:3:4:5:6:7'])(
+    'refuses %s rather than reading an unparseable address as public',
     (ip) => {
       expect(ipv6IsPublic(ip)).toBe(false);
     },
   );
-
-  it('allows a public IPv6 address', () => {
-    expect(ipv6IsPublic('2606:2800:220:1:248:1893:25c8:1946')).toBe(true);
-  });
 });
 
 describe('assertPublicHttps', () => {
@@ -86,6 +118,22 @@ describe('assertPublicHttps', () => {
       ValidationError,
     );
     expect(dns.lookup).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'https://[::ffff:127.0.0.1]/x',
+    'https://[::ffff:169.254.169.254]/latest/meta-data',
+    'https://[::ffff:10.0.0.5]/x',
+    'https://[::1]/x',
+  ])('refuses %s — the bracketed form the guard is really given', async (url) => {
+    await expect(assertPublicHttps(url)).rejects.toThrow(/non-public address/);
+    expect(dns.lookup).not.toHaveBeenCalled();
+  });
+
+  it('refuses a redirect to a mapped literal, which reaches the guard normalised', async () => {
+    await expect(
+      assertPublicHttps(new URL('//[::ffff:127.0.0.1]/s.md', 'https://example.com').toString()),
+    ).rejects.toThrow(/non-public address/);
   });
 
   it('refuses a public hostname that resolves into private space', async () => {

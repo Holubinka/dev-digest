@@ -50,13 +50,63 @@ export function ipv4IsPublic(ip: string): boolean {
   return true;
 }
 
+/**
+ * Expand any IPv6 text form to its eight 16-bit groups, or null if it is not
+ * one. Matching on the text instead is what let `https://[::ffff:127.0.0.1]/`
+ * through: `new URL()` re-spells that hostname as `[::ffff:7f00:1]`, so a
+ * pattern written against the dotted-quad form sees a public address.
+ */
+function ipv6Groups(address: string): number[] | null {
+  const halves = address.split('::');
+  if (halves.length > 2) return null;
+
+  const parse = (part: string): number[] | null => {
+    if (part === '') return [];
+    const out: number[] = [];
+    const pieces = part.split(':');
+    for (const [index, piece] of pieces.entries()) {
+      if (piece.includes('.')) {
+        if (index !== pieces.length - 1) return null;
+        const quad = piece.split('.').map(Number);
+        if (quad.length !== 4 || quad.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
+          return null;
+        }
+        out.push((quad[0]! << 8) | quad[1]!, (quad[2]! << 8) | quad[3]!);
+        continue;
+      }
+      if (!/^[0-9a-f]{1,4}$/.test(piece)) return null;
+      out.push(parseInt(piece, 16));
+    }
+    return out;
+  };
+
+  const head = parse(halves[0]!);
+  const tail = halves.length === 2 ? parse(halves[1]!) : [];
+  if (head === null || tail === null) return null;
+  if (halves.length === 1) return head.length === 8 ? head : null;
+
+  const fill = 8 - head.length - tail.length;
+  return fill < 1 ? null : [...head, ...(Array(fill).fill(0) as number[]), ...tail];
+}
+
 export function ipv6IsPublic(ip: string): boolean {
   const address = ip.toLowerCase().replace(/^\[|\]$/g, '').split('%')[0] ?? '';
-  if (address === '::1' || address === '::') return false;
-  if (/^f[cd]/.test(address)) return false; // fc00::/7 unique local
-  if (/^fe[89ab]/.test(address)) return false; // fe80::/10 link local
-  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(address);
-  if (mapped) return ipv4IsPublic(mapped[1]!);
+  const groups = ipv6Groups(address);
+  if (groups === null) return false;
+
+  const [a, b, c, d, e, f, g, h] = groups as [
+    number, number, number, number, number, number, number, number,
+  ];
+  const embedded = () => ipv4IsPublic([g >> 8, g & 0xff, h >> 8, h & 0xff].join('.'));
+
+  if (a === 0 && b === 0 && c === 0 && d === 0 && e === 0) {
+    if (f === 0xffff) return embedded(); // ::ffff:0:0/96 IPv4-mapped
+    if (f === 0) return false; // ::/96 — unspecified, loopback, IPv4-compatible
+  }
+  if (a === 0x64 && b === 0xff9b && !c && !d && !e && !f) return embedded(); // NAT64
+  if ((a & 0xfe00) === 0xfc00) return false; // fc00::/7 unique local
+  if ((a & 0xffc0) === 0xfe80) return false; // fe80::/10 link local
+  if ((a & 0xff00) === 0xff00) return false; // ff00::/8 multicast
   return true;
 }
 
