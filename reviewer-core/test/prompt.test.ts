@@ -64,3 +64,36 @@ describe('assemblePrompt — ## PR description', () => {
     expect((assembly.pr_description as string).length).toBe(4000);
   });
 });
+
+describe('assemblePrompt — ## Skills / rules', () => {
+  const parts = { system: 'sys', diff: 'DIFF', skills: ['# First\nOne.', '# Second\nTwo.'] };
+
+  it('joins the bodies under one heading, in the order given', () => {
+    const user = userOf(parts);
+    expect(user).toContain('## Skills / rules');
+    expect(user).toContain('# First\nOne.\n\n# Second\nTwo.');
+  });
+
+  it('sits after the PR description and before the memory slot', () => {
+    const user = userOf({ ...parts, prDescription: 'Body.', memory: ['A memory.'] });
+    expect(user.indexOf('## PR description')).toBeLessThan(user.indexOf('## Skills / rules'));
+    expect(user.indexOf('## Skills / rules')).toBeLessThan(user.indexOf('## Relevant memory'));
+  });
+
+  it('omits the section when no skill is bound', () => {
+    expect(userOf({ system: 'sys', diff: 'DIFF' })).not.toContain('## Skills / rules');
+    expect(userOf({ system: 'sys', diff: 'DIFF', skills: [] })).not.toContain('## Skills / rules');
+    expect(assemblePrompt({ system: 'sys', diff: 'DIFF' }).assembly.skills ?? null).toBeNull();
+  });
+
+  it('does NOT fence a skill as untrusted data — a skill is an instruction', () => {
+    // Pinned deliberately. A skill body carries the same standing as the agent's
+    // own system prompt, which is precisely why an imported skill is stored
+    // disabled until a human has read it. Wrapping it would demote it to data
+    // the model is told to ignore — quietly breaking the feature while looking
+    // like a security improvement.
+    const { assembly } = assemblePrompt(parts);
+    expect(assembly.skills).not.toContain('<untrusted');
+    expect(assembly.skills).toBe('# First\nOne.\n\n# Second\nTwo.');
+  });
+});

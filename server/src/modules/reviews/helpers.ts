@@ -74,6 +74,42 @@ export function reviewToDto(
 }
 
 /**
+ * The shape of a linked skill this module needs, declared structurally rather
+ * than imported from `modules/agents`. `no-cross-module` follows type-only
+ * imports too (dependency-cruiser runs with `tsPreCompilationDeps`), so naming
+ * the agents module's row type here would be a real violation, not a loophole.
+ */
+export interface LinkedSkillLike {
+  order: number;
+  skill: { id: string; name: string; body: string; enabled: boolean };
+}
+
+/**
+ * The ordered skill bodies for the prompt's `## Skills / rules` slot.
+ *
+ * A globally-disabled skill is dropped. The toggle on the Skills screen gates a
+ * skill for EVERY agent, while the `agent_skills` row is only the binding — so
+ * disabling one leaves its binding and its order intact, and simply stops it
+ * reaching the model.
+ */
+export function skillBodiesFor(links: LinkedSkillLike[]): string[] {
+  return [...links]
+    .sort((a, b) => a.order - b.order)
+    .filter((l) => l.skill.enabled)
+    .map((l) => skillBlock(l.skill.name, l.skill.body));
+}
+
+/**
+ * Prefix a body with its skill's name, unless it already opens with a markdown
+ * heading (an imported SKILL.md usually does). Without this the assembled block
+ * is an unlabelled wall of markdown, and neither the model nor whoever reads the
+ * run trace can tell which rule came from which skill.
+ */
+export function skillBlock(name: string, body: string): string {
+  return /^\s*#{1,6}\s/.test(body) ? body : `### ${name}\n${body}`;
+}
+
+/**
  * Build the per-run task instruction line for a PR.
  *
  * The TRUSTED part (ours) states the task and the non-negotiable rule: review
