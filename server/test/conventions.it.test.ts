@@ -25,17 +25,39 @@ d('/repos/:id/conventions', () => {
   let pg: PgFixture;
   let workspaceId: string;
 
+  // Long enough to clear MIN_FILE_CHARS — a sample below the floor is dropped
+  // before the model sees it, which would leave the scan with nothing to read.
   const ROUTES = [
+    "import { ListQuery } from './schemas.js';",
+    "import { ValidationError } from '../../platform/errors.js';",
+    '',
+    '/** GET /skills — workspace-scoped; the list carries no body. */',
     'export async function listSkills(req: Request) {',
     '  const parsed = ListQuery.parse(req.query);',
     '  throw new ValidationError("bad query");',
     '}',
+    '',
+    '/** DELETE /skills/:id — 404 across a workspace boundary. */',
+    'export async function deleteSkill(req: Request) {',
+    '  const { workspaceId } = await getContext(container, req);',
+    '  throw new NotFoundError("Skill not found");',
+    '}',
   ].join('\n');
 
   const SERVICE = [
+    "import { CreateSkill } from './schemas.js';",
+    "import { ValidationError } from '../../platform/errors.js';",
+    '',
+    '/** Create a skill; the repository versions the body. */',
     'export async function createSkill(input: CreateSkillInput) {',
     '  const parsed = CreateSkill.parse(input);',
     '  throw new ValidationError("bad body");',
+    '}',
+    '',
+    '/** Update a skill, refusing an end state nobody should reach. */',
+    'export async function updateSkill(id: string, patch: UpdateSkillInput) {',
+    '  const row = await repo.getById(id);',
+    '  throw new NotFoundError("Skill not found");',
     '}',
   ].join('\n');
 
@@ -79,11 +101,15 @@ d('/repos/:id/conventions', () => {
         git: new MockGitClient({ files: FILES }),
         codeIndex: new MockCodeIndex(),
         repoIntel: { getConventionSamples: async () => samples } as unknown as RepoIntel,
-        llm: {
-          openai: new MockLLMProvider('openai', {
+        // Under every provider id: the feature model's registry default decides
+        // which one the service resolves, and a test must not follow it to a
+        // real API when that default moves.
+        llm: (() => {
+          const mock = new MockLLMProvider('openai', {
             structuredBySchema: { ConventionExtraction: { candidates } },
-          }),
-        },
+          });
+          return { openai: mock, anthropic: mock, openrouter: mock };
+        })(),
       },
     });
   }

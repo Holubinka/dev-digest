@@ -1,7 +1,10 @@
 /** Tunables for one conventions scan. Every number here costs tokens. */
 
-/** Top-ranked source files pulled from repo-intel (the ТЗ's "top-12"). */
+/** Top-ranked source files pulled from repo-intel. */
 export const TOP_FILE_COUNT = 12;
+
+/** Ranked paths are fetched this many times over, then filtered down to N. */
+export const SAMPLE_OVERFETCH = 4;
 
 /**
  * Config files read before the source samples. They are what makes the
@@ -23,11 +26,28 @@ export const CONFIG_PATHS = [
   'package.json',
 ] as const;
 
-/** Per-file cap. A 4000-line barrel would otherwise eat the whole budget. */
-export const MAX_FILE_CHARS = 12_000;
+/**
+ * Per-file cap. A 4000-line barrel would otherwise eat the whole budget, and a
+ * file's conventions — how it imports, names, layers, throws — are visible in
+ * its first hundred lines or they are not conventions.
+ */
+export const MAX_FILE_CHARS = 6_000;
 
-/** Whole-prompt cap for the sample block, counted with the real encoder. */
-export const MAX_SAMPLE_TOKENS = 60_000;
+/**
+ * Floor for a sample. Ranking rewards being imported everywhere, which a
+ * nine-line helper often is; there is no convention to read out of it, and it
+ * still costs one of the twelve slots.
+ */
+export const MIN_FILE_CHARS = 400;
+
+/**
+ * Whole-prompt cap for the sample block, counted with the real encoder.
+ *
+ * Deliberately small. This is a cheap-model call, and the cost of a big prompt
+ * is not only money: at ~7k tokens the round trip is ~15s, and it grows fast
+ * enough that a generous budget turns "Re-scan" into something nobody presses.
+ */
+export const MAX_SAMPLE_TOKENS = 24_000;
 
 /** Wall clock for the one model call. */
 export const EXTRACT_TIMEOUT_MS = 120_000;

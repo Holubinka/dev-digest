@@ -14,19 +14,48 @@ import type { ConventionsRepository, InsertCandidate } from '../src/modules/conv
  * with — a fabricated quote, a file it never saw, a rule ESLint already covers.
  */
 
+/**
+ * Two sample files, long enough to clear the floor a real sample has to clear:
+ * a nine-line helper is filtered out before the model sees it.
+ */
 const HANDLER = [
+  "import { ListQuery } from './schemas.js';",
+  "import { ValidationError } from '../../platform/errors.js';",
+  "import { SkillsService } from './service.js';",
+  '',
+  '/** GET /skills — workspace-scoped, no body on the list. */',
   'export async function listSkills(req: Request) {',
   '  const parsed = ListQuery.parse(req.query);',
   '  if (!parsed.ok) throw new ValidationError("bad query");',
   '  return service.list(parsed.value);',
   '}',
+  '',
+  '/** DELETE /skills/:id — 404 when the row belongs to another workspace. */',
+  'export async function deleteSkill(req: Request) {',
+  '  const { workspaceId } = await getContext(container, req);',
+  '  const ok = await service.delete(workspaceId, req.params.id);',
+  '  if (!ok) throw new NotFoundError("Skill not found");',
+  '  return { ok: true };',
+  '}',
 ].join('\n');
 
 const SERVICE = [
+  "import { CreateSkill } from './schemas.js';",
+  "import { ValidationError } from '../../platform/errors.js';",
+  "import { SkillsRepository } from './repository.js';",
+  '',
+  '/** Create a skill; the body is versioned by the repository. */',
   'export async function createSkill(input: CreateSkillInput) {',
   '  const parsed = CreateSkill.parse(input);',
   '  if (!parsed.ok) throw new ValidationError("bad body");',
   '  return repo.insert(parsed.value);',
+  '}',
+  '',
+  '/** Update a skill, refusing an end state nobody should be able to reach. */',
+  'export async function updateSkill(id: string, patch: UpdateSkillInput) {',
+  '  const row = await repo.getById(id);',
+  '  if (!row) throw new NotFoundError("Skill not found");',
+  '  return repo.update(id, patch);',
   '}',
 ].join('\n');
 
@@ -98,8 +127,11 @@ function fakeRepo(judged: string[] = []) {
     async getRepo() {
       return REPO_ROW;
     },
+    // Pinned rather than left to the registry default: when that default moved
+    // to another provider, every test in this file started calling the real
+    // API through a provider nobody had injected a mock for.
     async featureModelOverride() {
-      return undefined;
+      return { provider: 'openai' as const, model: 'gpt-4o-mini' };
     },
     async judgedRules() {
       return judged;
@@ -125,25 +157,35 @@ function fakeRepo(judged: string[] = []) {
   return { repo, saved, scan: () => scanRow };
 }
 
-function serviceWith(candidates: ModelCandidate[], repo: ConventionsRepository) {
+function serviceWith(
+  candidates: ModelCandidate[],
+  repo: ConventionsRepository,
+  opts: { ranked?: string[]; files?: Record<string, string> } = {},
+) {
   const config = loadConfig({ ...process.env, NODE_ENV: 'test' } as NodeJS.ProcessEnv);
   const llm = new MockLLMProvider('openai', {
     structuredBySchema: { ConventionExtraction: { candidates } },
   });
   const container = new Container(config, {} as Db, {
-    llm: { openai: llm },
-    git: new MockGitClient({ files: FILES }),
+    // Every provider maps to the mock: a test must not be able to reach a real
+    // API because a default moved.
+    llm: { openai: llm, anthropic: llm, openrouter: llm },
+    git: new MockGitClient({ files: opts.files ?? FILES }),
     codeIndex: new MockCodeIndex(),
     repoIntel: {
-      getConventionSamples: async () => ['src/routes.ts', 'src/service.ts'],
+      getConventionSamples: async () => opts.ranked ?? ['src/routes.ts', 'src/service.ts'],
     } as unknown as Container['repoIntel'],
   });
   return { service: new ConventionsService(container, repo), llm };
 }
 
-async function extract(candidates: ModelCandidate[], judged: string[] = []) {
+async function extract(
+  candidates: ModelCandidate[],
+  judged: string[] = [],
+  opts: { ranked?: string[]; files?: Record<string, string> } = {},
+) {
   const { repo, saved, scan } = fakeRepo(judged);
-  const { service, llm } = serviceWith(candidates, repo);
+  const { service, llm } = serviceWith(candidates, repo, opts);
   const result = await service.extract('ws-1', 'repo-1');
   return { result: result!, saved, scan, llm };
 }
@@ -155,9 +197,11 @@ describe('ConventionsService.extract', () => {
     expect(result.response.candidates).toHaveLength(1);
     expect(result.audit).toMatchObject({ returned: 1, kept: 1 });
     expect(saved[0]?.evidence).toHaveLength(2);
+    // The fixture claims line 2; the quote is on line 7. Re-anchoring is what
+    // keeps this candidate alive, and the stored line is the true one.
     expect(saved[0]?.evidence[0]).toMatchObject({
       path: 'src/routes.ts',
-      line: 2,
+      line: 7,
       snippet: '  const parsed = ListQuery.parse(req.query);',
     });
   });
@@ -235,6 +279,29 @@ describe('ConventionsService.extract', () => {
     const { saved, scan } = await extract([candidate()]);
     expect(saved[0]?.headSha).toBe('a1b2c3d4');
     expect(scan()?.headSha).toBe('a1b2c3d4');
+  });
+
+  it('does not spend a sample slot on a barrel or a style object', async () => {
+    const { result } = await extract([candidate()], [], {
+      ranked: ['src/index.ts', 'src/ui/styles.ts', 'src/types.d.ts', 'src/routes.ts', 'src/service.ts'],
+      files: {
+        ...FILES,
+        'src/index.ts': `export * from './routes.js';\n`.repeat(40),
+        'src/ui/styles.ts': `export const s = { card: { padding: 14 } };\n`.repeat(40),
+        'src/types.d.ts': `declare module 'x';\n`.repeat(40),
+      },
+    });
+
+    expect(result.samples).toEqual(['src/routes.ts', 'src/service.ts']);
+  });
+
+  it('skips a file too small to hold a convention', async () => {
+    const { result } = await extract([candidate()], [], {
+      ranked: ['src/tiny.ts', 'src/routes.ts', 'src/service.ts'],
+      files: { ...FILES, 'src/tiny.ts': 'export const NOW = () => Date.now();' },
+    });
+
+    expect(result.samples).not.toContain('src/tiny.ts');
   });
 
   it('refuses to scan a repo with nothing readable in it', async () => {

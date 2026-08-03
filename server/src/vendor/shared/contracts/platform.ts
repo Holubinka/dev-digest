@@ -73,8 +73,12 @@ export const FEATURE_MODELS: FeatureModelDef[] = [
     id: 'conventions',
     label: 'Conventions',
     description: 'Extracts coding conventions from the repo.',
-    defaultProvider: 'openai',
-    defaultModel: 'gpt-5.4',
+    // Cheap by default, like the onboarding tour: this call reads a dozen files
+    // and returns a list of sentences, and everything it claims is verified
+    // against the clone afterwards. Paying flagship prices for it buys nothing
+    // the grounding step does not already enforce.
+    defaultProvider: 'openrouter',
+    defaultModel: 'anthropic/claude-haiku-4.5',
   },
 ];
 

@@ -12,9 +12,12 @@ import { ConventionsRepository, type InsertCandidate, type RepoRef } from './rep
 import {
   CONFIG_PATHS,
   EXTRACT_TIMEOUT_MS,
+  MAX_CANDIDATES,
   MAX_FILE_CHARS,
   MAX_SAMPLE_TOKENS,
+  MIN_FILE_CHARS,
   MIN_VERIFIED_EVIDENCE,
+  SAMPLE_OVERFETCH,
   TOP_FILE_COUNT,
 } from './constants.js';
 import {
@@ -101,7 +104,9 @@ export class ConventionsService {
   async extract(
     workspaceId: string,
     repoId: string,
-  ): Promise<{ response: ConventionsResponse; audit: ExtractionAudit } | undefined> {
+  ): Promise<
+    { response: ConventionsResponse; audit: ExtractionAudit; samples: string[] } | undefined
+  > {
     const repo = await this.repo.getRepo(workspaceId, repoId);
     if (!repo) return undefined;
 
@@ -149,6 +154,7 @@ export class ConventionsService {
         candidates: all.map(toCandidateDto).filter((c) => kept.has(c.id) || c.status !== 'pending'),
       },
       audit,
+      samples: sources.map((s) => s.path),
     };
   }
 
@@ -159,19 +165,29 @@ export class ConventionsService {
    * ripgrep proxy when it is not. An unindexed repo is the common case right
    * after adding one, and refusing to scan it would make the feature look
    * broken for the first minute of its life.
+   *
+   * The ranking is over-fetched and then filtered, because what PageRank calls
+   * important and what teaches a convention are different things: barrels and
+   * style objects have the most importers in this codebase and the least to say
+   * about how it is written. Left in, they produced rules like "components are
+   * named in PascalCase" — true of React, not of this repo.
    */
   private async samplePaths(repo: RepoRef): Promise<string[]> {
     const ranked = await this.container.repoIntel
-      .getConventionSamples(repo.id, TOP_FILE_COUNT)
+      .getConventionSamples(repo.id, TOP_FILE_COUNT * SAMPLE_OVERFETCH)
       .catch(() => [] as string[]);
-    if (ranked.length > 0) return ranked;
+    // Not truncated to TOP_FILE_COUNT here: `collectSources` drops files too
+    // small to teach anything, and cutting first would leave the scan short of
+    // samples it could have had.
+    const wanted = ranked.filter((p) => !isLowSignalPath(p));
+    if (wanted.length > 0) return wanted;
 
     const matches = await this.container.codeIndex
       .grep({ owner: repo.owner, name: repo.name }, '^export ')
       .catch(() => []);
     const perFile = new Map<string, number>();
     for (const m of matches) {
-      if (isJunkPath(m.path)) continue;
+      if (isJunkPath(m.path) || isLowSignalPath(m.path)) continue;
       perFile.set(m.path, (perFile.get(m.path) ?? 0) + 1);
     }
     return [...perFile.entries()]
@@ -208,6 +224,8 @@ export class ConventionsService {
     const out: Sample[] = [];
     let tokens = 0;
     for (const sample of await this.readMany(repo, paths)) {
+      if (out.length >= TOP_FILE_COUNT) break;
+      if (sample.content.length < MIN_FILE_CHARS) continue;
       const forPrompt = promptCopy(sample.content);
       const cost = this.container.tokenizer.count(forPrompt);
       if (tokens + cost > MAX_SAMPLE_TOKENS) break;
@@ -288,7 +306,9 @@ export class ConventionsService {
     };
     const out: GroundedCandidate[] = [];
 
-    for (const raw of response.candidates) {
+    // The cap is enforced here rather than in the schema: as `maxItems` it made
+    // the request illegal on Anthropic (see prompt.ts).
+    for (const raw of response.candidates.slice(0, MAX_CANDIDATES)) {
       if (isMachineEnforced(raw.rule, enforced)) {
         audit.machineEnforced++;
         continue;
@@ -349,4 +369,15 @@ const JUNK_PATH_PATTERNS = [
 function isJunkPath(path: string): boolean {
   const lower = path.toLowerCase();
   return JUNK_PATH_PATTERNS.some((p) => lower.includes(p));
+}
+
+/**
+ * Files that rank high and teach nothing: a barrel is a list of re-exports, a
+ * `styles.ts` is a CSS object, a `.d.ts` is a declaration. Their conventions are
+ * "this file re-exports things", which no reviewer needs told.
+ */
+const LOW_SIGNAL_SUFFIXES = ['/index.ts', '/index.tsx', '/styles.ts', '.d.ts'];
+
+function isLowSignalPath(path: string): boolean {
+  return LOW_SIGNAL_SUFFIXES.some((s) => path.endsWith(s));
 }

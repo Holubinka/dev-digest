@@ -52,8 +52,11 @@ export default async function conventionsRoutes(appBase: FastifyInstance) {
       const result = await service.extract(workspaceId, req.params.id);
       if (!result) throw new NotFoundError('Repo not found');
       // The audit is the only record of what grounding threw away — the scan
-      // row keeps the two totals, the breakdown lives here.
-      req.log.info({ repoId: req.params.id, ...result.audit }, 'conventions extraction');
+      // row keeps the two totals, the breakdown and the file list live here.
+      req.log.info(
+        { repoId: req.params.id, ...result.audit, samples: result.samples },
+        'conventions extraction',
+      );
       return result.response;
     },
   );
