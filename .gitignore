@@ -34,3 +34,8 @@ test-results/
 # every branch. Do not remove this as clutter — see gate.sh's self-diagnosis
 # for the failure this prevents.
 .pr-self-review/
+
+# Local screenshots. Nothing in the repo references them — the only mention is
+# the rule in scripts/pr-self-review/scope.sh that skips them during review, so
+# they are review-time noise with no consumer and 3.2 MB of binary weight.
+.screenshots/
