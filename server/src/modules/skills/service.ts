@@ -154,18 +154,7 @@ export class SkillsService {
         );
       }
 
-      const row = await this.repo.update(
-        workspaceId,
-        id,
-        {
-          ...(patch.name !== undefined ? { name: patch.name } : {}),
-          ...(patch.description !== undefined ? { description: patch.description } : {}),
-          ...(patch.type !== undefined ? { type: patch.type } : {}),
-          ...(patch.body !== undefined ? { body: patch.body } : {}),
-          ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
-        },
-        existing.version,
-      );
+      const row = await this.repo.update(workspaceId, id, patch, existing.version);
       if (row) return toSkillDto(row);
     }
 
@@ -180,8 +169,7 @@ export class SkillsService {
   /** Body history, newest first. `undefined` when the skill is not in the
    *  workspace — the caller turns that into a 404. */
   async listVersions(workspaceId: string, id: string): Promise<SkillVersion[] | undefined> {
-    const skill = await this.repo.getById(workspaceId, id);
-    if (!skill) return undefined;
+    if (!(await this.repo.existsInWorkspace(workspaceId, id))) return undefined;
     const rows = await this.repo.listVersions(id);
     return rows.map(toSkillVersionDto);
   }
@@ -191,8 +179,7 @@ export class SkillsService {
     id: string,
     version: number,
   ): Promise<SkillVersion | undefined> {
-    const skill = await this.repo.getById(workspaceId, id);
-    if (!skill) return undefined;
+    if (!(await this.repo.existsInWorkspace(workspaceId, id))) return undefined;
     const row = await this.repo.getVersion(id, version);
     return row ? toSkillVersionDto(row) : undefined;
   }
@@ -215,8 +202,7 @@ export class SkillsService {
     id: string,
     version: number,
   ): Promise<Skill | undefined> {
-    const skill = await this.repo.getById(workspaceId, id);
-    if (!skill) return undefined;
+    if (!(await this.repo.existsInWorkspace(workspaceId, id))) return undefined;
     const snapshot = await this.repo.getVersion(id, version);
     if (!snapshot) return undefined;
     return this.update(workspaceId, id, { body: snapshot.body });

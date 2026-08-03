@@ -88,7 +88,7 @@ export function toSkillVersionDto(row: SkillVersionRow): SkillVersion {
 // ---- import parsing -----------------------------------------------------
 
 /** What `classifyEntry` decided about one archive entry. */
-export type EntryVerdict = 'read' | SkillSkipReason;
+type EntryVerdict = 'read' | SkillSkipReason;
 
 function extensionOf(path: string): string {
   const base = path.slice(path.lastIndexOf('/') + 1);
@@ -144,7 +144,7 @@ export function pickSkillCore(paths: string[]): string | undefined {
   return paths.length === 1 ? paths[0] : undefined;
 }
 
-export interface Frontmatter {
+interface Frontmatter {
   attrs: Record<string, string>;
   body: string;
 }
@@ -180,7 +180,7 @@ export function parseFrontmatter(text: string): Frontmatter {
   return { attrs, body: lines.slice(close + 1).join('\n').replace(/^\n+/, '') };
 }
 
-export interface SkillDraft {
+interface SkillDraft {
   name: string;
   description: string;
   type: SkillType;

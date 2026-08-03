@@ -26,7 +26,7 @@ export interface InsertSkill {
   evidenceFiles?: string[] | null;
 }
 
-export interface UpdateSkill {
+interface UpdateSkill {
   name?: string;
   description?: string;
   type?: SkillType;
@@ -57,6 +57,19 @@ export class SkillsRepository {
       .groupBy(t.skills.id)
       .orderBy(asc(t.skills.name));
     return rows.map((r) => ({ skill: r.skill, agentCount: Number(r.agentCount) }));
+  }
+
+  /**
+   * Tenancy without the payload. Three endpoints only need to know the skill is
+   * in this workspace — the version list, one snapshot, and a restore — and
+   * `getById` would fetch a body up to 64 KB for them to throw away.
+   */
+  async existsInWorkspace(workspaceId: string, id: string): Promise<boolean> {
+    const [row] = await this.db
+      .select({ id: t.skills.id })
+      .from(t.skills)
+      .where(and(eq(t.skills.workspaceId, workspaceId), eq(t.skills.id, id)));
+    return row !== undefined;
   }
 
   async getById(workspaceId: string, id: string): Promise<SkillRow | undefined> {
