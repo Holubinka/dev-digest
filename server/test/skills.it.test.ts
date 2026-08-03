@@ -82,6 +82,36 @@ d('/skills', () => {
     return skill;
   }
 
+  /**
+   * A body is capped at 64 KB and the list carries every skill in the
+   * workspace, while a card shows none of it. The verdict the card DOES need
+   * from the body — whether it trips the injection detector — is computed
+   * server-side and sent instead.
+   */
+  it('leaves the bodies out of the list, and keeps them on the one skill opened', async () => {
+    const app = await makeApp();
+    const created = await app.inject({
+      method: 'POST',
+      url: '/skills',
+      payload: { ...createBody, name: 'Heavy', body: `# Heavy\n${'x'.repeat(20_000)}` },
+    });
+    const id = created.json().id as string;
+
+    const list = (await app.inject({ method: 'GET', url: '/skills' })).json() as Array<
+      Record<string, unknown>
+    >;
+    const row = list.find((s) => s.id === id)!;
+    expect(row).not.toHaveProperty('body');
+    expect(row).toMatchObject({ name: 'Heavy', agent_count: 0, injection: [] });
+    // The whole page must not be paying for a body nobody renders.
+    expect(JSON.stringify(list)).not.toContain('xxxxxxxxxx');
+
+    const detail = (await app.inject({ method: 'GET', url: `/skills/${id}` })).json();
+    expect(detail.body).toContain('# Heavy');
+    expect(detail).toMatchObject({ agent_count: 0, injection: [] });
+    await app.close();
+  });
+
   it('records version 1 on create, with one body snapshot', async () => {
     const app = await makeApp();
     const created = await app.inject({ method: 'POST', url: '/skills', payload: createBody });

@@ -1,5 +1,6 @@
 import type {
   Skill,
+  SkillDetailItem,
   SkillListItem,
   SkillSkipReason,
   SkillType,
@@ -56,12 +57,23 @@ export function toSkillDto(row: SkillRow): Skill {
  * computed on read rather than stored, so sharpening the detector improves every
  * existing skill without a migration or a backfill.
  */
+/**
+ * A list row. The body is read here and deliberately not forwarded: the card
+ * needs the injection verdict, not the 64 KB it was derived from, and the list
+ * carries every skill in the workspace.
+ */
 export function toSkillListItemDto(row: SkillWithUsage): SkillListItem {
+  const { body: _body, ...rest } = toSkillDto(row.skill);
   return {
-    ...toSkillDto(row.skill),
+    ...rest,
     agent_count: row.agentCount,
     injection: detectInjection(row.skill.body),
   };
+}
+
+/** The same row with the body, for the one skill a request actually opened. */
+export function toSkillDetailDto(row: SkillWithUsage): SkillDetailItem {
+  return { ...toSkillListItemDto(row), body: row.skill.body };
 }
 
 export function toSkillVersionDto(row: SkillVersionRow): SkillVersion {

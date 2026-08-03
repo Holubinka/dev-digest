@@ -14,7 +14,6 @@ const SKILL: SkillListItem = {
   description: "List every branch the diff adds and name the test covering it.",
   type: "rubric",
   source: "manual",
-  body: "# Rubric",
   enabled: true,
   version: 3,
   evidence_files: null,

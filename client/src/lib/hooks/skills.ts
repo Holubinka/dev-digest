@@ -6,6 +6,7 @@ import { api } from "../api";
 import type {
   Skill,
   SkillImportPreview,
+  SkillDetailItem,
   SkillListItem,
   SkillStats,
   SkillType,
@@ -23,7 +24,7 @@ export function useSkills() {
 export function useSkill(id: string | null | undefined) {
   return useQuery({
     queryKey: ["skill", id],
-    queryFn: () => api.get<SkillListItem>(`/skills/${id}`),
+    queryFn: () => api.get<SkillDetailItem>(`/skills/${id}`),
     enabled: !!id,
   });
 }

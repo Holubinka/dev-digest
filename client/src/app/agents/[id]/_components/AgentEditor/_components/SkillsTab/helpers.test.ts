@@ -8,7 +8,6 @@ const skill = (id: string): SkillListItem => ({
   description: "",
   type: "rubric",
   source: "manual",
-  body: "#",
   enabled: true,
   version: 1,
   evidence_files: null,

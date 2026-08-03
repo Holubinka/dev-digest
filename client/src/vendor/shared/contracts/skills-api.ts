@@ -72,15 +72,27 @@ export const SkillInjectionMatch = z.object({
 export type SkillInjectionMatch = z.infer<typeof SkillInjectionMatch>;
 
 /**
- * A skill plus what only a query can tell you: how many agents bind it, and
- * whether its body tries to hijack the prompt. Both routes that return a single
- * skill return this too, so the UI never has to guess which shape it holds.
+ * A row in the Skills list: everything a card shows, and nothing it does not.
+ *
+ * `body` is deliberately absent. A body is capped at 64 KB and the list ships
+ * every skill in the workspace, while the card renders only the name,
+ * description, type, source and counts — the body arrives with `GET /skills/:id`
+ * when one is actually opened. `injection` is the flag the card DOES need from
+ * the body, so the server keeps reading it and sends the verdict rather than
+ * the text.
  */
-export const SkillListItem = Skill.extend({
+export const SkillListItem = Skill.omit({ body: true }).extend({
   agent_count: z.number().int(),
   injection: z.array(SkillInjectionMatch),
 });
 export type SkillListItem = z.infer<typeof SkillListItem>;
+
+/**
+ * One skill, opened. The list row plus the body it deliberately leaves out —
+ * `GET /skills/:id` is the request that means someone is actually reading it.
+ */
+export const SkillDetailItem = SkillListItem.extend({ body: z.string() });
+export type SkillDetailItem = z.infer<typeof SkillDetailItem>;
 
 /**
  * What a skill has actually done, counted from real rows.

@@ -27,7 +27,6 @@ const skill = (id: string, over: Partial<SkillListItem> = {}): SkillListItem => 
   description: "",
   type: "rubric",
   source: "manual",
-  body: "#",
   enabled: true,
   version: 1,
   evidence_files: null,

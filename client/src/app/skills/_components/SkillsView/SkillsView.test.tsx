@@ -43,7 +43,6 @@ const SKILL: SkillListItem = {
   description: "List every branch.",
   type: "rubric",
   source: "manual",
-  body: "# Rubric",
   enabled: true,
   version: 1,
   evidence_files: null,
@@ -65,7 +64,12 @@ beforeEach(() => {
   nav.push.mockReset();
   shell.crumb = [];
   hooks.useSkills.mockReturnValue({ data: [SKILL], isLoading: false, isError: false });
-  hooks.useSkill.mockReturnValue({ data: SKILL, isLoading: false, isError: false });
+  // The detail endpoint is the one that carries the body; the list does not.
+  hooks.useSkill.mockReturnValue({
+    data: { ...SKILL, body: "# Rubric" },
+    isLoading: false,
+    isError: false,
+  });
 });
 afterEach(cleanup);
 

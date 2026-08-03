@@ -25,7 +25,6 @@ vi.mock("@/lib/hooks/skills", () => ({
         description: "",
         type: "rubric",
         source: "manual",
-        body: "#",
         enabled: true,
         version: 1,
         evidence_files: null,

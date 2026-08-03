@@ -2,6 +2,7 @@ import type { Container } from '../../platform/container.js';
 import type {
   Skill,
   SkillImportPreview,
+  SkillDetailItem,
   SkillListItem,
   SkillSource,
   SkillStats,
@@ -12,7 +13,12 @@ import { ValidationError } from '../../platform/errors.js';
 import { detectInjection } from '../../platform/skill-injection.js';
 import { SkillsRepository } from './repository.js';
 import { UPDATE_ATTEMPTS } from './constants.js';
-import { toSkillDto, toSkillListItemDto, toSkillVersionDto } from './helpers.js';
+import {
+  toSkillDetailDto,
+  toSkillDto,
+  toSkillListItemDto,
+  toSkillVersionDto,
+} from './helpers.js';
 import {
   filenameFromUrl,
   isMarkdownFilename,
@@ -59,11 +65,12 @@ export class SkillsService {
     return rows.map(toSkillListItemDto);
   }
 
-  async get(workspaceId: string, id: string): Promise<SkillListItem | undefined> {
+  /** One skill, with its body — this is the request that opened it. */
+  async get(workspaceId: string, id: string): Promise<SkillDetailItem | undefined> {
     const row = await this.repo.getById(workspaceId, id);
     if (!row) return undefined;
     const agentCount = await this.repo.countAgents(workspaceId, id);
-    return toSkillListItemDto({ skill: row, agentCount });
+    return toSkillDetailDto({ skill: row, agentCount });
   }
 
   /** Counted from real rows; a skill nobody has used reports zeros. */
