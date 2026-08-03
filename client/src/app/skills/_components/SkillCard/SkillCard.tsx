@@ -6,8 +6,9 @@ import React from "react";
 import { useTranslations } from "next-intl";
 import { Icon, Badge, Toggle } from "@devdigest/ui";
 import type { SkillListItem } from "@devdigest/shared";
-import { useDeleteSkill } from "../../../../lib/hooks/skills";
-import { SOURCE_ICONS, TYPE_COLORS } from "./constants";
+import { SkillTypeBadge } from "@/components/skill-type";
+import { useDeleteSkill } from "@/lib/hooks/skills";
+import { SOURCE_ICONS } from "./constants";
 import { s } from "./styles";
 
 export function SkillCard({
@@ -62,7 +63,7 @@ export function SkillCard({
       <div style={s.description}>{sk.description}</div>
 
       <div style={s.metaRow}>
-        <Badge color={TYPE_COLORS[sk.type]}>{t(`listItem.type.${sk.type}`)}</Badge>
+        <SkillTypeBadge type={sk.type} />
         <Badge color="var(--text-muted)" icon={SOURCE_ICONS[sk.source]}>
           {t(`listItem.source.${sk.source}`)}
         </Badge>

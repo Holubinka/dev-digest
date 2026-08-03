@@ -23,8 +23,8 @@ import {
   useImportSkillUrl,
 } from "../../../../lib/hooks/skills";
 import { useToast } from "../../../../lib/toast";
-import { TYPE_VALUES } from "../CreateSkillModal/constants";
-import { SkillBodyEditor } from "../SkillDetail/_components/SkillBodyEditor";
+import { TYPE_VALUES } from "../constants";
+import { SkillBodyEditor } from "../SkillBodyEditor";
 import { s } from "./styles";
 
 export function ImportSkillDrawer({

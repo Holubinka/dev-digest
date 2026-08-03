@@ -9,8 +9,8 @@
 import React from "react";
 import { useTranslations } from "next-intl";
 import { Badge, Icon } from "@devdigest/ui";
-import { approxTokens } from "../../../../../../lib/tokens";
-import { bodyFilename } from "../../helpers";
+import { approxTokens } from "@/lib/tokens";
+import { bodyFilename } from "./helpers";
 import { LINE_HEIGHT, s } from "./styles";
 
 export function SkillBodyEditor({

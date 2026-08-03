@@ -8,15 +8,14 @@ import React from "react";
 import { useTranslations } from "next-intl";
 import { Badge, Checkbox, Icon } from "@devdigest/ui";
 import type { Agent, SkillListItem } from "@devdigest/shared";
-import { useAgentSkills, useSetAgentSkills } from "../../../../../../../lib/hooks/agents";
-import { useSkills } from "../../../../../../../lib/hooks/skills";
-import { TYPE_COLORS } from "../../../../../../skills/_components/SkillCard/constants";
+import { SkillTypeBadge } from "@/components/skill-type";
+import { useAgentSkills, useSetAgentSkills } from "@/lib/hooks/agents";
+import { useSkills } from "@/lib/hooks/skills";
 import { moveAt, partitionSkills, toggleId } from "./helpers";
 import { s } from "./styles";
 
 export function SkillsTab({ agent }: { agent: Agent }) {
   const t = useTranslations("agents");
-  const ts = useTranslations("skills");
   const { data: skills } = useSkills();
   const { data: links } = useAgentSkills(agent.id);
   const setSkills = useSetAgentSkills();
@@ -114,7 +113,7 @@ export function SkillsTab({ agent }: { agent: Agent }) {
                   </button>
                 </>
               )}
-              <Badge color={TYPE_COLORS[sk.type]}>{ts(`listItem.type.${sk.type}`)}</Badge>
+              <SkillTypeBadge type={sk.type} />
             </div>
           </div>
         );

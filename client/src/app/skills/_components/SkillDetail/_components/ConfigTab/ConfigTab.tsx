@@ -7,8 +7,8 @@ import { Button, FormField, SelectInput, TextInput } from "@devdigest/ui";
 import type { Skill } from "@devdigest/shared";
 import { useUpdateSkill } from "../../../../../../lib/hooks/skills";
 import { useToast } from "../../../../../../lib/toast";
-import { TYPE_VALUES } from "../../../CreateSkillModal/constants";
-import { SkillBodyEditor } from "../SkillBodyEditor";
+import { TYPE_VALUES } from "../../../constants";
+import { SkillBodyEditor } from "../../../SkillBodyEditor";
 import { s } from "./styles";
 
 export function ConfigTab({ skill }: { skill: Skill }) {

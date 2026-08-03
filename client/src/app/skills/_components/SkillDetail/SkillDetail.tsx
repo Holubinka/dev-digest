@@ -6,8 +6,8 @@ import React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Badge, ErrorState, Icon, Skeleton, Tabs, Toggle } from "@devdigest/ui";
-import { useSkill, useUpdateSkill } from "../../../../lib/hooks/skills";
-import { TYPE_COLORS } from "../SkillCard/constants";
+import { SkillTypeBadge } from "@/components/skill-type";
+import { useSkill, useUpdateSkill } from "@/lib/hooks/skills";
 import { ConfigTab } from "./_components/ConfigTab";
 import { PreviewTab } from "./_components/PreviewTab";
 import { StatsTab } from "./_components/StatsTab";
@@ -51,7 +51,7 @@ export function SkillDetail({ id }: { id: string }) {
         <h1 className="mono" style={s.name}>
           {skill.name}
         </h1>
-        <Badge color={TYPE_COLORS[skill.type]}>{t(`listItem.type.${skill.type}`)}</Badge>
+        <SkillTypeBadge type={skill.type} />
         <Badge color="var(--text-muted)" mono>
           {t("detail.version", { version: skill.version })}
         </Badge>
