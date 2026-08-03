@@ -54,6 +54,52 @@ const PRICING_TEST = `@@ -0,0 +1,8 @@
 +  });
 +});`;
 
+/**
+ * PR #103's point is that branch coverage looks COMPLETE. Every branch has a
+ * test; what none of them has is an assertion about the returned value. The
+ * rounding is wrong — `Math.round(x) / 100` instead of `Math.round(x * 100) /
+ * 100`, so a 100 subtotal at 20% returns 1.2 rather than 120 — and all three
+ * tests still pass, because two assert on a spy and the third only checks the
+ * type. That is what separates a checklist that enumerates branches from one
+ * that reads assertions.
+ */
+const INVOICE_TS = `@@ -0,0 +1,10 @@
++import { taxFor } from './tax';
++
++/** Total including the regional tax rate, rounded to cents. */
++export function totalWithTax(subtotal: number, region: string): number {
++  if (subtotal < 0) {
++    throw new Error('subtotal must not be negative');
++  }
++  const rate = taxFor(region);
++  return Math.round(subtotal * (1 + rate)) / 100;
++}`;
+
+const INVOICE_TEST = `@@ -0,0 +1,23 @@
++import { describe, it, expect, vi } from 'vitest';
++import * as tax from '../src/tax';
++import { totalWithTax } from '../src/invoice';
++
++describe('totalWithTax', () => {
++  it('applies the regional tax rate', () => {
++    const rate = vi.spyOn(tax, 'taxFor').mockReturnValue(0.2);
++    totalWithTax(100, 'EU');
++    expect(rate).toHaveBeenCalledWith('EU');
++  });
++
++  it('rejects a negative subtotal', () => {
++    const rate = vi.spyOn(tax, 'taxFor').mockReturnValue(0.2);
++    expect(() => totalWithTax(-1, 'EU')).toThrow();
++    expect(rate).not.toHaveBeenCalled();
++  });
++
++  it('rounds the total to cents', () => {
++    vi.spyOn(tax, 'taxFor').mockReturnValue(0.1);
++    const total = totalWithTax(10, 'US');
++    expect(typeof total).toBe('number');
++  });
++});`;
+
 const SEARCH_ROUTES = `@@ -1,15 +1,18 @@
  import type { FastifyInstance } from 'fastify';
  import { z } from 'zod';
@@ -106,6 +152,16 @@ const FIXTURE_PRS: FixturePr[] = [
     files: [
       { path: 'src/pricing.ts', additions: 17, deletions: 0, patch: PRICING_TS },
       { path: 'test/pricing.test.ts', additions: 8, deletions: 0, patch: PRICING_TEST },
+    ],
+  },
+  {
+    number: 103,
+    title: 'Add invoice totals with regional tax',
+    branch: 'feat/invoice-totals',
+    body: 'Adds totalWithTax. Every branch is covered by a test.',
+    files: [
+      { path: 'src/invoice.ts', additions: 10, deletions: 0, patch: INVOICE_TS },
+      { path: 'test/invoice.test.ts', additions: 23, deletions: 0, patch: INVOICE_TEST },
     ],
   },
   {

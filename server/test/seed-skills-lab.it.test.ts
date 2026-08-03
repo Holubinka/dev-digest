@@ -130,6 +130,31 @@ d('skills-lab seed fixtures', () => {
     expect(testPatch).not.toContain('throw');
   });
 
+  it('rebuilds PR #103, where every branch is tested and nothing is asserted', async () => {
+    const [pr] = await pg.handle.db
+      .select()
+      .from(t.pullRequests)
+      .where(and(eq(t.pullRequests.workspaceId, workspaceId), eq(t.pullRequests.number, 103)));
+
+    const diff = await diffFromPrFiles(new ReviewRepository(pg.handle.db), pr!.id);
+    const files = await new ReviewRepository(pg.handle.db).getPrFiles(pr!.id);
+    const testPatch = files.find((f) => f.path === 'test/invoice.test.ts')?.patch ?? '';
+
+    // Both branches ARE exercised — a rubric that only enumerates branches finds
+    // nothing here, which is the whole point of this fixture.
+    expect(testPatch).toContain('rejects a negative subtotal');
+    expect(testPatch).toContain("totalWithTax(100, 'EU')");
+
+    // And yet no test asserts the value the function returns.
+    expect(testPatch).toContain('toHaveBeenCalledWith');
+    expect(testPatch).toContain("expect(typeof total).toBe('number')");
+    expect(testPatch).not.toMatch(/toBe\(\s*\d/);
+
+    // The rounding really is wrong, so the smells are load-bearing rather than
+    // stylistic: 100 at 20% returns 1.2, and the suite stays green.
+    expect(diff.raw).toContain('Math.round(subtotal * (1 + rate)) / 100');
+  });
+
   it('rebuilds PR #102 with the rename and the response change on changed lines', async () => {
     const [pr] = await pg.handle.db
       .select()

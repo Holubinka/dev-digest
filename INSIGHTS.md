@@ -202,6 +202,28 @@ for every gap while the skilled run cited `src/pricing.ts:12-14` — the rubric'
 branch, not the test file" rule landing. That disappeared once v2 stopped over-specifying, so
 it was the prompt's richness, not the skill.
 
+**Correction, 2026-08-03 (later the same day).** It reproduces — the fixture was the problem,
+not the feature. `devdigest/skills-lab` #103 was built so that branch coverage is COMPLETE:
+`totalWithTax` has a throw branch and a happy path, and there is a test for each. What no test
+has is an assertion about the returned value — two assert on a `vi.spyOn` spy, the third only
+checks `typeof total === 'number'` — while the implementation rounds wrongly
+(`Math.round(x) / 100` instead of `Math.round(x * 100) / 100`), so 100 at 10% returns 1.1
+instead of 110 and the suite stays green.
+
+Measured, same model, same PR, skills unbound then bound:
+
+| | findings | what it caught |
+|---|---|---|
+| without | 1 WARNING | only "rounding test does not assert the rounded value" |
+| with | 1 CRITICAL + 2 WARNING | the **actual bug**, cited on `src/invoice.ts:8-10`, plus both smells |
+
+So the lesson is sharper than "the prompt leaked". A checklist that enumerates *branches* adds
+nothing when a human can see all the branches at once — #101 is that case. A checklist that
+tells the model to read *assertions* changes the outcome even on ten lines, because "is this
+assertion vacuous" is not something a scope-only prompt thinks to ask. Build the fixture
+around the rule you are demonstrating, and prefer rules about the quality of what is there
+over rules about the quantity of what is missing.
+
 ## Codebase Patterns
 
 ### The two `docker-compose.yml` files are byte-identical duplicates
