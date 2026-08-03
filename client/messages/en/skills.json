@@ -45,14 +45,17 @@
   },
   "create": {
     "title": "Create a skill",
-    "subtitle": "Name it and pick a type. You write the body next.",
+    "subtitle": "Name it, say what it is for, and write the body the agent will receive.",
     "name": "Name",
     "namePlaceholder": "uncovered-branch-rubric",
     "type": "Type",
     "submit": "Create skill",
     "creating": "Creating…",
-    "defaultName": "Untitled skill",
-    "starterBody": "# Rule\n\nDescribe what the agent must do."
+    "starterBody": "# Rule\n\nWork through these steps and report what they turn up.\n\n1. \n2. \n\nCite the changed line the finding is about.",
+    "createdToast": "Created “{name}”",
+    "footerNote": "Saved enabled — it reaches a bound agent’s next review.",
+    "bodyHint": "This text is appended to the agent’s prompt as instructions. Write a procedure with a step that produces a list, not a description of a quality.",
+    "descriptionHint": "The one line an agent reads to decide the skill applies. Write it as an instruction, in the imperative."
   },
   "editor": {
     "name": "Name",

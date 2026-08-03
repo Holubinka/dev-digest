@@ -18,11 +18,16 @@ export function SkillBodyEditor({
   value,
   dirty,
   onChange,
+  minRows = 12,
+  maxRows = 20,
 }: {
   name: string;
   value: string;
   dirty: boolean;
   onChange: (v: string) => void;
+  /** The create modal has a footer to leave room for; the Config tab does not. */
+  minRows?: number;
+  maxRows?: number;
 }) {
   const t = useTranslations("skills");
   const gutter = React.useRef<HTMLDivElement>(null);
@@ -56,7 +61,7 @@ export function SkillBodyEditor({
           onScroll={(e) => {
             if (gutter.current) gutter.current.scrollTop = e.currentTarget.scrollTop;
           }}
-          rows={Math.min(Math.max(lineCount, 12), 20)}
+          rows={Math.min(Math.max(lineCount, minRows), maxRows)}
           spellCheck={false}
           placeholder={t("body.placeholder")}
           aria-label={t("body.label")}
