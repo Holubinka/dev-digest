@@ -18,6 +18,7 @@ import { SkillsService } from './service.js';
  *   GET    /skills/:id/stats             → agents, runs, findings, acceptance
  *   GET    /skills/:id/versions           → body history (newest first)
  *   GET    /skills/:id/versions/:version  → one body snapshot
+ *   POST   /skills/:id/versions/:version/restore → make that body current again
  *   POST   /skills/import/preview         → parse an upload  → draft, saves NOTHING
  *   POST   /skills/import/url             → fetch a URL      → draft, saves NOTHING
  *
@@ -125,6 +126,21 @@ export default async function skillsRoutes(appBase: FastifyInstance) {
     if (!version) throw new NotFoundError('Skill version not found');
     return version;
   });
+
+  app.post(
+    '/skills/:id/versions/:version/restore',
+    { schema: { params: VersionParams } },
+    async (req) => {
+      const { workspaceId } = await getContext(app.container, req);
+      const skill = await service.restoreVersion(
+        workspaceId,
+        req.params.id,
+        req.params.version,
+      );
+      if (!skill) throw new NotFoundError('Skill version not found');
+      return skill;
+    },
+  );
 
   // No body schema: the payload is multipart, not JSON. The filename and the
   // bytes are validated by the parser, which is where the rules live.

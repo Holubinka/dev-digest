@@ -79,11 +79,22 @@
     "empty": "This skill has no body yet."
   },
   "versions": {
-    "heading": "Body history",
-    "hint": "A version is recorded every time the body changes.",
+    "heading": "Change history",
+    "hint": "Every body change is recorded. A restore appends a new version rather than rewriting the past.",
     "current": "current",
     "empty": "No history yet.",
-    "loadError": "Could not load the history."
+    "loadError": "Could not load the history.",
+    "diff": "Diff",
+    "hideDiff": "Hide diff",
+    "restore": "Restore",
+    "restoring": "Restoring…",
+    "restoreConfirm": "Restore the body from v{version}? It becomes the current body and is recorded as a new version — nothing in the history is lost.",
+    "restoredToast": "Restored the body from v{from} as v{version}",
+    "initial": "initial version",
+    "against": "compared with v{version}",
+    "againstNothing": "the first recorded body",
+    "unchanged": "No lines changed.",
+    "stat": "+{added} −{removed}"
   },
   "drawer": {
     "title": "Import a skill",

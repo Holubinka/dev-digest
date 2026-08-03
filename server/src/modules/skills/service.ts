@@ -170,6 +170,31 @@ export class SkillsService {
   }
 
   /**
+   * Restore a past body.
+   *
+   * This APPENDS rather than rewrites: the old body becomes the current one and
+   * the version counter moves forward, so the history stays a record of what
+   * happened instead of a record of what someone later wished had happened.
+   * Restoring the body a skill already has is a no-op, because `update` only
+   * versions a body that actually changed.
+   *
+   * It also goes through `update`, so the injection check applies: restoring a
+   * body that trips the detector onto an enabled skill is refused, not quietly
+   * accepted because the text is old.
+   */
+  async restoreVersion(
+    workspaceId: string,
+    id: string,
+    version: number,
+  ): Promise<Skill | undefined> {
+    const skill = await this.repo.getById(workspaceId, id);
+    if (!skill) return undefined;
+    const snapshot = await this.repo.getVersion(id, version);
+    if (!snapshot) return undefined;
+    return this.update(workspaceId, id, { body: snapshot.body });
+  }
+
+  /**
    * Parse an upload into a draft. **Writes nothing** — the client shows the
    * result, lets the user edit it, and only then posts to `POST /skills`. That
    * split is the product requirement (save only after confirmation) and it also
