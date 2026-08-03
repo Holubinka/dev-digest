@@ -6,9 +6,11 @@ Reusable AI skills that provide specialized knowledge and workflows. Canonical l
 
 | Skill | Scope | Description |
 |-------|-------|-------------|
+| [onion-architecture](onion-architecture/SKILL.md) | Backend | Which ring code goes in: layering, ports and adapters, the composition root, and the `pnpm arch` gate |
 | [fastify-best-practices](fastify-best-practices/SKILL.md) | Backend | Fastify routes, plugins, JSON-schema validation, error handling |
 | [drizzle-orm-patterns](drizzle-orm-patterns/SKILL.md) | Backend | Drizzle schema, queries, relations, transactions, migrations |
 | [postgresql-table-design](postgresql-table-design/SKILL.md) | Backend | Postgres schema design, data types, indexing, constraints |
+| [frontend-architecture](frontend-architecture/SKILL.md) | Frontend | Where code goes: folder structure, component splitting, logic placement, Server/Client boundary |
 | [next-best-practices](next-best-practices/SKILL.md) | Frontend | Next.js App Router, RSC boundaries, data fetching, optimization |
 | [react-best-practices](react-best-practices/SKILL.md) | Frontend | React anti-patterns, state management, hooks rules |
 | [react-testing-library](react-testing-library/SKILL.md) | Frontend | General-purpose React Testing Library guide with Vitest |
@@ -37,5 +39,41 @@ Skills are modular packages that extend the AI agent with specialized knowledge 
 Each skill has:
 
 - `SKILL.md` — Main skill file with rules and conventions (required)
-- `examples.md` — Code examples showing good/bad patterns (recommended)
-- `references.md` — Sources and rationale (optional)
+- `<topic>.md` — One file per question the skill answers, linked from `SKILL.md`. Keep
+  good/bad examples inside the topic file they belong to rather than a separate `examples.md`,
+  so a rule and its example are never more than one hop apart.
+- `README.md` — The skill card: focus, file map, coverage, related skills, sources, version,
+  how it was tested (recommended for skills we author)
+- `references.md` — Sources and rationale, when they are too large for the README (optional)
+
+Keep `SKILL.md` itself thin — it loads in full whenever the skill activates, so it should
+carry only what routes a question: the principles, the decision procedure, the boundary with
+sibling skills, and links to the topic files.
+
+### Frontmatter
+
+Only `name` and `description` are required, and `name` **must match the directory name**.
+The [Agent Skills spec](https://agentskills.io/specification) has **no top-level `version`
+field** — put it under `metadata`, which also takes free-form keys:
+
+```yaml
+---
+name: frontend-architecture
+description: "What it does, and when to use it. Max 1024 characters."
+metadata:
+  version: "1.0.0"
+  tags: react, nextjs, folder-structure
+---
+```
+
+Keep the `SKILL.md` body under 500 lines and keep file references one level deep, per
+[Anthropic's authoring guide](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices).
+
+`frontend-architecture/` is the reference implementation of this layout.
+
+### Before calling a skill done
+
+Measure the baseline: run the scenarios the skill is meant to handle against an agent that
+does **not** have it. Rules an agent already follows unaided are context cost, not guidance —
+cut them. Record the result in the skill's `README.md` so the next editor knows which rules
+are evidence-backed.
