@@ -394,6 +394,17 @@ is already split between `'` (here) and `’` (`prReview.json`).
 
 Brand names stay literal — the `AppShell` crumb is `"DevDigest"` in every locale.
 
+### A second route consuming a `_components/` folder is the promotion signal
+
+The Conventions screen needed the skill body editor and the skill-type list, both of which
+lived under `app/skills/_components/`. Importing them across routes typechecks and lints
+cleanly, so nothing stops you — `/pr-self-review` did, citing `frontend-architecture`'s
+promotion rule. `SkillBodyEditor` moved to `components/skill-body-editor/` and `TYPE_VALUES`
+to `components/skill-type/values.ts`, with all five importers repointed in the same commit.
+The same argument moved `renderWithProviders` out of `test/skills.tsx` into `test/render.tsx`:
+a QueryClient/next-intl/Toast wrapper was never about skills, and a second domain importing
+it from a first domain's fixture is the same violation wearing test clothes.
+
 ## Tool & Library Notes
 
 ### Two `vi.mock` specifiers for the same module do not merge — the later one replaces the first

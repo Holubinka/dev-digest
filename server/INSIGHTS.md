@@ -225,6 +225,36 @@ Without it `reviewer-core` never enters the graph at all and `core-stays-pure` i
 picture, and the module count in the footer is the fastest sanity check that the graph is the
 size you expect.
 
+### Anthropic's structured-output API rejects a Zod schema that states a bound
+
+**Symptom.** A `completeStructured` call that works on OpenAI fails on any Anthropic model
+through OpenRouter with `400 Provider returned error`, whose raw body reads
+`output_config.format.schema: For 'array' type, property 'maxItems' is not supported` — or
+`For 'number' type, properties maximum, minimum are not supported`.
+
+**Cause.** `toJsonSchema` renders `z.array(...).max(24)` as `maxItems` and
+`z.number().min(0).max(1)` as `minimum`/`maximum`. Anthropic's schema subset accepts neither.
+The bound is usually only a preference, so nothing warns you that stating it costs a provider.
+
+**Fix.** Keep bounds out of the schema the model sees; state them in the prompt and enforce
+them in the service — `ConventionsService.ground` slices to `MAX_CANDIDATES` and clamps the
+confidence (`server/src/modules/conventions/prompt.ts:20`). A test that pins its provider is
+what makes this reproducible: `conventions-service.test.ts` injects the mock under `openai`,
+`anthropic` and `openrouter` because the registry default decides which one the service asks
+for, and when that default moved the suite silently started calling a real API.
+
+### `drizzle-kit generate` cannot be answered from a pipe
+
+**Symptom.** `pnpm db:generate` prints `Is <column> in <table> created or renamed from another
+column?` and then hangs forever. `printf '\n' |` does not help; neither does a pty via `script`.
+
+**Cause.** The prompt appears whenever one generate step both adds and drops columns — it
+cannot tell a rename from a create/drop pair — and it reads raw TTY keypresses, not stdin.
+
+**Fix.** Split the change into two runs with an unambiguous shape each: add the new columns
+first (additions only, no prompt), then delete the old one (a drop only, no prompt).
+Migrations `0012` and `0013` are that pair.
+
 ## Recurring Errors & Fixes
 
 ### A review run fails with `401 Missing Authentication header`
@@ -298,6 +328,25 @@ subpath today — every `@devdigest/…` specifier in `src/` and `test/` is bare
 asymmetry is inert, not a bug.
 
 ## Session Notes
+
+### 2026-08-03 (conventions extractor)
+
+- Built the conventions extractor. The lesson that transfers: **what PageRank calls important
+  and what teaches a convention are different things.** `repoIntel.getConventionSamples` returns
+  the most-imported files, which in this repo are barrels and `styles.ts` — the first scans
+  produced "components are named in PascalCase". `ConventionsService.samplePaths` now
+  over-fetches the ranking and filters `/index.ts`, `/styles.ts`, `.d.ts` and anything under
+  400 characters.
+- **Re-anchoring a quote is worth more than any prompt wording.** Measured over one scan of this
+  repo: 21 of the surviving evidence sites were cited at the wrong line number. Dropping a claim
+  whose line is wrong, instead of searching the file for the snippet and correcting it, would
+  have left the feature with almost nothing to show.
+- **A cheap model is not a free model.** Same prompt, same gates, one scan each:
+  `openai/gpt-4o-mini` returned 10 rules of which 3 survived grounding, mostly framework
+  defaults; `anthropic/claude-haiku-4.5` returned 15 of which 11 survived, naming `AppError`,
+  the error envelope and `satisfies`. Same price tier. The registry default moved to haiku.
+- A 60k-token sample block never returned inside the 120s ceiling; 24k with 6k per file returns
+  in 15-40s. A file's conventions are in its first hundred lines or they are not conventions.
 
 ### 2026-08-03
 
