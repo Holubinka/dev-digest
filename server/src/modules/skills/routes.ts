@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { SkillSource, SkillType } from '@devdigest/shared';
 import { getContext } from '../_shared/context.js';
 import { IdParams } from '../_shared/schemas.js';
-import { NotFoundError } from '../../platform/errors.js';
+import { NotFoundError, ValidationError } from '../../platform/errors.js';
 import { MAX_BODY_CHARS, MAX_DESCRIPTION_CHARS, MAX_NAME_CHARS } from './constants.js';
 import { SkillsService } from './service.js';
 
@@ -17,10 +17,21 @@ import { SkillsService } from './service.js';
  *   DELETE /skills/:id                    → delete
  *   GET    /skills/:id/versions           → body history (newest first)
  *   GET    /skills/:id/versions/:version  → one body snapshot
+ *   POST   /skills/import/preview         → parse an upload  → draft, saves NOTHING
+ *   POST   /skills/import/url             → fetch a URL      → draft, saves NOTHING
+ *
+ * Both import routes are previews: the client shows the draft, lets the user
+ * edit it, and persists with `POST /skills`. Nothing is written until then, so
+ * an abandoned import leaves nothing to clean up.
  *
  * Binding a skill to an agent lives on the agents module (`/agents/:id/skills`),
  * which owns both sides of `agent_skills`.
  */
+
+/** Import throughput. Both routes turn attacker-influenced bytes into work. */
+const IMPORT_RATE_LIMIT = { rateLimit: { max: 20, timeWindow: '1 minute' } };
+
+const ImportUrlBody = z.object({ url: z.string().url() });
 
 /** `/skills/:id/versions/:version` — id is a uuid, version a positive integer. */
 const VersionParams = z.object({
@@ -106,4 +117,22 @@ export default async function skillsRoutes(appBase: FastifyInstance) {
     if (!version) throw new NotFoundError('Skill version not found');
     return version;
   });
+
+  // No body schema: the payload is multipart, not JSON. The filename and the
+  // bytes are validated by the parser, which is where the rules live.
+  app.post('/skills/import/preview', { config: IMPORT_RATE_LIMIT }, async (req) => {
+    await getContext(app.container, req);
+    const part = await req.file();
+    if (!part) throw new ValidationError('Expected a file upload');
+    return service.previewImportFile({ filename: part.filename, bytes: await part.toBuffer() });
+  });
+
+  app.post(
+    '/skills/import/url',
+    { schema: { body: ImportUrlBody }, config: IMPORT_RATE_LIMIT },
+    async (req) => {
+      await getContext(app.container, req);
+      return service.previewImportUrl(req.body.url);
+    },
+  );
 }

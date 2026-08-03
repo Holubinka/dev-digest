@@ -1,13 +1,22 @@
 import type { Container } from '../../platform/container.js';
 import type {
   Skill,
+  SkillImportPreview,
   SkillListItem,
   SkillSource,
   SkillType,
   SkillVersion,
 } from '@devdigest/shared';
+import { ValidationError } from '../../platform/errors.js';
 import { SkillsRepository } from './repository.js';
 import { toSkillDto, toSkillListItemDto, toSkillVersionDto } from './helpers.js';
+import {
+  filenameFromUrl,
+  isMarkdownFilename,
+  looksLikeArchive,
+  previewFromArchive,
+  previewFromDocument,
+} from './import.js';
 
 /**
  * Skills service. A skill is a named markdown block that agents bind, order and
@@ -38,7 +47,7 @@ export interface UpdateSkillInput {
 
 export class SkillsService {
   constructor(
-    container: Container,
+    private container: Container,
     private repo: SkillsRepository = new SkillsRepository(container.db),
   ) {}
 
@@ -116,5 +125,35 @@ export class SkillsService {
     if (!skill) return undefined;
     const row = await this.repo.getVersion(id, version);
     return row ? toSkillVersionDto(row) : undefined;
+  }
+
+  /**
+   * Parse an upload into a draft. **Writes nothing** — the client shows the
+   * result, lets the user edit it, and only then posts to `POST /skills`. That
+   * split is the product requirement (save only after confirmation) and it also
+   * means an import that is never confirmed leaves no trace to clean up.
+   */
+  previewImportFile(file: { filename: string; bytes: Uint8Array }): SkillImportPreview {
+    if (looksLikeArchive(file.filename, file.bytes)) return previewFromArchive(file.bytes);
+    if (!isMarkdownFilename(file.filename)) {
+      throw new ValidationError('Upload a .md, .markdown or .zip file');
+    }
+    return previewFromDocument({
+      filename: file.filename,
+      text: new TextDecoder().decode(file.bytes),
+      bytes: file.bytes.byteLength,
+      source: 'imported_file',
+    });
+  }
+
+  /** The same draft, from a URL. The fetcher owns refusing an unsafe address. */
+  async previewImportUrl(url: string): Promise<SkillImportPreview> {
+    const fetched = await this.container.skillFetcher.fetchMarkdown(url);
+    return previewFromDocument({
+      filename: filenameFromUrl(fetched.finalUrl),
+      text: fetched.text,
+      bytes: fetched.bytes,
+      source: 'imported_url',
+    });
   }
 }

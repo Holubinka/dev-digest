@@ -286,3 +286,23 @@ export interface SecretsProvider {
    */
   set?(key: SecretKey, value: string): Promise<void>;
 }
+
+// ---------- Skill fetch (importing a skill from a URL) ----------
+export interface FetchedMarkdown {
+  text: string;
+  /** The URL actually read, after redirects — echoed into the import preview. */
+  finalUrl: string;
+  bytes: number;
+}
+
+export interface SkillFetcher {
+  /**
+   * GET a remote markdown document.
+   *
+   * The address is supplied by a user and fetched from inside the network, so
+   * the implementation — not the caller — is responsible for refusing anything
+   * that is not plainly public https text: private and link-local ranges,
+   * redirects that leave public space, oversized bodies, and non-text replies.
+   */
+  fetchMarkdown(url: string): Promise<FetchedMarkdown>;
+}
