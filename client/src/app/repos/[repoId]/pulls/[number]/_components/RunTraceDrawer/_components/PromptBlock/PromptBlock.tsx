@@ -4,7 +4,8 @@
 
 import React from "react";
 import { useTranslations } from "next-intl";
-import { Button, Icon, Modal } from "@devdigest/ui";
+import { Badge, Button, Icon, Modal } from "@devdigest/ui";
+import { approxTokens } from "../../../../../../../../../lib/tokens";
 import { s } from "../../styles";
 import { PromptModalBody } from "../PromptModalBody";
 
@@ -35,6 +36,10 @@ export function PromptBlock({ label, text, color }: { label: string; text: strin
       <div onClick={() => setOpen((o) => !o)} style={s.promptHead}>
         <span style={s.promptDot(color)} />
         <span style={s.promptLabel}>{label}</span>
+        {/* Every block carries its own size, so the cost of a slot — the skills
+            block above all — is legible without expanding it. Approximate: the
+            exact figure for skills is counted server-side and logged. */}
+        <Badge color="var(--text-muted)">{t("trace.prompt.tokens", { count: approxTokens(text) })}</Badge>
         <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
           <button
             type="button"
