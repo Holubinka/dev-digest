@@ -11,9 +11,15 @@ import { classifyEntry, draftFromMarkdown, pickSkillCore } from './helpers.js';
  * (`js-tiktoken` sits behind a port because it is stateful; this is not.)
  *
  * The safety property lives in `unzipSync`'s filter, which fflate calls BEFORE
- * an entry is decompressed and which receives the entry's declared uncompressed
- * size. So an executable entry is never read rather than read-then-discarded,
- * and a 10 KB archive claiming a 4 GB member never allocates.
+ * an entry is decompressed. So an executable entry is never read rather than
+ * read-then-discarded, and a 10 KB archive claiming a 4 GB member never
+ * allocates.
+ *
+ * The filter budgets `max(originalSize, size)`, not the uncompressed size the
+ * name suggests: for a STORED entry fflate copies `size` — the compressed
+ * field — verbatim, and the two are independent numbers the archive writes for
+ * itself. Budgeting only the uncompressed one let 200 entries declaring a
+ * kilobyte apiece each copy the same 2 MB payload.
  */
 
 export interface ArchiveScan {
@@ -39,13 +45,19 @@ export function parseSkillArchive(bytes: Uint8Array): ArchiveScan {
         throw new ValidationError(`Archive has more than ${MAX_ENTRIES} entries`);
       }
 
-      const verdict = classifyEntry(entry.name, entry.originalSize);
+      // Budget the larger of the two declared sizes. They are independent
+      // fields the archive controls, and for a STORED entry fflate copies the
+      // COMPRESSED one verbatim — so budgeting `originalSize` alone lets 200
+      // entries declaring a kilobyte each copy 2 MB each.
+      const claimed = Math.max(entry.originalSize, entry.size);
+
+      const verdict = classifyEntry(entry.name, claimed);
       if (verdict !== 'read') {
         skipped.push({ path: entry.name, reason: verdict });
         return false;
       }
 
-      inflated += entry.originalSize;
+      inflated += claimed;
       if (inflated > MAX_TOTAL_BYTES) {
         throw new ValidationError(`Archive markdown exceeds ${MAX_TOTAL_BYTES} bytes`);
       }
