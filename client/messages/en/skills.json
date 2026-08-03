@@ -39,7 +39,8 @@
     "tabs": {
       "config": "Config",
       "preview": "Preview",
-      "versions": "Versions"
+      "versions": "Versions",
+      "stats": "Stats"
     }
   },
   "create": {
@@ -63,7 +64,8 @@
     "saving": "Saving…",
     "savedToast": "Saved “{name}” (v{version})",
     "unsaved": "unsaved",
-    "tokens": "≈{count} tok"
+    "tokens": "≈{count} tok",
+    "tokensPlain": "{count} tokens"
   },
   "body": {
     "label": "Skill body (Markdown)",
@@ -149,5 +151,28 @@
       "extracted": "Extracted",
       "community": "Community"
     }
+  },
+  "injection": {
+    "badge": "injection",
+    "title": "This body tries to hijack the prompt",
+    "body": "A skill is added to the agent’s prompt as instructions, so text like this can override the review. The skill is kept so you can read it, but it cannot be enabled and will not reach any model.",
+    "cannotEnable": "Cannot be enabled while this is present",
+    "line": "line {line}",
+    "limits": "Pattern matching only — a rewording or another language can slip past it. Read the body; do not rely on this check."
+  },
+  "stats": {
+    "heading": "What this skill has done",
+    "hint": "Counted from the runs of the agents that bind this skill right now. A run does not record which skills it used, so this attributes by current binding rather than by history.",
+    "agents": "Agents",
+    "runs": "Runs",
+    "findings": "Findings",
+    "accepted": "Accepted",
+    "dismissed": "Dismissed",
+    "acceptRate": "Accept rate",
+    "bodyTokens": "Body size",
+    "tokens": "{count} tok",
+    "noRate": "nothing judged yet",
+    "unused": "No agent binds this skill yet, so there is nothing to count.",
+    "loadError": "Could not load the stats."
   }
 }

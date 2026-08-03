@@ -4,10 +4,12 @@ import type {
   SkillImportPreview,
   SkillListItem,
   SkillSource,
+  SkillStats,
   SkillType,
   SkillVersion,
 } from '@devdigest/shared';
 import { ValidationError } from '../../platform/errors.js';
+import { detectInjection } from '../../platform/skill-injection.js';
 import { SkillsRepository } from './repository.js';
 import { toSkillDto, toSkillListItemDto, toSkillVersionDto } from './helpers.js';
 import {
@@ -56,9 +58,29 @@ export class SkillsService {
     return rows.map(toSkillListItemDto);
   }
 
-  async get(workspaceId: string, id: string): Promise<Skill | undefined> {
+  async get(workspaceId: string, id: string): Promise<SkillListItem | undefined> {
     const row = await this.repo.getById(workspaceId, id);
-    return row ? toSkillDto(row) : undefined;
+    if (!row) return undefined;
+    return toSkillListItemDto({ skill: row, agentCount: await this.repo.countAgents(id) });
+  }
+
+  /** Counted from real rows; a skill nobody has used reports zeros. */
+  async stats(workspaceId: string, id: string): Promise<SkillStats | undefined> {
+    const row = await this.repo.getById(workspaceId, id);
+    if (!row) return undefined;
+    const [agents, counts] = await Promise.all([
+      this.repo.countAgents(id),
+      this.repo.statsFor(id),
+    ]);
+    const judged = counts.accepted + counts.dismissed;
+    return {
+      agents,
+      ...counts,
+      accept_rate: judged === 0 ? null : counts.accepted / judged,
+      // Through the port, so this is the real encoder's count — the same number
+      // the Live Log reports when the skill is attached to a run.
+      body_tokens: this.container.tokenizer.count(row.body),
+    };
   }
 
   /**
@@ -73,7 +95,11 @@ export class SkillsService {
    */
   async create(workspaceId: string, input: CreateSkillInput): Promise<Skill> {
     const source = input.source ?? 'manual';
-    const enabled = source === 'manual' ? (input.enabled ?? true) : false;
+    // A body that tries to hijack the prompt is stored — deleting the user's
+    // text would hide the evidence they need to judge it — but it can never
+    // start enabled, whatever its provenance.
+    const clean = detectInjection(input.body).length === 0;
+    const enabled = clean && source === 'manual' ? (input.enabled ?? true) : false;
     const row = await this.repo.insert({
       workspaceId,
       name: input.name,
@@ -92,6 +118,22 @@ export class SkillsService {
     id: string,
     patch: UpdateSkillInput,
   ): Promise<Skill | undefined> {
+    // Check the body the skill will END UP with against the enabled state it
+    // will end up in — otherwise "enable" and "paste an injection" are safe
+    // apart and unsafe together, in either order.
+    const existing = await this.repo.getById(workspaceId, id);
+    if (existing) {
+      const body = patch.body ?? existing.body;
+      const enabled = patch.enabled ?? existing.enabled;
+      const injection = detectInjection(body);
+      if (enabled && injection.length > 0) {
+        throw new ValidationError(
+          'This body looks like a prompt injection, so the skill cannot be enabled',
+          { injection },
+        );
+      }
+    }
+
     const row = await this.repo.update(workspaceId, id, {
       ...(patch.name !== undefined ? { name: patch.name } : {}),
       ...(patch.description !== undefined ? { description: patch.description } : {}),

@@ -7,6 +7,7 @@ import type {
   Skill,
   SkillImportPreview,
   SkillListItem,
+  SkillStats,
   SkillType,
   SkillVersion,
 } from "@devdigest/shared";
@@ -18,10 +19,19 @@ export function useSkills() {
   });
 }
 
+/** Returns the list shape, so a detail view has `agent_count` and `injection` too. */
 export function useSkill(id: string | null | undefined) {
   return useQuery({
     queryKey: ["skill", id],
-    queryFn: () => api.get<Skill>(`/skills/${id}`),
+    queryFn: () => api.get<SkillListItem>(`/skills/${id}`),
+    enabled: !!id,
+  });
+}
+
+export function useSkillStats(id: string | null | undefined) {
+  return useQuery({
+    queryKey: ["skill-stats", id],
+    queryFn: () => api.get<SkillStats>(`/skills/${id}/stats`),
     enabled: !!id,
   });
 }
@@ -65,7 +75,10 @@ export function useUpdateSkill() {
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ["skills"] });
       qc.invalidateQueries({ queryKey: ["skill-versions", data.id] });
-      qc.setQueryData(["skill", data.id], data);
+      qc.invalidateQueries({ queryKey: ["skill-stats", data.id] });
+      // Refetch rather than write the response in: PUT returns the plain Skill,
+      // without the agent_count and injection the detail view reads.
+      qc.invalidateQueries({ queryKey: ["skill", data.id] });
     },
   });
 }

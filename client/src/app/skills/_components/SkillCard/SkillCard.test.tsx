@@ -19,6 +19,7 @@ const SKILL: SkillListItem = {
   version: 3,
   evidence_files: null,
   agent_count: 2,
+  injection: [],
 };
 
 function renderWithIntl(ui: React.ReactElement) {

@@ -1,4 +1,4 @@
-import { and, asc, countDistinct, desc, eq } from 'drizzle-orm';
+import { and, asc, count, countDistinct, desc, eq, inArray } from 'drizzle-orm';
 import type { Db } from '../../db/client.js';
 import * as t from '../../db/schema.js';
 import type { SkillSource, SkillType } from '@devdigest/shared';
@@ -56,6 +56,59 @@ export class SkillsRepository {
       .from(t.skills)
       .where(and(eq(t.skills.workspaceId, workspaceId), eq(t.skills.id, id)));
     return row;
+  }
+
+  /** How many agents bind this skill. */
+  async countAgents(skillId: string): Promise<number> {
+    const [row] = await this.db
+      .select({ n: countDistinct(t.agentSkills.agentId) })
+      .from(t.agentSkills)
+      .where(eq(t.agentSkills.skillId, skillId));
+    return Number(row?.n ?? 0);
+  }
+
+  /**
+   * What the agents binding this skill have actually produced.
+   *
+   * Attribution is by CURRENT binding, not by what was bound when the run
+   * happened — `agent_versions.config_json.skills` holds that history, but a
+   * run does not record which version it used, so a per-run attribution would
+   * be a guess dressed as a number. Counting current bindings is the honest
+   * approximation, and the UI says so.
+   */
+  async statsFor(skillId: string): Promise<{
+    runs: number;
+    findings: number;
+    accepted: number;
+    dismissed: number;
+  }> {
+    const boundAgents = this.db
+      .select({ agentId: t.agentSkills.agentId })
+      .from(t.agentSkills)
+      .where(eq(t.agentSkills.skillId, skillId));
+
+    const [runRow] = await this.db
+      .select({ n: count() })
+      .from(t.agentRuns)
+      .where(inArray(t.agentRuns.agentId, boundAgents));
+
+    const [findingRow] = await this.db
+      .select({
+        total: count(),
+        accepted: count(t.findings.acceptedAt),
+        dismissed: count(t.findings.dismissedAt),
+      })
+      .from(t.findings)
+      .innerJoin(t.reviews, eq(t.reviews.id, t.findings.reviewId))
+      .innerJoin(t.agentRuns, eq(t.agentRuns.id, t.reviews.runId))
+      .where(inArray(t.agentRuns.agentId, boundAgents));
+
+    return {
+      runs: Number(runRow?.n ?? 0),
+      findings: Number(findingRow?.total ?? 0),
+      accepted: Number(findingRow?.accepted ?? 0),
+      dismissed: Number(findingRow?.dismissed ?? 0),
+    };
   }
 
   /** Delete a skill (scoped to workspace). Its versions and any agent bindings

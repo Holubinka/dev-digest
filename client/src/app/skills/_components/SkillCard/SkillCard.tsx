@@ -34,8 +34,15 @@ export function SkillCard({
           {sk.name}
         </span>
         {onToggle && (
-          <div onClick={(e) => e.stopPropagation()}>
-            <Toggle on={sk.enabled} onChange={onToggle} size={14} />
+          <div
+            onClick={(e) => e.stopPropagation()}
+            title={sk.injection.length > 0 ? t("injection.cannotEnable") : undefined}
+          >
+            <Toggle
+              on={sk.enabled && sk.injection.length === 0}
+              onChange={(next) => sk.injection.length === 0 && onToggle(next)}
+              size={14}
+            />
           </div>
         )}
         <button
@@ -59,6 +66,11 @@ export function SkillCard({
         <Badge color="var(--text-muted)" icon={SOURCE_ICONS[sk.source]}>
           {t(`listItem.source.${sk.source}`)}
         </Badge>
+        {sk.injection.length > 0 && (
+          <Badge color="var(--crit)" icon="AlertTriangle">
+            {t("injection.badge")}
+          </Badge>
+        )}
         <span style={s.agents}>{t("page.agentCount", { count: sk.agent_count })}</span>
       </div>
     </div>

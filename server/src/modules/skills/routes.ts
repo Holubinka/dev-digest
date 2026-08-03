@@ -15,6 +15,7 @@ import { SkillsService } from './service.js';
  *   POST   /skills                        → create (also the confirm step of an import)
  *   PUT    /skills/:id                    → update / toggle enabled (body edits version)
  *   DELETE /skills/:id                    → delete
+ *   GET    /skills/:id/stats             → agents, runs, findings, acceptance
  *   GET    /skills/:id/versions           → body history (newest first)
  *   GET    /skills/:id/versions/:version  → one body snapshot
  *   POST   /skills/import/preview         → parse an upload  → draft, saves NOTHING
@@ -102,6 +103,13 @@ export default async function skillsRoutes(appBase: FastifyInstance) {
     const ok = await service.delete(workspaceId, req.params.id);
     if (!ok) throw new NotFoundError('Skill not found');
     return { ok: true };
+  });
+
+  app.get('/skills/:id/stats', { schema: { params: IdParams } }, async (req) => {
+    const { workspaceId } = await getContext(app.container, req);
+    const stats = await service.stats(workspaceId, req.params.id);
+    if (!stats) throw new NotFoundError('Skill not found');
+    return stats;
   });
 
   app.get('/skills/:id/versions', { schema: { params: IdParams } }, async (req) => {

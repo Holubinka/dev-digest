@@ -6,6 +6,7 @@ import type {
   SkillVersion,
 } from '@devdigest/shared';
 import type { SkillRow, SkillVersionRow } from '../../db/rows.js';
+import { detectInjection } from '../../platform/skill-injection.js';
 import {
   CORE_FILENAMES,
   EXECUTABLE_DIRS,
@@ -50,8 +51,17 @@ export function toSkillDto(row: SkillRow): Skill {
   };
 }
 
+/**
+ * The shape both the list and the single-skill routes return. `injection` is
+ * computed on read rather than stored, so sharpening the detector improves every
+ * existing skill without a migration or a backfill.
+ */
 export function toSkillListItemDto(row: SkillWithUsage): SkillListItem {
-  return { ...toSkillDto(row.skill), agent_count: row.agentCount };
+  return {
+    ...toSkillDto(row.skill),
+    agent_count: row.agentCount,
+    injection: detectInjection(row.skill.body),
+  };
 }
 
 export function toSkillVersionDto(row: SkillVersionRow): SkillVersion {

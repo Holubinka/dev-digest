@@ -13,6 +13,7 @@ const skill = (id: string): SkillListItem => ({
   version: 1,
   evidence_files: null,
   agent_count: 0,
+  injection: [],
 });
 
 const link = (skill_id: string, order: number): AgentSkillLink => ({

@@ -32,6 +32,7 @@ const skill = (id: string, over: Partial<SkillListItem> = {}): SkillListItem => 
   version: 1,
   evidence_files: null,
   agent_count: 1,
+  injection: [],
   ...over,
 });
 
@@ -64,12 +65,37 @@ function renderTab() {
  * `moveAt` and commit the same request, so covering them covers the behaviour.
  */
 describe("SkillsTab", () => {
-  it("separates what is bound from what is available, and counts it", () => {
+  it("lists every skill in one list, bound first, and counts what is on", () => {
     renderTab();
-    expect(screen.getByText("2 of 3 bound")).toBeInTheDocument();
-    expect(screen.getByText("Bound to this agent")).toBeInTheDocument();
-    expect(screen.getByText("Available")).toBeInTheDocument();
-    expect(screen.getByText("gamma")).toBeInTheDocument();
+    expect(screen.getByText("2 of 3 enabled")).toBeInTheDocument();
+    // One flat list: bound in prompt order, then the rest.
+    const names = screen.getAllByText(/^(alpha|beta|gamma)$/).map((n) => n.textContent);
+    expect(names).toEqual(["alpha", "beta", "gamma"]);
+  });
+
+  it("only offers reordering on the rows that are actually bound", () => {
+    renderTab();
+    expect(screen.getAllByLabelText("Move up")).toHaveLength(2);
+    expect(screen.getAllByLabelText("Move down")).toHaveLength(2);
+  });
+
+  it("refuses to bind a skill whose body trips the injection detector", () => {
+    hooks.useSkills.mockReturnValue({
+      data: [
+        skill("alpha"),
+        skill("beta"),
+        skill("gamma", {
+          injection: [
+            { rule: "override_instructions", reason: "Tries to cancel", line: 2, excerpt: "x" },
+          ],
+        }),
+      ],
+    });
+    renderTab();
+    expect(screen.getByText("injection — cannot be used")).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole("checkbox").at(-1)!);
+    expect(hooks.setSkills, "a flagged skill must not become bindable").not.toHaveBeenCalled();
   });
 
   it("moving a skill down sends the whole set in the new order", () => {

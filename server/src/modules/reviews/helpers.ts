@@ -3,6 +3,7 @@
  * their arguments — no DB / network / `this`).
  */
 import type { Finding } from '@devdigest/shared';
+import { hasInjection } from '../../platform/skill-injection.js';
 import type { FindingRow, PullRow, ReviewRow } from './repository.js';
 
 // reduceReviews + sliceDiff live in @devdigest/reviewer-core (pure engine logic
@@ -87,15 +88,22 @@ export interface LinkedSkillLike {
 /**
  * The ordered skill bodies for the prompt's `## Skills / rules` slot.
  *
- * A globally-disabled skill is dropped. The toggle on the Skills screen gates a
- * skill for EVERY agent, while the `agent_skills` row is only the binding — so
- * disabling one leaves its binding and its order intact, and simply stops it
- * reaching the model.
+ * Two filters, for different reasons.
+ *
+ * A globally-disabled skill is dropped because the toggle on the Skills screen
+ * gates a skill for EVERY agent, while the `agent_skills` row is only the
+ * binding — disabling one leaves its binding and its order intact and simply
+ * stops it reaching the model.
+ *
+ * A body that trips the injection detector is dropped no matter what its
+ * `enabled` flag says. The service already refuses to enable one, so this is
+ * the second lock: a row edited straight in the database, or flagged by a rule
+ * added after it was enabled, still cannot reach the prompt.
  */
 export function skillBodiesFor(links: LinkedSkillLike[]): string[] {
   return [...links]
     .sort((a, b) => a.order - b.order)
-    .filter((l) => l.skill.enabled)
+    .filter((l) => l.skill.enabled && !hasInjection(l.skill.body))
     .map((l) => skillBlock(l.skill.name, l.skill.body));
 }
 

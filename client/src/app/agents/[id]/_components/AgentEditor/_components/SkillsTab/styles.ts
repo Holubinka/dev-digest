@@ -32,17 +32,27 @@ export const s = {
     color: "var(--text-primary)",
   } satisfies CSSProperties,
   hint: { fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.5 } satisfies CSSProperties,
-  row: (dragging: boolean): CSSProperties => ({
+  /** A bound row reads as active; an unbound one recedes, as in the design. */
+  row: (bound: boolean, dragging: boolean): CSSProperties => ({
     display: "flex",
     alignItems: "center",
     gap: 10,
     padding: "8px 12px",
     borderRadius: 8,
-    border: "1px solid var(--border)",
-    background: dragging ? "var(--bg-hover)" : "var(--bg-elevated)",
+    border: "1px solid " + (bound ? "var(--border-strong)" : "var(--border)"),
+    background: dragging
+      ? "var(--bg-hover)"
+      : bound
+        ? "var(--bg-elevated)"
+        : "transparent",
     marginBottom: 6,
   }),
-  handle: { color: "var(--text-muted)", cursor: "grab", flexShrink: 0 } satisfies CSSProperties,
+  handle: (bound: boolean): CSSProperties => ({
+    color: "var(--text-muted)",
+    cursor: bound ? "grab" : "default",
+    opacity: bound ? 1 : 0.35,
+    flexShrink: 0,
+  }),
   name: {
     fontSize: 13,
     fontWeight: 600,

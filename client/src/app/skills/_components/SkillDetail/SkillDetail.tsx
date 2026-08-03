@@ -10,6 +10,7 @@ import { useSkill, useUpdateSkill } from "../../../../lib/hooks/skills";
 import { TYPE_COLORS } from "../SkillCard/constants";
 import { ConfigTab } from "./_components/ConfigTab";
 import { PreviewTab } from "./_components/PreviewTab";
+import { StatsTab } from "./_components/StatsTab";
 import { VersionsTab } from "./_components/VersionsTab";
 import { TABS, VALID_TABS } from "./constants";
 import { s } from "./styles";
@@ -24,6 +25,7 @@ export function SkillDetail({ id }: { id: string }) {
   const requested = search.get("tab") ?? "";
   const tab = VALID_TABS.includes(requested) ? requested : "config";
   const setTab = (next: string) => router.replace(`/skills/${id}?tab=${next}`);
+  const blocked = (skill?.injection.length ?? 0) > 0;
 
   if (isError) {
     return (
@@ -53,16 +55,43 @@ export function SkillDetail({ id }: { id: string }) {
         <Badge color="var(--text-muted)" mono>
           {t("detail.version", { version: skill.version })}
         </Badge>
-        {!skill.enabled && <Badge color="var(--warn)">{t("detail.disabledNote")}</Badge>}
-        <label style={s.enabledLabel}>
+        {blocked && <Badge color="var(--crit)">{t("injection.badge")}</Badge>}
+        {!blocked && !skill.enabled && (
+          <Badge color="var(--warn)">{t("detail.disabledNote")}</Badge>
+        )}
+        <label style={s.enabledLabel} title={blocked ? t("injection.cannotEnable") : undefined}>
           {t("detail.enabled")}
           <Toggle
-            on={skill.enabled}
-            onChange={(enabled) => update.mutate({ id: skill.id, patch: { enabled } })}
+            on={skill.enabled && !blocked}
+            onChange={(enabled) => {
+              // The server refuses this too; refusing here as well means the
+              // user is told why instead of watching a toggle spring back.
+              if (blocked) return;
+              update.mutate({ id: skill.id, patch: { enabled } });
+            }}
             size={16}
           />
         </label>
       </div>
+
+      {blocked && (
+        <div style={s.injection}>
+          <strong style={s.injectionTitle}>{t("injection.title")}</strong>
+          <p style={s.injectionBody}>{t("injection.body")}</p>
+          <ul style={s.injectionList}>
+            {skill.injection.map((match) => (
+              <li key={match.rule} style={s.injectionRow}>
+                <span style={s.injectionReason}>{match.reason}</span>
+                <span className="mono" style={s.injectionExcerpt}>
+                  {match.excerpt}
+                </span>
+                <span style={s.injectionLine}>{t("injection.line", { line: match.line })}</span>
+              </li>
+            ))}
+          </ul>
+          <p style={s.injectionLimits}>{t("injection.limits")}</p>
+        </div>
+      )}
 
       <div style={s.tabsBar}>
         <Tabs
@@ -75,6 +104,7 @@ export function SkillDetail({ id }: { id: string }) {
 
       <div style={s.body}>
         {tab === "preview" && <PreviewTab skill={skill} />}
+        {tab === "stats" && <StatsTab skill={skill} />}
         {tab === "versions" && <VersionsTab skill={skill} />}
         {tab === "config" && <ConfigTab skill={skill} />}
       </div>
