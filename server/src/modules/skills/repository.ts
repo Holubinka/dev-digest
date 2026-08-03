@@ -41,9 +41,18 @@ export class SkillsRepository {
    *  bind it. The left join keeps skills nobody has bound yet. */
   async list(workspaceId: string): Promise<SkillWithUsage[]> {
     const rows = await this.db
-      .select({ skill: t.skills, agentCount: countDistinct(t.agentSkills.agentId) })
+      // Counting `t.agents.id` rather than `agent_skills.agent_id`, with the
+      // workspace test in the JOIN and not the WHERE: in the WHERE it would
+      // drop every skill nobody binds, and counting the link column would
+      // count an agent this workspace cannot see. Same scoping as
+      // `agentsBinding` below.
+      .select({ skill: t.skills, agentCount: countDistinct(t.agents.id) })
       .from(t.skills)
       .leftJoin(t.agentSkills, eq(t.agentSkills.skillId, t.skills.id))
+      .leftJoin(
+        t.agents,
+        and(eq(t.agents.id, t.agentSkills.agentId), eq(t.agents.workspaceId, workspaceId)),
+      )
       .where(eq(t.skills.workspaceId, workspaceId))
       .groupBy(t.skills.id)
       .orderBy(asc(t.skills.name));
@@ -58,12 +67,30 @@ export class SkillsRepository {
     return row;
   }
 
+  /**
+   * The agents in this workspace that bind this skill.
+   *
+   * The workspace predicate is belt-and-braces: `AgentsService` refuses to link
+   * across workspaces, so `agent_skills` should never hold a mixed pair. But a
+   * link table's foreign key proves existence, not tenancy (INSIGHTS.md), and
+   * every count below reads that table — so the scope is stated here rather
+   * than assumed of a table this module does not own.
+   */
+  private agentsBinding(workspaceId: string, skillId: string) {
+    return this.db
+      .select({ agentId: t.agentSkills.agentId })
+      .from(t.agentSkills)
+      .innerJoin(t.agents, eq(t.agents.id, t.agentSkills.agentId))
+      .where(and(eq(t.agentSkills.skillId, skillId), eq(t.agents.workspaceId, workspaceId)));
+  }
+
   /** How many agents bind this skill. */
-  async countAgents(skillId: string): Promise<number> {
+  async countAgents(workspaceId: string, skillId: string): Promise<number> {
     const [row] = await this.db
       .select({ n: countDistinct(t.agentSkills.agentId) })
       .from(t.agentSkills)
-      .where(eq(t.agentSkills.skillId, skillId));
+      .innerJoin(t.agents, eq(t.agents.id, t.agentSkills.agentId))
+      .where(and(eq(t.agentSkills.skillId, skillId), eq(t.agents.workspaceId, workspaceId)));
     return Number(row?.n ?? 0);
   }
 
@@ -76,16 +103,16 @@ export class SkillsRepository {
    * be a guess dressed as a number. Counting current bindings is the honest
    * approximation, and the UI says so.
    */
-  async statsFor(skillId: string): Promise<{
+  async statsFor(
+    workspaceId: string,
+    skillId: string,
+  ): Promise<{
     runs: number;
     findings: number;
     accepted: number;
     dismissed: number;
   }> {
-    const boundAgents = this.db
-      .select({ agentId: t.agentSkills.agentId })
-      .from(t.agentSkills)
-      .where(eq(t.agentSkills.skillId, skillId));
+    const boundAgents = this.agentsBinding(workspaceId, skillId);
 
     const [runRow] = await this.db
       .select({ n: count() })
@@ -146,10 +173,20 @@ export class SkillsRepository {
    * ONLY a body change does: `skill_versions` stores `(skill_id, version, body)`,
    * so bumping on a rename would record a row identical to the one before it.
    */
+  /**
+   * Apply a patch. When `expectedVersion` is given the write only lands if the
+   * row is still at that version, and `undefined` comes back if it is not.
+   *
+   * That is what makes the caller's injection check atomic without a
+   * transaction: the check is only invalidated by the body moving, and the
+   * version bumps on exactly that. Two concurrent renames still both succeed —
+   * neither changes what the check was about.
+   */
   async update(
     workspaceId: string,
     id: string,
     patch: UpdateSkill,
+    expectedVersion?: number,
   ): Promise<SkillRow | undefined> {
     const existing = await this.getById(workspaceId, id);
     if (!existing) return undefined;
@@ -167,7 +204,13 @@ export class SkillsRepository {
         ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
         ...(bodyChanged ? { version: nextVersion } : {}),
       })
-      .where(and(eq(t.skills.workspaceId, workspaceId), eq(t.skills.id, id)))
+      .where(
+        and(
+          eq(t.skills.workspaceId, workspaceId),
+          eq(t.skills.id, id),
+          ...(expectedVersion !== undefined ? [eq(t.skills.version, expectedVersion)] : []),
+        ),
+      )
       .returning();
 
     if (bodyChanged && row) await this.snapshotVersion(row, nextVersion);

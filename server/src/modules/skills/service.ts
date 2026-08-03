@@ -11,6 +11,7 @@ import type {
 import { ValidationError } from '../../platform/errors.js';
 import { detectInjection } from '../../platform/skill-injection.js';
 import { SkillsRepository } from './repository.js';
+import { UPDATE_ATTEMPTS } from './constants.js';
 import { toSkillDto, toSkillListItemDto, toSkillVersionDto } from './helpers.js';
 import {
   filenameFromUrl,
@@ -61,7 +62,8 @@ export class SkillsService {
   async get(workspaceId: string, id: string): Promise<SkillListItem | undefined> {
     const row = await this.repo.getById(workspaceId, id);
     if (!row) return undefined;
-    return toSkillListItemDto({ skill: row, agentCount: await this.repo.countAgents(id) });
+    const agentCount = await this.repo.countAgents(workspaceId, id);
+    return toSkillListItemDto({ skill: row, agentCount });
   }
 
   /** Counted from real rows; a skill nobody has used reports zeros. */
@@ -69,8 +71,8 @@ export class SkillsService {
     const row = await this.repo.getById(workspaceId, id);
     if (!row) return undefined;
     const [agents, counts] = await Promise.all([
-      this.repo.countAgents(id),
-      this.repo.statsFor(id),
+      this.repo.countAgents(workspaceId, id),
+      this.repo.statsFor(workspaceId, id),
     ]);
     const judged = counts.accepted + counts.dismissed;
     return {
@@ -113,16 +115,28 @@ export class SkillsService {
     return toSkillDto(row);
   }
 
+  /**
+   * Apply a patch, refusing the end state if it would be an enabled injection.
+   *
+   * The check and the write are one step, not two. Reading the body, deciding,
+   * and then writing leaves a window in which another request replaces the body
+   * with an injection: the decision was made about a body that is no longer
+   * there, and the row ends up enabled with text nobody vetted. The write
+   * therefore carries the version the check was made against, and a lost race
+   * re-reads and decides again rather than committing a stale verdict.
+   */
   async update(
     workspaceId: string,
     id: string,
     patch: UpdateSkillInput,
   ): Promise<Skill | undefined> {
-    // Check the body the skill will END UP with against the enabled state it
-    // will end up in — otherwise "enable" and "paste an injection" are safe
-    // apart and unsafe together, in either order.
-    const existing = await this.repo.getById(workspaceId, id);
-    if (existing) {
+    for (let attempt = 0; attempt < UPDATE_ATTEMPTS; attempt++) {
+      const existing = await this.repo.getById(workspaceId, id);
+      if (!existing) return undefined;
+
+      // The body it will END UP with against the enabled state it will end up
+      // in — otherwise "enable" and "paste an injection" are safe apart and
+      // unsafe together, in either order.
       const body = patch.body ?? existing.body;
       const enabled = patch.enabled ?? existing.enabled;
       const injection = detectInjection(body);
@@ -132,16 +146,23 @@ export class SkillsService {
           { injection },
         );
       }
+
+      const row = await this.repo.update(
+        workspaceId,
+        id,
+        {
+          ...(patch.name !== undefined ? { name: patch.name } : {}),
+          ...(patch.description !== undefined ? { description: patch.description } : {}),
+          ...(patch.type !== undefined ? { type: patch.type } : {}),
+          ...(patch.body !== undefined ? { body: patch.body } : {}),
+          ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
+        },
+        existing.version,
+      );
+      if (row) return toSkillDto(row);
     }
 
-    const row = await this.repo.update(workspaceId, id, {
-      ...(patch.name !== undefined ? { name: patch.name } : {}),
-      ...(patch.description !== undefined ? { description: patch.description } : {}),
-      ...(patch.type !== undefined ? { type: patch.type } : {}),
-      ...(patch.body !== undefined ? { body: patch.body } : {}),
-      ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
-    });
-    return row ? toSkillDto(row) : undefined;
+    throw new ValidationError('The skill changed while this edit was being saved — try again');
   }
 
   /** Delete a skill (and its versions and agent bindings, via cascade). */

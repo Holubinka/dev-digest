@@ -297,6 +297,54 @@ d('/skills', () => {
     await app.close();
   });
 
+  /**
+   * The stats counts read `agent_skills`, a table this module does not own, so
+   * they must not inherit its integrity. `AgentsService` refuses to link across
+   * workspaces — that is the lock — but this pins the second one: even with a
+   * mixed row forced straight into the table, a foreign agent's runs stay out
+   * of this workspace's numbers.
+   */
+  it('counts only agents from this workspace, even if the link table holds a foreign one', async () => {
+    const { db } = pg.handle;
+    const app = await makeApp();
+    const id = (
+      await app.inject({ method: 'POST', url: '/skills', payload: { ...createBody, name: 'Shared' } })
+    ).json().id as string;
+
+    const [otherWs] = await db.insert(t.workspaces).values({ name: 'other-tenant-stats' }).returning();
+    const [foreignAgent] = await db
+      .insert(t.agents)
+      .values({
+        workspaceId: otherWs!.id,
+        name: 'Their reviewer',
+        provider: 'openai',
+        model: 'gpt-4.1',
+        systemPrompt: 'x',
+      })
+      .returning();
+    await db
+      .insert(t.agentSkills)
+      .values({ agentId: foreignAgent!.id, skillId: id, order: 0 });
+    await db.insert(t.agentRuns).values({
+      workspaceId: otherWs!.id,
+      agentId: foreignAgent!.id,
+      prId: null,
+      status: 'done',
+      provider: 'openai',
+      model: 'gpt-4.1',
+    });
+
+    const stats = (await app.inject({ method: 'GET', url: `/skills/${id}/stats` })).json();
+    expect(stats).toMatchObject({ agents: 0, runs: 0, findings: 0 });
+
+    const card = (await app.inject({ method: 'GET', url: '/skills' })).json() as Array<{
+      id: string;
+      agent_count: number;
+    }>;
+    expect(card.find((s) => s.id === id)?.agent_count).toBe(0);
+    await app.close();
+  });
+
   it('scopes reads and writes to the workspace', async () => {
     const app = await makeApp();
     const foreign = await foreignSkill();

@@ -56,3 +56,12 @@ export const CORE_FILENAMES = ['skill.md', 'readme.md'];
 // The URL import's own limits — redirect hops, timeout, response cap — live
 // beside the adapter that enforces them (adapters/skill-fetch), not here.
 // Nothing under adapters/ may import a feature module.
+
+/**
+ * How many times `SkillsService.update` re-reads and re-decides when another
+ * request changed the body underneath it. Two is enough for the only race that
+ * matters — a body edit landing between the injection check and the write —
+ * and a third attempt would mean sustained contention on one skill in a
+ * single-user tool, which is a bug report, not a retry.
+ */
+export const UPDATE_ATTEMPTS = 3;
