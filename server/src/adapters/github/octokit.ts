@@ -149,21 +149,23 @@ export class OctokitGitHubClient implements GitHubClient {
             params,
             MAX_PR_FILES,
             (f) => ({
-            path: f.filename,
-            additions: f.additions,
-            deletions: f.deletions,
-            patch: f.patch,
-          }));
+              path: f.filename,
+              additions: f.additions,
+              deletions: f.deletions,
+              patch: f.patch,
+            }),
+          );
           const commits = await this.paginateUpTo<PrDetail['commits'][number], ListedCommit>(
             this.octokit.rest.pulls.listCommits,
             params,
             MAX_PR_COMMITS,
             (c) => ({
-            sha: c.sha,
-            message: c.commit.message,
-            author: c.commit.author?.name ?? c.author?.login ?? 'unknown',
-            committed_at: c.commit.author?.date,
-          }));
+              sha: c.sha,
+              message: c.commit.message,
+              author: c.commit.author?.name ?? c.author?.login ?? 'unknown',
+              committed_at: c.commit.author?.date,
+            }),
+          );
           const linkedIssue = await this.resolveLinkedIssue(repo, pr.body ?? '');
           return {
             number: pr.number,
