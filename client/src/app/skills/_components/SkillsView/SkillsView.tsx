@@ -11,6 +11,7 @@ import type { DropdownItemDef } from "@devdigest/ui";
 import { AppShell } from "../../../../components/app-shell";
 import { useSkills } from "../../../../lib/hooks/skills";
 import { CreateSkillModal } from "../CreateSkillModal";
+import { ImportSkillDrawer } from "../ImportSkillDrawer";
 import { SkillDetail } from "../SkillDetail";
 import { SkillsList } from "../SkillsList";
 import { s } from "./styles";
@@ -19,6 +20,7 @@ export function SkillsView({ selectedId }: { selectedId?: string }) {
   const t = useTranslations("skills");
   const router = useRouter();
   const [creating, setCreating] = React.useState(false);
+  const [importing, setImporting] = React.useState<"file" | "url" | null>(null);
 
   // Reuses the list query the left column already holds, so naming the
   // breadcrumb costs no extra request.
@@ -27,6 +29,9 @@ export function SkillsView({ selectedId }: { selectedId?: string }) {
 
   const menuItems: DropdownItemDef[] = [
     { label: t("page.menu.create"), icon: "Edit", onClick: () => setCreating(true) },
+    { divider: true },
+    { label: t("page.menu.fromFile"), icon: "Upload", onClick: () => setImporting("file") },
+    { label: t("page.menu.fromUrl"), icon: "Link", onClick: () => setImporting("url") },
   ];
 
   const crumb = [
@@ -38,6 +43,9 @@ export function SkillsView({ selectedId }: { selectedId?: string }) {
   return (
     <AppShell crumb={crumb}>
       {creating && <CreateSkillModal onClose={() => setCreating(false)} />}
+      {importing && (
+        <ImportSkillDrawer initialTab={importing} onClose={() => setImporting(null)} />
+      )}
       <div style={s.shell}>
         <SkillsList
           {...(selectedId ? { selectedId } : {})}
