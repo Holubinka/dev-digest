@@ -150,15 +150,83 @@ export const CommunitySkill = z.object({
 export type CommunitySkill = z.infer<typeof CommunitySkill>;
 
 // ---- Conventions ----
+
+/**
+ * Closed taxonomy. The extraction prompt hands the model this list and rejects
+ * anything outside it, so two scans of the same repo group the same way and the
+ * UI can filter without normalising free text.
+ */
+export const ConventionCategory = z.enum([
+  'naming',
+  'structure',
+  'error-handling',
+  'async',
+  'typing',
+  'testing',
+  'api',
+  'imports',
+  'logging',
+  'docs',
+]);
+export type ConventionCategory = z.infer<typeof ConventionCategory>;
+
+export const ConventionStatus = z.enum(['pending', 'accepted', 'rejected']);
+export type ConventionStatus = z.infer<typeof ConventionStatus>;
+
+/** One place in the repo that backs a rule, verified against the clone. */
+export const ConventionEvidence = z.object({
+  path: z.string(),
+  line: z.number().int(),
+  end_line: z.number().int(),
+  snippet: z.string(),
+});
+export type ConventionEvidence = z.infer<typeof ConventionEvidence>;
+
+/**
+ * A candidate house rule. `evidence` is the site shown on the card; the rest
+ * sit in `extra_evidence`. Both are verified — a claimed site that could not be
+ * found in the clone never reaches this shape.
+ *
+ * `head_sha` is the commit the evidence was read at, which is what lets the UI
+ * build a GitHub blob link whose line numbers still mean something.
+ */
 export const ConventionCandidate = z.object({
   id: z.string(),
+  repo_id: z.string().nullable(),
+  scan_id: z.string().nullable(),
+  category: ConventionCategory,
   rule: z.string(),
-  evidence_path: z.string(),
-  evidence_snippet: z.string(),
-  confidence: z.number().min(0).max(1),
-  accepted: z.boolean(),
+  evidence_path: z.string().nullable(),
+  evidence_snippet: z.string().nullable(),
+  evidence_line: z.number().int().nullable(),
+  evidence_end_line: z.number().int().nullable(),
+  extra_evidence: z.array(ConventionEvidence),
+  head_sha: z.string().nullable(),
+  confidence: z.number().min(0).max(1).nullable(),
+  status: ConventionStatus,
+  created_at: z.string(),
 });
 export type ConventionCandidate = z.infer<typeof ConventionCandidate>;
+
+/** One extraction run: what it read, what it cost, what survived grounding. */
+export const ConventionScan = z.object({
+  id: z.string(),
+  repo_id: z.string(),
+  head_sha: z.string().nullable(),
+  model: z.string(),
+  sample_files: z.number().int(),
+  candidates_returned: z.number().int(),
+  candidates_kept: z.number().int(),
+  created_at: z.string(),
+});
+export type ConventionScan = z.infer<typeof ConventionScan>;
+
+/** `GET /repos/:id/conventions` and the body of a finished extraction. */
+export const ConventionsResponse = z.object({
+  scan: ConventionScan.nullable(),
+  candidates: z.array(ConventionCandidate),
+});
+export type ConventionsResponse = z.infer<typeof ConventionsResponse>;
 
 // ---- Agents ----
 // 'openrouter' routes through the OpenAI-compatible API (OpenAIProvider with a

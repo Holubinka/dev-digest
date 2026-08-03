@@ -99,6 +99,12 @@ export class SkillsService {
    * in this workspace therefore lands disabled whatever the client asked for.
    * `source` is a provenance label, never a security control, which is why the
    * decision is made here and not trusted from the request.
+   *
+   * `extracted` counts as workspace-originated alongside `manual`: its body is
+   * assembled from conventions found in this workspace's own clone, and the
+   * modal that saves it shows every line first. The injection check still runs —
+   * a repository file CAN carry an injection, and one that does disables the
+   * skill exactly as an uploaded one would.
    */
   async create(workspaceId: string, input: CreateSkillInput): Promise<Skill> {
     const source = input.source ?? 'manual';
@@ -106,7 +112,8 @@ export class SkillsService {
     // text would hide the evidence they need to judge it — but it can never
     // start enabled, whatever its provenance.
     const clean = detectInjection(input.body).length === 0;
-    const enabled = clean && source === 'manual' ? (input.enabled ?? true) : false;
+    const ownWorkspace = source === 'manual' || source === 'extracted';
+    const enabled = clean && ownWorkspace ? (input.enabled ?? true) : false;
     const row = await this.repo.insert({
       workspaceId,
       name: input.name,
