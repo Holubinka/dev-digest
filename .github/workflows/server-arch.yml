@@ -1,0 +1,77 @@
+# Architecture gate — Fastify API (@devdigest/api).
+#
+# An architecture fitness function: dependency-cruiser checks that dependencies
+# still point inward, per .claude/skills/onion-architecture/. Twelve rules live in
+# server/.dependency-cruiser.cjs.
+#
+# The 20 violations that existed when the gate landed are frozen in
+# .dependency-cruiser-known-violations.json so this job could go green on day one
+# without first refactoring pulls/polling/settings/workspace. --ignore-known skips
+# exactly those; anything NEW fails. Never re-freeze to silence a new violation —
+# `pnpm arch:strict` shows the full backlog.
+#
+# reviewer-core/** is in the path filter, and its deps are installed below, because
+# server/tsconfig.json aliases @devdigest/reviewer-core → ../reviewer-core/src. Without
+# that alias resolving, reviewer-core never enters the graph and `core-stays-pure`
+# silently checks nothing.
+name: server arch
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server/**'
+      - 'reviewer-core/**'
+      - '.github/workflows/server-arch.yml'
+  pull_request:
+    paths:
+      - 'server/**'
+      - 'reviewer-core/**'
+      - '.github/workflows/server-arch.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: server-arch-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  arch:
+    name: dependency rules
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: server/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      # The cruise resolves through the reviewer-core alias into ../reviewer-core/src,
+      # which imports `openai`/`zod`. reviewer-core uses npm (see reviewer-core.yml).
+      - name: Install reviewer-core deps
+        working-directory: reviewer-core
+        run: npm ci
+
+      # Inlined rather than `pnpm arch`, matching server-unit.yml: the scripts block
+      # in server/package.json has been a local variant before, so the committed file
+      # may not carry it. The config is what must not drift, and it is committed.
+      - name: Check dependency direction
+        run: pnpm exec depcruise src --config --ignore-known
+
+      # Informational: prints the frozen backlog so a PR that pays some of it down is
+      # visible in the log. Never fails the build.
+      - name: Show remaining known violations
+        if: always()
+        run: pnpm exec depcruise src --config || true

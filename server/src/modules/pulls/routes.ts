@@ -1,19 +1,14 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { PrMeta, PrDetail, GitHubClient, PrReviewComment } from '@devdigest/shared';
 import { PrCommentInput } from '@devdigest/shared';
 import * as t from '../../db/schema.js';
 import { getContext } from '../_shared/context.js';
 import { IdParams } from '../_shared/schemas.js';
 import { AppError, NotFoundError } from '../../platform/errors.js';
-import {
-  deriveReviewStatus,
-  rollupSeverities,
-  topFindings,
-  type ListFinding,
-  type SeverityCounts,
-} from './status.js';
+import { rollupSeverities, topFindings, type ListFinding, type SeverityCounts } from './status.js';
+import { toPrMeta } from './helpers.js';
 
 /** How many findings the list previews per PR in its hover card. */
 const LIST_FINDINGS_PREVIEW = 3;
@@ -129,11 +124,7 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
     // "reviewed and clean" from "never reviewed" for the FINDINGS column below.
     const reviewedPrIds = new Set<string>();
     if (prIds.length > 0) {
-      const reviewRows = await container.db
-        .select({ prId: t.reviews.prId, score: t.reviews.score, kind: t.reviews.kind })
-        .from(t.reviews)
-        .where(inArray(t.reviews.prId, prIds))
-        .orderBy(desc(t.reviews.createdAt));
+      const reviewRows = await container.pullsRepo.reviewsForPrs(prIds);
       // Rows are newest-first → first seen per PR is the latest review.
       for (const rv of reviewRows) {
         reviewedPrIds.add(rv.prId);
@@ -186,22 +177,7 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
     // render differently, so they must stay distinguishable all the way down.
     const findingsByPr = new Map<string, { counts: SeverityCounts; top: ListFinding[] }>();
     if (prIds.length > 0) {
-      const findingRows = await container.db
-        .select({
-          prId: t.reviews.prId,
-          id: t.findings.id,
-          severity: t.findings.severity,
-          category: t.findings.category,
-          title: t.findings.title,
-          file: t.findings.file,
-          startLine: t.findings.startLine,
-          endLine: t.findings.endLine,
-          confidence: t.findings.confidence,
-          rationale: t.findings.rationale,
-        })
-        .from(t.findings)
-        .innerJoin(t.reviews, eq(t.reviews.id, t.findings.reviewId))
-        .where(inArray(t.reviews.prId, prIds));
+      const findingRows = await container.pullsRepo.findingsForPrs(prIds);
       const byPr = new Map<string, typeof findingRows>();
       for (const f of findingRows) {
         const list = byPr.get(f.prId) ?? [];
@@ -220,37 +196,17 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
     }
 
     const now = Date.now();
-    return rows.map((r) => {
-      const review = latestReviewByPr.get(r.id);
-      const findings = findingsByPr.get(r.id);
-      return {
-        id: r.id,
-        number: r.number,
-        title: r.title,
-        author: r.author,
-        branch: r.branch,
-        base: r.base,
-        head_sha: r.headSha,
-        additions: r.additions,
-        deletions: r.deletions,
-        files_count: r.filesCount,
-        status: deriveReviewStatus({
-          ghStatus: r.status,
-          lastReviewedSha: r.lastReviewedSha,
-          headSha: r.headSha,
-          updatedAt: r.updatedAt,
-          now,
-        }),
-        opened_at: r.openedAt?.toISOString() ?? null,
-        updated_at: r.updatedAt?.toISOString() ?? null,
-        score: review ? review.score : null,
-        cost_usd: totalCostByPr.get(r.id) ?? null,
-        findings_critical: findings ? findings.counts.critical : null,
-        findings_warning: findings ? findings.counts.warning : null,
-        findings_suggestion: findings ? findings.counts.suggestion : null,
-        findings_top: findings ? findings.top : null,
-      };
-    });
+    return rows.map((r) =>
+      toPrMeta(
+        r,
+        {
+          review: latestReviewByPr.get(r.id),
+          costUsd: totalCostByPr.get(r.id) ?? null,
+          findings: findingsByPr.get(r.id),
+        },
+        now,
+      ),
+    );
   });
 
   app.get('/pulls/:id', { schema: { params: IdParams } }, async (req): Promise<PrDetail> => {

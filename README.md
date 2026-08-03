@@ -133,6 +133,16 @@ Server tests split by filename: `*.it.test.ts` are DB-backed (testcontainers
 Postgres); everything else is hermetic. The browser e2e flows live in
 [`e2e/`](e2e/README.md) and run deterministically (no LLM).
 
+**Pre-push self-review.** `.claude/settings.json` registers
+`scripts/pr-self-review/gate.sh` as a Claude Code `PreToolUse` hook: inside Claude
+Code, a `git push` or `gh pr create` is refused until `/pr-self-review` has written
+a fresh passing verdict to `.pr-self-review/latest.json`. Pushing from your own
+terminal is unaffected. `PR_SELF_REVIEW_SKIP=1` bypasses it once and is recorded in
+the next report; deleting the `PreToolUse` block from `.claude/settings.json` turns
+it off for good. The scripts have their own Bash suite
+(`bash scripts/pr-self-review/test/run.sh`, workflow `pr-self-review.yml`), and the
+skill itself is documented in `.claude/skills/pr-self-review/`.
+
 ## Troubleshooting
 
 - **`relation ... does not exist` / API errors on first run** — migrations weren't

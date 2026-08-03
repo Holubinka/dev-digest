@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import type { RunTrace } from "@devdigest/shared";
@@ -19,14 +19,29 @@ const TRACE: RunTrace = {
   ],
 };
 
+// Hoisted so a test can swap in a live run (streaming SSE, no persisted trace
+// yet) instead of the settled default.
+const hooks = vi.hoisted(() => ({
+  useRunTrace: vi.fn(),
+  useRunEvents: vi.fn(),
+}));
+
 vi.mock("../../../../../../../lib/hooks/trace", () => ({
-  useRunTrace: () => ({ data: TRACE, isLoading: false }),
+  useRunTrace: hooks.useRunTrace,
 }));
 vi.mock("../../../../../../../lib/hooks/reviews", () => ({
-  useRunEvents: () => ({ events: [], running: false }),
+  useRunEvents: hooks.useRunEvents,
 }));
 
 import RunTraceDrawer from "./RunTraceDrawer";
+
+beforeEach(() => {
+  hooks.useRunTrace.mockReset();
+  hooks.useRunEvents.mockReset();
+  // Default: a settled run whose trace has been persisted.
+  hooks.useRunTrace.mockReturnValue({ data: TRACE, isLoading: false });
+  hooks.useRunEvents.mockReturnValue({ events: [], running: false });
+});
 
 afterEach(cleanup);
 
@@ -58,5 +73,78 @@ describe("A5 Run Trace drawer (smoke)", () => {
     fireEvent.click(screen.getByText("log"));
     // LiveLogStream renders its filter input
     expect(screen.getByPlaceholderText("Filter log…")).toBeInTheDocument();
+  });
+});
+
+/**
+ * The PR-detail page used to mount this drawer without `running`, so the prop
+ * sat at its `false` default: the SSE subscription was never opened, the drawer
+ * opened on an empty Trace tab, and "Open run trace" on a live run showed
+ * nothing at all. These cases pin the live path.
+ */
+describe("A5 Run Trace drawer while the run is still going", () => {
+  const live = () => {
+    hooks.useRunEvents.mockReturnValue({
+      events: [{ t: "00.10", kind: "info", msg: "Starting review with agent Security" }],
+      running: true,
+    });
+    // The trace does not exist yet; the hook is disabled, and a disabled
+    // TanStack query reports isLoading === false, not true.
+    hooks.useRunTrace.mockReturnValue({ data: undefined, isLoading: false });
+  };
+
+  it("opens on the live log and streams, without being clicked there", () => {
+    live();
+    renderWithIntl(
+      <RunTraceDrawer runId="r1" running agentName="Security" prNumber={482} onClose={() => {}} />,
+    );
+    expect(screen.getByPlaceholderText("Filter log…")).toBeInTheDocument();
+    expect(screen.getByText(/Starting review with agent Security/)).toBeInTheDocument();
+  });
+
+  it("subscribes to this run's events and holds off on the trace request", () => {
+    live();
+    renderWithIntl(
+      <RunTraceDrawer runId="r1" running agentName="Security" prNumber={482} onClose={() => {}} />,
+    );
+    expect(hooks.useRunEvents).toHaveBeenCalledWith(["r1"]);
+    // second arg is `enabled` — false while the run is live
+    expect(hooks.useRunTrace).toHaveBeenCalledWith("r1", false);
+  });
+
+  it("tells the reader on the Trace tab that the trace comes at the end", () => {
+    live();
+    renderWithIntl(
+      <RunTraceDrawer runId="r1" running agentName="Security" prNumber={482} onClose={() => {}} />,
+    );
+    fireEvent.click(screen.getByText("trace"));
+    expect(
+      screen.getByText("Trace is written when the run completes — see the Live log tab."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("No trace available yet.")).not.toBeInTheDocument();
+  });
+
+  it("keeps the streamed lines after the run settles, before the trace lands", () => {
+    // The run finished, so the page's next poll tick drops it out of
+    // `liveRunIds` and `running` arrives false — but the persisted trace is not
+    // written yet. The lines we already streamed are all there is to show, and
+    // `useRunEvents` still holds them (it does not clear `events` when handed
+    // an empty id list). Keying the pane off `running` blanked it right here.
+    hooks.useRunEvents.mockReturnValue({
+      events: [{ t: "00.90", kind: "result", msg: "Citation grounding: 2/2 passed" }],
+      running: false,
+    });
+    hooks.useRunTrace.mockReturnValue({ data: undefined, isLoading: true });
+    renderWithIntl(
+      <RunTraceDrawer runId="r1" running={false} agentName="Security" prNumber={482} onClose={() => {}} />,
+    );
+    fireEvent.click(screen.getByText("log"));
+    expect(screen.getByText(/Citation grounding: 2\/2 passed/)).toBeInTheDocument();
+  });
+
+  it("does not subscribe at all for a historical run", () => {
+    renderWithIntl(<RunTraceDrawer runId="r1" agentName="Security" prNumber={482} onClose={() => {}} />);
+    expect(hooks.useRunEvents).toHaveBeenCalledWith([]);
+    expect(hooks.useRunTrace).toHaveBeenCalledWith("r1", true);
   });
 });

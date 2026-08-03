@@ -35,6 +35,21 @@ that later course lessons build (`blast`, `brief`, `ci`, `conformance`, `eval`,
 Vitest + jsdom. `fetch` is mocked per test — the suite needs no running API and no
 browser. Real browser journeys live in `../e2e/`.
 
+## Lint
+
+`pnpm lint` — ESLint 9 flat config (`eslint.config.mjs`), `next/core-web-vitals` +
+`next/typescript`. **This is the only package in the repo with a linter**, so do not
+assume `pnpm lint` exists next door. `src/vendor/**` is ignored: it is a read-only
+copy, and a violation there is not ours to fix.
+
+Two rules carry local intent. `reportUnusedDisableDirectives` is an **error** — an
+`eslint-disable` that suppresses nothing is a claim about the code that is no longer
+true. And `no-unused-vars` honours a leading underscore, which is how this codebase
+marks a binding destructured only to exclude it (`prId: _prId` in
+`lib/hooks/reviews.ts`).
+
+CI runs it before `typecheck` in `.github/workflows/client.yml`.
+
 ## Read when
 
 - **Read `README.md`** for the route map before adding a page.

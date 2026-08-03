@@ -35,8 +35,17 @@ function encPath(file: string): string {
     .join("/");
 }
 
-/** https://github.com/{owner}/{repo}/pull/{number} */
-export function githubPrUrl(repoFullName: string, number: number): string {
+/**
+ * https://github.com/{owner}/{repo}/pull/{number}
+ *
+ * Returns `undefined` on a dot segment, exactly as `githubBlobUrl` does — the
+ * header above claims every component is treated as hostile, and one builder
+ * exempting itself is how that claim stops being true. No value reaching here
+ * today can trip it (`repoFullName` is the server's `${owner}/${name}`), so
+ * this is consistency, not a live traversal.
+ */
+export function githubPrUrl(repoFullName: string, number: number): string | undefined {
+  if (hasDotSegment(repoFullName)) return undefined;
   return `${HOST}/${encPath(repoFullName)}/pull/${number}`;
 }
 

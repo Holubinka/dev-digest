@@ -32,6 +32,7 @@ If a test wouldn't catch a class of regression we care about, we don't write it.
 | reviewer-core | `reviewer-core/` | unit (engine) | vitest | `reviewer-core.yml` | no |
 | e2e web | `e2e/` | browser e2e (deterministic) | agent-browser + `run.ts` | `e2e-web.yml` | yes (stack) |
 | shared-sync | `server/` + `client/` | consistency gate (not a test) | `diff -r` | `shared-sync.yml` | no |
+| pr-self-review | `scripts/pr-self-review/` | script tests (plain Bash) | `test/run.sh` | `pr-self-review.yml` | no |
 
 ## What each suite covers
 
@@ -66,6 +67,14 @@ files. `server/src/vendor/shared/` is the source of truth (`reviewer-core`
 aliases it), but read the diff before overwriting — the copies have drifted in
 both directions before.
 
+**pr-self-review** — the six Bash scripts behind the pre-push gate (see the root
+`README.md`): scope the branch, run the deterministic gates, filter against the
+baseline, render the verdict, and refuse a push that has none. No Node, no pnpm,
+no database. Every test builds its own throwaway git repo under `mktemp -d`, and
+`run.sh` compares this repository's `HEAD` and branch list before and after as an
+escape canary — it once escaped for real. `seam.test.sh` is the only one that runs
+the whole chain end to end; the rest test one script each.
+
 ## Running locally
 
 ```sh
@@ -82,6 +91,9 @@ cd server && pnpm test                                          # both
 ./scripts/dev.sh
 npm i -g agent-browser && agent-browser install
 cd e2e && npm install && npm test
+
+# the pre-push gate's own scripts (jq is the only dependency)
+bash scripts/pr-self-review/test/run.sh
 ```
 
 ## Conventions

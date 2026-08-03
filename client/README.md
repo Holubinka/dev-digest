@@ -1,8 +1,10 @@
 # `@devdigest/web` — the studio (Next.js 15)
 
 The DevDigest UI: import repos, browse pull requests, run and read AI reviews,
-and author agents. App Router + React Server/Client components, data via
-**TanStack Query** hooks over the Fastify API. (This is the starter surface;
+and author agents. App Router, but in practice every screen is a client
+component — there is no RSC data fetching and no server actions (see
+`AGENTS.md`). Data comes from **TanStack Query** hooks over the Fastify API.
+(This is the starter surface;
 course lessons add the Skills, Memory, Eval, Blast/Brief, multi-agent, CI, and
 dashboard screens.)
 
@@ -14,7 +16,8 @@ dashboard screens.)
 - **API base:** `NEXT_PUBLIC_API_BASE` (default `http://localhost:3001`), used by
   `src/lib/api.ts`. Every data hook lives in `src/lib/hooks/*`.
 - **Run:** `pnpm dev` (`:3000`). **Test:** `pnpm test` (vitest + jsdom, fetch
-  mocked — no API needed). **Typecheck:** `pnpm typecheck`.
+  mocked — no API needed). **Typecheck:** `pnpm typecheck`. **Lint:**
+  `pnpm lint` (ESLint 9 flat config; the only linted package in the repo).
 
 ## UI route map
 

@@ -10,7 +10,6 @@ import { SeverityFilterBar, type SeverityLevel } from "../SeverityFilterBar";
 import { runsWithSeverity } from "./helpers";
 import { s } from "./styles";
 import type { FindingRecord, ReviewRecord, RunSummary, PrCommit } from "@devdigest/shared";
-import type { UseMutationResult } from "@tanstack/react-query";
 
 interface FindingsTabProps {
   prId: string | null;
@@ -20,7 +19,7 @@ interface FindingsTabProps {
   runs: ReviewRecord[];
   prRuns: RunSummary[] | undefined;
   prCommits: PrCommit[];
-  cancelMutation: UseMutationResult<any, any, string, any>;
+  cancelMutation: { mutate: (runId: string) => void; isPending: boolean };
   /** owner/repo + head sha — used to deep-link a finding's file:line to GitHub. */
   repoFullName?: string | null;
   headSha?: string | null;
@@ -104,6 +103,13 @@ export function FindingsTab({
   const allFindings = React.useMemo(() => runs.flatMap((r) => r.findings), [runs]);
   const shownRuns = React.useMemo(() => runsWithSeverity(runs, severity), [runs, severity]);
   const hiddenRuns = runs.length - shownRuns.length;
+
+  // Exactly one run's findings list answers j/k/a/d — the panels bind to
+  // `window`, and a severity filter opens every accordion at once.
+  const [activeId, setActiveId] = React.useState<string | null>(null);
+  const activeReviewId = shownRuns.some((r) => r.id === activeId)
+    ? activeId
+    : shownRuns[0]?.id ?? null;
 
   return (
     <section>
@@ -211,6 +217,8 @@ export function FindingsTab({
                 targetRunId={target?.runId ?? null}
                 targetNonce={target?.n ?? 0}
                 severity={severity}
+                active={review.id === activeReviewId}
+                onActivate={() => setActiveId(review.id)}
               />
             ))}
             {severity && hiddenRuns > 0 && (

@@ -40,6 +40,36 @@ describe("rankFindings", () => {
   it("drops a severity outside the contract rather than ranking it last", () => {
     expect(rankFindings([finding({ id: "bad", severity: "BOGUS" })])).toEqual([]);
   });
+
+  /**
+   * The case the "BOGUS" test above cannot reach, and the reason it pins
+   * nothing on its own. The filter read `f.severity in RANK`, and `in` walks the
+   * prototype chain — `RANK` comes from `Object.fromEntries`, so it carries
+   * `Object.prototype` too, and every name below answered true. The row
+   * survived, `RANK[severity]` resolved to a method on `Object.prototype`, the
+   * comparator's first term was `NaN`, and the sort fell through to confidence,
+   * so a bogus row at 0.9 sorted ahead of a real CRITICAL.
+   *
+   * The mirror of the same case in `server/src/modules/pulls/status.ts` —
+   * `findings.severity` is plain `text` on both sides of the wire, and if only
+   * one is guarded the two disagree about which rows exist.
+   */
+  it.each([
+    "constructor",
+    "toString",
+    "valueOf",
+    "hasOwnProperty",
+    "__proto__",
+    "isPrototypeOf",
+    "toLocaleString",
+    "propertyIsEnumerable",
+  ])("drops the inherited key %s, which the prototype chain answers for", (key) => {
+    const out = rankFindings([
+      finding({ id: "bogus", severity: key, confidence: 0.9 }),
+      finding({ id: "real", severity: "CRITICAL", confidence: 0.1 }),
+    ]);
+    expect(out.map((f) => f.id)).toEqual(["real"]);
+  });
 });
 
 describe("shortPath", () => {

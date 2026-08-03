@@ -12,16 +12,10 @@
 "use client";
 
 import React from "react";
-import {
-  Icon,
-  SEV,
-  SeverityBadge,
-  CategoryTag,
-  ConfidenceNum,
-  type Severity,
-  type Category,
-} from "@devdigest/ui";
+import { Icon, SEV, ConfidenceNum, type Severity } from "@devdigest/ui";
 import type { ListFinding } from "@devdigest/shared";
+import { FindingSeverityBadge } from "@/components/severity-badge";
+import { FindingCategoryTag } from "@/components/category-tag";
 import { githubBlobUrl } from "@/lib/github-urls";
 import { FileRef } from "./FileRef";
 import { CARD_MAX_HEIGHT, CARD_WIDTH, s } from "./styles";
@@ -151,7 +145,6 @@ export function FindingsPreview({
     setShown((n) => (n < findings.length ? n + PAGE_SIZE : n));
   };
 
-  const canLink = Boolean(repoFullName && headSha);
   const visible = findings.slice(0, shown);
 
   return (
@@ -198,18 +191,27 @@ export function FindingsPreview({
             {visible.map((f, i) => (
               <div key={f.id} style={s.item(i === 0)} role="listitem">
                 <div style={s.itemTitleRow}>
-                  <SeverityBadge severity={f.severity as Severity} compact />
+                  {/* `severity` and `category` are both plain `string` — both
+                      columns are `text`. Neither renderer has a usable fallback,
+                      so a cast here would be a widening one wearing a narrowing
+                      shape. Both guards key on own properties. */}
+                  <FindingSeverityBadge severity={f.severity} compact />
                   <span style={s.itemTitle}>{f.title}</span>
-                  <CategoryTag category={f.category as Category} />
+                  <FindingCategoryTag category={f.category} />
                 </div>
                 <div style={s.itemMetaRow}>
                   <FileRef
                     file={f.file}
                     startLine={f.start_line}
                     endLine={f.end_line}
+                    // Tested inline rather than through a `canLink` boolean:
+                    // TypeScript narrows the operands of the condition it can
+                    // see, so both props are `string` here without a non-null
+                    // assertion. Hoisting the same test into a `boolean` throws
+                    // that narrowing away and the `!`s come back.
                     href={
-                      canLink
-                        ? githubBlobUrl(repoFullName!, headSha!, f.file, f.start_line, f.end_line)
+                      repoFullName && headSha
+                        ? githubBlobUrl(repoFullName, headSha, f.file, f.start_line, f.end_line)
                         : undefined
                     }
                   />

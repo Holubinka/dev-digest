@@ -1,0 +1,15 @@
+{
+  "title": "Welcome to DevDigest",
+  "subtitle": "Local-first AI PR review",
+  "redirecting": "Taking you to your repository…",
+  "openRepo": "Open {name}",
+  "error": {
+    "title": "Couldn't load your repositories",
+    "body": "The DevDigest engine is unreachable. Check that the API is running, then retry."
+  },
+  "empty": {
+    "title": "No repositories yet",
+    "body": "Add a repository to start reviewing pull requests. Set your API keys once in Settings → API Keys.",
+    "cta": "Add repository"
+  }
+}

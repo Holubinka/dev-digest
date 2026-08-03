@@ -15,6 +15,10 @@ export const s = {
     background: "var(--border)",
     margin: "0 2px",
   } satisfies CSSProperties,
+  shortcuts: {
+    fontSize: 12,
+    color: "var(--text-muted)",
+  } satisfies CSSProperties,
   toggleGroup: {
     marginLeft: "auto",
     display: "flex",

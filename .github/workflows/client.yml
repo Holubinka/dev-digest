@@ -1,7 +1,7 @@
 # Client suite — Next.js web app (@devdigest/web).
-# Typecheck + component/unit tests (vitest + jsdom). Hermetic: no API, no DB,
-# no browser — fetch is mocked in the tests. The full-stack browser flow lives
-# in e2e-web.yml.
+# Lint + typecheck + component/unit tests (vitest + jsdom). Hermetic: no API,
+# no DB, no browser — fetch is mocked in the tests. The full-stack browser flow
+# lives in e2e-web.yml.
 name: client
 
 on:
@@ -30,19 +30,21 @@ jobs:
       run:
         working-directory: client
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v5
         with:
           version: 10
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: client/pnpm-lock.yaml
 
       - run: pnpm install --frozen-lockfile
+
+      - run: pnpm lint
 
       - run: pnpm typecheck
 

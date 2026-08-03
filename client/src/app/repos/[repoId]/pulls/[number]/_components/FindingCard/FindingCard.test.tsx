@@ -58,6 +58,23 @@ describe("FindingCard (smoke, both themes)", () => {
     fireEvent.click(screen.getByText("Dismiss"));
     expect(onAction).toHaveBeenCalledWith("dismiss");
   });
+
+  /**
+   * `findings.severity` is a plain `text` column, so a value outside the four
+   * `SEV` keys can reach this card — `visibleFindings` sorts unknowns last but
+   * does not drop them. `SeverityBadge` used to read `SEV[severity].icon` with
+   * no fallback and took the whole route down with
+   * "Cannot read properties of undefined (reading 'icon')". See INSIGHTS.md,
+   * "An unexpected `severity` value takes down the whole findings page".
+   */
+  it("survives a severity outside the contract instead of taking the route down", () => {
+    const stray = { ...FINDING, severity: "NITPICK" as FindingRecord["severity"] };
+    expect(() =>
+      renderWithIntl(<FindingCard f={stray} defaultExpanded onAction={() => {}} />),
+    ).not.toThrow();
+    expect(screen.getByText("Hardcoded Stripe secret key")).toBeInTheDocument();
+    expect(screen.getByText("NITPICK")).toBeInTheDocument();
+  });
 });
 
 describe("FindingCard card style — no border shorthand", () => {

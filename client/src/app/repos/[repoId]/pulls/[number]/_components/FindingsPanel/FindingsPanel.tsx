@@ -19,6 +19,7 @@ export function FindingsPanel({
   repoFullName,
   headSha,
   severity = null,
+  active = true,
 }: {
   findings: FindingRecord[];
   prId: string;
@@ -26,6 +27,11 @@ export function FindingsPanel({
   headSha?: string | null;
   /** Set from the PR-level severity bar — show only findings at this level. */
   severity?: SeverityLevel | null;
+  /**
+   * Whether this panel owns the j/k/a/d shortcuts. The listener is on `window`,
+   * so several mounted panels would each answer the same keypress.
+   */
+  active?: boolean;
 }) {
   const t = useTranslations("prReview");
   const action = useFindingAction();
@@ -46,6 +52,7 @@ export function FindingsPanel({
 
   // j/k navigation + a/d shortcuts on the focused finding (keyboard).
   React.useEffect(() => {
+    if (!active) return;
     const handler = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
@@ -57,11 +64,12 @@ export function FindingsPanel({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [shown, focusIdx, action, prId]);
+  }, [active, shown, focusIdx, action, prId]);
 
   return (
     <div>
       <div style={s.toolbar}>
+        {active && <span style={s.shortcuts}>{t("panel.shortcuts")}</span>}
         <div style={s.toggleGroup}>
           {t("panel.hideLowConfidence")}
           <Toggle on={hideLow} onChange={setHideLow} size={16} />

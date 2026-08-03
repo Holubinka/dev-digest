@@ -12,7 +12,35 @@ _Nothing recorded yet._
 
 ## What Doesn't Work
 
-_Nothing recorded yet._
+### A frozen dependency-cruiser edge silences that edge entirely, not one violation
+
+`.dependency-cruiser-known-violations.json` freezes a *rule + from + to* triple, not a count.
+`no-db-from-routes: src/modules/pulls/routes.ts → src/db/schema.ts` is one of the frozen 20, so
+`pnpm arch` exits 0 no matter how many inline `container.db` queries that file grows. On
+2026-08-02 this branch added a seventeenth and the gate still printed
+`✔ no dependency violations found (20 known violations ignored)`.
+
+`.github/workflows/server-arch.yml` compounds it: `--ignore-known` is the blocking step and the
+strict run is `|| true`, so CI is blind to the same growth.
+
+The consequence is the opposite of what a baseline is for. It is meant to make a backlog
+countable while new violations fail; on a frozen edge it lets the backlog grow silently. Moving
+one query out does not restore the gate for that file — it stays silenced until the last of them
+leaves. `pulls/routes.ts` went 18 → 16 on 2026-08-02 and is still not measured.
+
+When adding to a file that already appears in the frozen list, `pnpm arch:strict` is the only
+command that tells the truth.
+
+### The architecture gate ran on exactly one machine for five days
+
+`server/.dependency-cruiser.cjs`, `.dependency-cruiser-known-violations.json` and
+`.github/workflows/server-arch.yml` were all untracked until 2026-08-02, while `server/AGENTS.md`
+and spec 02 described the gate as live. `pnpm arch` passed locally because the config sat on
+disk; on any fresh clone `depcruise --config` would have failed with no configuration file, and
+CI never ran the job at all. Committed in `006fda4`.
+
+A gate whose config is untracked is indistinguishable from a passing gate. `git ls-files` on the
+config is part of trusting the result.
 
 ## Codebase Patterns
 
@@ -83,6 +111,33 @@ machine, not a property of the repository.
 **Fix.** Do not rely on committed `test:unit` / `test:integration` scripts existing —
 CI invokes `pnpm exec vitest run …` directly for this reason. If you want the flag, set
 it yourself: `git update-index --skip-worktree server/package.json`.
+
+### dependency-cruiser has three ways to check nothing and still print a green tick
+
+**Symptom.** `.dependency-cruiser.cjs` reports `✔ no dependency violations found` for rules
+that should obviously be failing, or floods you with violations that are plainly legal.
+
+**Cause.** Three independent traps, all hit while writing the arch gate on 2026-08-01:
+
+1. **`exclude` deletes the module *and every edge pointing at it*; `doNotFollow` keeps the
+   edge.** A config with `exclude: { path: 'node_modules|…' }` removed every npm package from
+   the graph, so all four rules whose `to` names a package — `no-sql-outside-repository`,
+   `no-fastify-outside-http`, `core-stays-pure`, `not-to-dev-dep` — matched nothing and
+   reported clean. Use `doNotFollow: { path: 'node_modules' }`. The tell is the module count:
+   123 with `exclude`, 149 with `doNotFollow`.
+2. **Capture-group backreferences are `$1`, not a regex `\1`.** The slice-isolation rule
+   `to: { path: '^src/modules/([^/]+)/', pathNot: '^src/modules/(\\1|_shared)/' }` flagged 35
+   *same-module* imports. `$1` reduces it to the one genuine cross-slice import.
+3. **The resolver strips the `node:` prefix.** `import 'node:fs/promises'` lands in the graph
+   as `fs/promises`, so a rule matching `^node:fs` matches nothing. Write `^(node:)?fs(/|$)`.
+
+Also load-bearing: `options.tsConfig.fileName` resolves the `@devdigest/*` path aliases.
+Without it `reviewer-core` never enters the graph at all and `core-stays-pure` is decoration.
+
+**Fix.** Before trusting a new rule, point its `to` at something you know exists inside that
+`from` scope and confirm it reports; then revert the probe. `pnpm arch:strict` shows the full
+picture, and the module count in the footer is the fastest sanity check that the graph is the
+size you expect.
 
 ## Recurring Errors & Fixes
 

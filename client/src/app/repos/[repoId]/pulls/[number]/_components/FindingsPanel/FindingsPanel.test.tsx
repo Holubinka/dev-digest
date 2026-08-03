@@ -1,15 +1,19 @@
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import type { FindingRecord } from "@devdigest/shared";
 import messages from "../../../../../../../../messages/en/prReview.json";
 
+// Hoisted so a test can assert the shortcut did (or did not) fire an action.
+const mutate = vi.hoisted(() => vi.fn());
+
 vi.mock("../../../../../../../lib/hooks/reviews", () => ({
-  useFindingAction: () => ({ mutate: vi.fn(), isPending: false }),
+  useFindingAction: () => ({ mutate, isPending: false }),
 }));
 
 import { FindingsPanel } from "./FindingsPanel";
 
+beforeEach(() => mutate.mockReset());
 afterEach(cleanup);
 
 const FINDINGS: FindingRecord[] = [
@@ -98,5 +102,38 @@ describe("FindingsPanel (smoke)", () => {
     renderWithIntl(<FindingsPanel findings={FINDINGS} prId="pr1" severity={null} />);
     expect(screen.getByText("Hardcoded secret")).toBeInTheDocument();
     expect(screen.getByText("N+1 query in user list")).toBeInTheDocument();
+  });
+});
+
+/**
+ * The shortcut listener is bound to `window`, so every mounted panel used to
+ * answer the same keypress. `active` makes exactly one of them respond —
+ * FindingsTab picks it. See FindingsTab.test.tsx for the multi-run regression.
+ */
+describe("FindingsPanel keyboard ownership", () => {
+  it("acts on the focused finding when it is the active panel", () => {
+    renderWithIntl(<FindingsPanel findings={FINDINGS} prId="pr1" />);
+    fireEvent.keyDown(window, { key: "a" });
+    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(mutate).toHaveBeenCalledWith({ findingId: "f1", action: "accept", prId: "pr1" });
+  });
+
+  it("ignores j/k/a/d entirely when it is not the active panel", () => {
+    renderWithIntl(<FindingsPanel findings={FINDINGS} prId="pr1" active={false} />);
+    fireEvent.keyDown(window, { key: "j" });
+    fireEvent.keyDown(window, { key: "a" });
+    fireEvent.keyDown(window, { key: "d" });
+    expect(mutate).not.toHaveBeenCalled();
+    // …and focus did not move either.
+    const cards = document.querySelectorAll<HTMLElement>("[data-finding-id]");
+    expect(cards[0]!.style.boxShadow).not.toBe("none");
+  });
+
+  it("shows the shortcut hint only on the panel the keys drive", () => {
+    const { unmount } = renderWithIntl(<FindingsPanel findings={FINDINGS} prId="pr1" />);
+    expect(screen.getByText("j/k to move · a accept · d dismiss")).toBeInTheDocument();
+    unmount();
+    renderWithIntl(<FindingsPanel findings={FINDINGS} prId="pr1" active={false} />);
+    expect(screen.queryByText("j/k to move · a accept · d dismiss")).not.toBeInTheDocument();
   });
 });

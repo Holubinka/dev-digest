@@ -24,9 +24,26 @@ Node ≥ 22 · Vitest 2 everywhere. Docker runs Postgres only; API and web run o
 cd server && pnpm db:migrate    # REQUIRED after clone — the server does not migrate on boot
 cd server && pnpm exec vitest run --exclude '**/*.it.test.ts'   # unit (hermetic)
 cd server && pnpm exec vitest run .it.test                      # integration (testcontainers Postgres)
+
+cd client && pnpm lint          # ESLint — client/ only; no other package has one
 ```
 
 `server/` and `client/` use **pnpm**; `reviewer-core/` and `e2e/` use **npm**. Do not mix.
+
+## A push is gated
+
+`.claude/settings.json` registers `scripts/pr-self-review/gate.sh` as a `PreToolUse` hook, so in
+Claude Code a Bash command containing `git push`, `gh pr create` or `gh pr ready` is **refused**
+unless `.pr-self-review/latest.json` holds a fresh passing verdict for the current `HEAD` and
+working tree. Only that hook enforces it; a push from your own terminal is untouched.
+
+- **To get a verdict:** run `/pr-self-review` (the `pr-self-review` skill). `--gates` is seconds
+  and is enough for a push; a PR needs a full run.
+- **To bypass once:** `PR_SELF_REVIEW_SKIP=1 <command>`. It is recorded in the next report.
+- **To turn it off:** delete the `PreToolUse` block from `.claude/settings.json`.
+
+A Track A gate failure (arch, lint, typecheck, tests, vendor mirror, skills registry) stops both
+the push and the PR. A critical found by a review subagent stops only the PR.
 
 ## Non-default conventions
 

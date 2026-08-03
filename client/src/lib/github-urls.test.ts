@@ -75,4 +75,19 @@ describe("githubPrUrl", () => {
   it("encodes the repo name while keeping owner/repo apart", () => {
     expect(githubPrUrl("acme/pay?ments", 1)).toBe("https://github.com/acme/pay%3Fments/pull/1");
   });
+
+  // Same rule as `githubBlobUrl`, for the same reason: encoding leaves `.` and
+  // `..` alone and the browser resolves them, so the link would open a PR on a
+  // repo the caller never named. Not reachable from today's data — the server
+  // builds `repoFullName` — but the builder no longer relies on that.
+  it.each(["../../evil", "acme/../../evil", "./acme/repo", "..", "acme/.."])(
+    "refuses %s rather than building a PR link that climbs out",
+    (repo) => {
+      expect(githubPrUrl(repo, 482)).toBeUndefined();
+    },
+  );
+
+  it("leaves a dot inside a repo name alone — only whole segments count", () => {
+    expect(githubPrUrl("acme/pay.ments", 1)).toBe("https://github.com/acme/pay.ments/pull/1");
+  });
 });

@@ -14,7 +14,8 @@ import { PrDetailHeader } from "./_components/PrDetailHeader";
 import { OverviewTab } from "./_components/OverviewTab";
 import { FindingsTab } from "./_components/FindingsTab";
 import { DiffTab } from "./_components/DiffTab";
-import { isSeverityLevel, type SeverityLevel } from "./_components/SeverityFilterBar";
+import type { SeverityLevel } from "./_components/SeverityFilterBar/constants";
+import { isSeverityLevel } from "./_components/SeverityFilterBar/helpers";
 import RunTraceDrawer from "./_components/RunTraceDrawer";
 import { usePullDetail, usePulls } from "../../../../../lib/hooks";
 import { useQueryClient } from "@tanstack/react-query";
@@ -77,7 +78,7 @@ export default function PRDetailPage() {
   // Reviews come newest-first; each is its own run (grouped into accordions).
   const runs = reviews ?? [];
   const allFindings: FindingRecord[] = React.useMemo(
-    () => runs.flatMap((r) => r.findings),
+    () => (reviews ?? []).flatMap((r) => r.findings),
     [reviews],
   );
   const lethalTrifecta = allFindings.filter((f) => f.kind === "lethal_trifecta");
@@ -182,7 +183,10 @@ export default function PRDetailPage() {
 
       {prId && traceRunId && (
         <RunTraceDrawer
+          // Remount on a run switch: `tab` is derived from `running` at mount.
+          key={traceRunId}
           runId={traceRunId}
+          running={liveRunIds.includes(traceRunId)}
           prNumber={pr.number}
           findings={runs.find((r) => r.run_id === traceRunId)?.findings ?? []}
           agentName={runs.find((r) => r.run_id === traceRunId)?.agent_name ?? null}

@@ -27,6 +27,31 @@ The filter state itself belongs in the URL via the page's existing `setParam` he
 (`page.tsx:62`), next to `?tab` and `?trace`, so a reload keeps it. Reuse this shape for
 the next cross-run control rather than adding per-accordion state.
 
+### Narrowing a barrel only shrinks a graph the component is not already in
+
+Measure before claiming a barrel fix helped. On 2026-08-02
+`_components/SeverityFilterBar/index.ts` was narrowed from three re-export lines to the
+component plus `export type { SeverityLevel }`, and its two value-level consumers were
+repointed at `./constants` and `./helpers`. Walking the **runtime** graph — following only
+imports that survive type erasure, so `import type` and statements whose every specifier is
+`type`-prefixed are dropped:
+
+- `_components/RunFindings/RunFindings.tsx`: 19 → 16 local modules, and
+  `SeverityFilterBar.tsx` unreachable. Real: that row renders no filter bar.
+- `[number]/page.tsx`: 117 → **117**, still reachable. The page renders `<FindingsTab>`,
+  which renders `<SeverityFilterBar>`, so the component was in its graph on its own account
+  and the direct import bought nothing back.
+
+So the review finding was half right, and only the half you can measure. The direct edge is
+still worth deleting — it is a claim about what the page depends on — but do not sell it as a
+smaller bundle. The rule that generalises: a barrel costs a consumer only what the consumer
+does not already reach by another path, and in a route subtree the page usually reaches
+everything.
+
+`export type { … } from` is the escape hatch that keeps a leaf barrel usable: it is erased at
+compile time, so the four siblings reading `SeverityLevel` from the folder pay no runtime
+edge, and only `FindingsTab` — which actually renders the bar — keeps a value import.
+
 ## What Doesn't Work
 
 ### A popover anchored inside a PR-list row gets clipped
@@ -135,6 +160,66 @@ A real viewport scroll targets `document` or the scrolling element, so the jsdom
 regression test for the `window`-dispatched case in `FindingsPreview.test.tsx`; a test that
 only fires at `document` will not catch this.
 
+### An optional prop with a `= false` default disables a whole feature in silence
+
+**Symptom.** "Open run trace" on a *live* run opened the drawer on an empty Trace pane
+reading "No trace available yet.", and its Live-log tab was blank. Found on 2026-08-01 by
+reading the code, not by anyone reporting it — nothing errored, nothing was logged, and the
+feature had presumably never worked.
+
+**Cause.** `page.tsx` mounted `<RunTraceDrawer runId=… findings=… onClose=… />` and simply
+never passed `running`. The prop is declared `running = false`, so the drawer took the
+historical path on every mount: `useRunEvents(running ? [runId] : [])` subscribed to nothing,
+`useState(running ? "log" : "trace")` opened the wrong tab, and `useRunTrace(runId,
+!stillRunning)` went and fetched a trace that is not written until the run completes.
+
+**Fix.** `running={liveRunIds.includes(traceRunId)}` — the page already computed
+`liveRunIds`. Also `key={traceRunId}`, because `tab` is derived from `running` *at mount*, so
+switching runs inside an open drawer otherwise keeps the first run's tab.
+
+The general lesson is the one worth keeping: a required-in-spirit prop given a default is
+invisible to `tsc`. Three of `RunTraceDrawer`'s five props are optional and this was the only
+one that mattered. When a prop selects between two whole behaviours, leave it required and
+let the compiler find the call sites.
+
+### One `window` listener per component instance multiplies with the list it belongs to
+
+**Symptom.** On a PR with two review runs, applying a severity filter and pressing `a`
+accepted **two** findings — and not the same finding twice, but a different one in each run.
+`j`/`k` moved the focus ring in every open list at once.
+
+**Cause.** Two deliberate behaviours that only misbehave together.
+`_components/FindingsPanel/FindingsPanel.tsx` binds j/k/a/d to `window`, and each panel keeps
+its own `focusIdx`. `_components/ReviewRunAccordion/ReviewRunAccordion.tsx` force-opens
+*every* accordion while a severity filter is active (recorded under What Works above — a
+collapsed accordion makes the filter look inert). So the filter mounts N panels, and N
+listeners answer one keypress against N different focus indices.
+
+**Fix.** `FindingsTab` nominates exactly one run, `FindingsPanel` takes `active` (defaulting
+`true`, so a lone panel keeps working and no existing test changed), and the effect
+early-returns when inactive. The nomination is **derived during render**, not synced by an
+effect:
+
+```ts
+const activeReviewId = shownRuns.some((r) => r.id === activeId) ? activeId : shownRuns[0]?.id ?? null;
+```
+
+so when the filter drops the active run the fallback takes over on the same paint. Key it on
+`review.id`, not `run_id` — `run_id` is nullable on the contract.
+
+`ReviewRunAccordion` claims the shortcuts with `onPointerDownCapture` / `onFocusCapture` on
+its root; the capture phase matters, so touching a finding's Accept button inside a run also
+makes that run active before the click does its own work.
+
+Rejected: gating on `document.activeElement`. Nothing owns focus on load, so the single-run
+case that works today would silently stop responding until clicked, and jsdom does not move
+focus on a click of a `tabIndex` div — the activation signal cannot be tested the way a user
+produces it.
+
+The regression lives in `_components/FindingsTab/FindingsTab.test.tsx`: two runs,
+`severity="CRITICAL"` to force both open, one `keyDown`, assert `toHaveBeenCalledTimes(1)`.
+A `FindingsPanel`-only test cannot catch this — the bug needs two panels.
+
 ## Codebase Patterns
 
 ### Run-level data reaches the PR-detail subtree by joining in `FindingsTab`, not by widening `ReviewRecord`
@@ -191,6 +276,124 @@ Two consequences worth knowing before changing either: adding a per-PR findings 
 unnecessary — `GET /pulls/:id/reviews` already returns all of them — and `FindingsCell` no
 longer holds to "hovering costs no request", so a change there is a change to list traffic.
 
+### The `@/*` alias exists but most of the tree ignores it
+
+`client/tsconfig.json` maps `@/*` → `./src/*`, yet on 2026-08-01 `src/` held **43** imports
+beginning `../../../../` against only **29** using the alias. The worst are seven levels
+deep, e.g. `src/app/settings/[section]/_components/SettingsView/_components/SettingsApiKeys/
+SettingsApiKeys.tsx:6` importing `"../../../../../../../lib/hooks"`.
+
+This is not cosmetic: route-colocated folders are exactly the ones that get moved or renamed
+when a route changes, and every `../` count silently encodes the current depth. Use `@/` for
+anything outside the current folder, keep relative paths for same-folder siblings
+(`./constants`, `./helpers`), and fix the ones in files you already touch. Counted with
+`grep -rn 'from "\.\./\.\./\.\./\.\./' --include='*.ts' --include='*.tsx' src`.
+
+### Nine `index.ts` files are aggregating barrels, and `@/lib/hooks` is the costly one
+
+`export *` barrels live in `lib/hooks/`, `components/{app-shell,findings-preview,page-shell,
+run-cost-badge,showcase}/`, `_components/RunFindings/`, and both `vendor/` roots.
+
+`src/lib/hooks/index.ts` re-exports five domain modules, so `import { useSettings } from
+"@/lib/hooks"` also pulls `agents`, `reviews`, `trace` and `repo-intel` into the graph.
+Its own header comment says both forms "resolve here" — true, but not equivalent. Import the
+domain file directly (`@/lib/hooks/reviews`) in new code.
+
+Leaf barrels that re-export a single component — `FindingCard/index.ts`,
+`components/diff-viewer/index.ts` — are a different thing and are fine. The distinction is
+`export *` over several modules, not the existence of an `index.ts`. Find them with
+`grep -rln 'export \*' --include='index.ts' src`.
+
+### `FindingCard`'s `SEV_COLOR` duplicates the vendored `SEV` token
+
+`src/vendor/ui/primitives/tokens.ts:6` exports `SEV` with `{ c, bg, icon, label }` for all
+four severities. `_components/FindingCard/constants.ts` re-declares the colour half as
+`SEV_COLOR` + `SEV_COLOR_FALLBACK`. Two maps for one concept: adding a severity updates one
+and not the other, and the local map is the one without an icon or a label.
+
+The folder layout there is the right pattern to copy; that particular constant is not.
+Before adding to a `constants.ts`, grep `vendor/ui` and `vendor/shared` for an existing
+token — and consume it rather than editing `vendor/**`, where the server copy is the source
+of truth.
+
+**Correction, 2026-08-01 — `SEV_COLOR` is gone; the diagnosis above stands.**
+`FindingCard/constants.ts` was deleted and the card now takes `severityColor()` from
+`components/severity-badge/`. A *fourth* copy turned up in the same pass, inline in
+`_components/RunTraceDrawer/_components/FindingsSection/FindingsSection.tsx`, and it had
+drifted: `SUGGESTION: "var(--accent)"` where the token says `var(--sugg)`, and no `INFO` key
+at all, so the trace drawer painted suggestions blue and INFO grey. That is what a duplicated
+token costs — not the duplication, the divergence nobody notices.
+
+**Correction, 2026-08-01 — that divergence was invisible, and the reason matters.**
+Measured in the browser rather than assumed: `--sugg` and `--accent` hold the *same* value in
+both themes (`#3b82f6` dark, `#2563eb` light, `vendor/ui/styles.css:20,29,59,68`), and
+`--info` (`#6b7280`) is within a hair of `--text-muted` (`#6a6a6a`). So the wrong token
+rendered the right colour and nobody could have seen it. Two things follow. The drift is
+still a real defect — nothing holds `--accent` and `--sugg` equal, they are independent
+declarations, and the day someone re-tints the accent the trace drawer silently stops
+agreeing with every other severity chip. But do not sell a fix like this as a visible bug:
+check `getComputedStyle` before claiming a colour is wrong on screen. The *visible* half of
+this change was the badge gaining the token's icon and background, because it went from a
+bare `Badge` to `SeverityBadge`.
+
+### `Severity` means two different things depending on which package you import it from
+
+`@devdigest/shared` declares `Severity = z.enum(['CRITICAL','WARNING','SUGGESTION'])` —
+**three** values (`vendor/shared/contracts/findings.ts:11`). The vendored design system
+declares its own `Severity` off the `SEV` table, which has **four**: it adds `INFO`
+(`vendor/ui/primitives/tokens.ts:3-18`). Both are exported under the same name, and
+`FindingCard` imported the UI one while its data carried the contract one — so
+`f.severity as Severity` was a silent widening cast that read like a narrowing one.
+
+This matters when you write a type guard. Keying `isKnownSeverity` off the *contract* would
+send a perfectly renderable `INFO` down the fallback path; keying it off `SEV` asks the only
+question the badge actually cares about — is there a row here to read `c`, `bg`, `icon` and
+`label` from. `components/severity-badge/helpers.ts` does the latter, and says so.
+
+The same three-vs-four split is why `FindingsPanel/constants.ts` `SEVERITY_ORDER` has four
+keys while `findings-preview/helpers.ts` `SEVERITY_LEVELS` has three. They are not
+inconsistent by accident, but they do disagree on screen: an `INFO` finding renders in the
+panel and is dropped from the hover card on the same page. Unresolved — see Open Questions.
+
+### An out-of-contract severity degrades, it is not filtered and not coerced
+
+`findings.severity` is a plain `text` column, so any string can reach the UI. Three responses
+were on the table and only one keeps the reviewer honest:
+
+- **Filter it out** — what `rankFindings` does, correctly, for the hover card: it *ranks*,
+  and an unknown value has no rank, and the card is a truncated teaser where dropping a row
+  costs nothing. Wrong for the PR-detail list, whose entire job is to enumerate findings.
+  Deleting an agent-reported row also hides the server bug that produced it.
+- **Coerce to a known value** — stamps a severity the agent never assigned onto a row the
+  reviewer then accepts or dismisses on the strength of that label.
+- **Degrade the badge** — `components/severity-badge/FindingSeverityBadge.tsx` renders the
+  raw string in a muted `Badge`. The finding stays, the label is literally what the database
+  holds, and nothing throws.
+
+So the two surfaces differ on purpose. Do not "fix" `rankFindings` to match.
+
+### The cost of `useTranslations` is the test provider, so migrating two strings costs what migrating nine does
+
+`src/app/page.tsx` had its new `ErrorState` title and body hardcoded while the rest of the
+file — the `PageContainer` title, the `EmptyState`, the redirect line — was hardcoded too.
+The tempting fix is to move the two strings the review named.
+
+Do not. The moment the component calls `useTranslations`, every `render()` in
+`page.test.tsx` needs a `NextIntlClientProvider` wrapper (the pattern is
+`SeverityFilterBar.test.tsx:43` — import the namespace JSON, pass `{ ns: messages }`). That
+wrapper is a fixed cost paid once. Against it, the marginal cost of taking the remaining
+seven strings is seven JSON keys and seven one-line JSX edits. A two-key `home.json` buys the
+full test churn *and* leaves `t("error.title")` sitting between `title="Welcome to
+DevDigest"` and `title="No repositories yet"`.
+
+So the decision is binary: leave the file alone, or migrate the screen. `messages/en/*.json`
+is read by directory listing in `src/i18n/request.ts`, so a new namespace file needs no
+wiring — the whole cost really is the provider. Copy the strings verbatim while moving them;
+retyping an apostrophe at the same time makes the diff impossible to check, and note the repo
+is already split between `'` (here) and `’` (`prReview.json`).
+
+Brand names stay literal — the `AppShell` crumb is `"DevDigest"` in every locale.
+
 ## Tool & Library Notes
 
 ### A component test fails on `ResizeObserver is not defined`
@@ -211,6 +414,27 @@ Seen twice on 2026-07-30: the TS language server flagged
 that had not been touched. Do not start deleting imports or adding path aliases over it.
 `tsc` is the arbiter here; run it before believing a resolve error under `[repoId]` or
 `[number]`.
+
+**2026-08-01 — the same lie fires on `@devdigest/ui`, `@devdigest/shared` and `@/…`,** in
+plain `src/components/` files with no bracketed segment anywhere in the path, and it spreads
+to lines you did not touch in a file you just edited. `pnpm typecheck` was clean throughout.
+Do not chase it.
+
+### A disabled TanStack v5 query reports `isLoading === false`, not `true`
+
+**Symptom.** `RunTraceDrawer`'s "Trace is written when the run completes" message
+(`drawer.tracePending` in `messages/en/runs.json`) was unreachable dead copy — the pane fell
+straight through to `drawer.noTrace` for a live run.
+
+**Cause.** The guard read `isLoading && !trace ? (stillRunning ? tracePending : loadingTrace)
+: …`. But `useRunTrace(runId, !stillRunning)` sets `enabled: false` while the run is live, and
+a disabled query is not loading — v5 reports `status: "pending"` with `fetchStatus: "idle"`,
+so `isLoading` (which is `isPending && isFetching`) is **false**. The outer condition never
+held, so the inner branch that would have shown the message never ran.
+
+**Fix.** Check the domain flag before the query flag:
+`stillRunning ? tracePending : isLoading && !trace ? loadingTrace : …`. More generally, never
+express "we have not asked yet" through `isLoading` — ask the thing that decides `enabled`.
 
 ## Recurring Errors & Fixes
 
@@ -297,6 +521,31 @@ Note when checking the fix in DevTools: the serialized `style` attribute reads
 back into a shorthand for display — not React writing one. Read the style object, not the
 attribute.
 
+### `value in OBJ` passes for eight inherited keys, so an allowlist built with it is not one
+
+**Symptom.** A findings row with `severity` or `category` set to `"constructor"`, `"toString"`,
+`"valueOf"`, `"hasOwnProperty"`, `"__proto__"`, `"isPrototypeOf"`, `"toLocaleString"` or
+`"propertyIsEnumerable"` gets past a guard that was written to reject unknown values. The badge
+then resolves to a function on `Object.prototype`, `Icon[undefined]` follows, and React throws
+`Element type is invalid` — the whole-route crash already recorded above.
+
+**Cause.** `in` walks the prototype chain. `SEV`, `CAT` and `RANK` are plain object literals, and
+`Object.fromEntries` output carries `Object.prototype` too. `findings.severity` and
+`findings.category` are unconstrained `text` columns filled from LLM agent JSON, so those strings
+really do reach the client. A guard with `if (!c) return null` does not save you either:
+`CAT["constructor"]` is truthy, so the guard never fires.
+
+**Fix.** `Object.hasOwn(OBJ, value)`. On 2026-08-02 the same defect was found in four places —
+`components/severity-badge/helpers.ts:9`, `components/findings-preview/helpers.ts:42`,
+`vendor/ui`'s category tag consumers, and `server/src/modules/pulls/status.ts:93`. Fixing one
+instance is a signal to grep for the rest: `grep -rn ' in [A-Z][A-Za-z_]*' client/src server/src`.
+
+Note the client and server ranking functions are declared mirrors of each other. Fix only one and
+the two sides disagree about which rows exist, which is worse than the bug.
+
+**A test that pins this must name the inherited keys.** Asserting that `'CRITICAL'` passes and
+`'nope'` fails is green *before* the fix, because `in` is correct for both.
+
 ## Session Notes
 
 ### 2026-07-28
@@ -379,6 +628,58 @@ attribute.
 - Verified against real data only: the largest PR in this workspace carries 3 findings, so
   the >10 scroll path is covered by tests and not by the browser. No rows were seeded to
   make the card look fuller.
+- Wrote `.claude/skills/frontend-architecture/` (SKILL + examples + references) to answer
+  "where does this file go" for React and the App Router, and trimmed the overlapping
+  "Code Organization" section out of `react-best-practices` so the two do not contradict
+  each other. Route-colocation is prescribed because it is what `client/` already does.
+- Grounding it against the real tree surfaced three drifts, all recorded under Codebase
+  Patterns above: the unused `@/*` alias, the nine `export *` barrels, and `SEV_COLOR`
+  duplicating the vendored `SEV`. None was visible from reading a single file — they only
+  appear when you count across `src/`.
+- The skill was dogfooded before being called done: a fresh agent was asked where a new
+  `SeverityLegend` goes and answered the colocated path plus the promotion move without
+  prompting. It also caught the `SEV` duplication independently, which is what sent me
+  back to fix the examples.
+- Audited the whole of `client/` against `frontend-architecture`, `react-best-practices` and
+  `next-best-practices`, then fixed the five live defects it turned up. Roadmap for the rest
+  (resilience, tooling, duplication, a11y) is in the plan file, not here.
+- The structure came out clean — route colocation is real, contract types are re-exported
+  rather than redefined, zero `any` and zero `@ts-expect-error` outside `vendor/`, no `fetch`
+  escapes a hook, no render factories, no `{count && …}` zero-leaks, every icon-only button
+  labelled. The defects were all *wiring*, not structure: a prop never passed, a guard on the
+  wrong flag, a listener bound one level too wide, a branch collapsed with another, a lookup
+  with no fallback. Reading a component in isolation finds none of these — four of the five
+  only appear when you read the call site next to the definition.
+- `client/` has **no ESLint at all** (no config, no dependency, no script) while carrying
+  three `// eslint-disable-next-line react-hooks/exhaustive-deps` comments that nothing
+  enforces. `react-hooks/exhaustive-deps` plus `jsx-a11y` would have flagged a good share of
+  the roadmap mechanically. Highest-leverage item still open.
+- Every fix was proven red before green by reverting just that hunk and re-running: D5 threw
+  the exact `Cannot read properties of undefined (reading 'icon')` from Recurring Errors, D2
+  reported `expected "spy" to be called 1 times, but got 2 times`, D4 rendered "Add a
+  repository" on a 500. A test that has never failed is not yet a regression test.
+- `pnpm build` after the pass: `/repos/[repoId]/pulls/[number]` is 15 kB / 214 kB first load,
+  the heaviest route by 4× — consistent with `FindingsTab` taking 15 props and the page
+  running six queries.
+
+### 2026-08-02
+
+- Fixed three `pr-self-review` findings on `feat/findings-severity-filter`, all barrel or
+  copy hygiene, none behavioural: 237 tests unchanged before and after.
+- The severity-filter barrel was the interesting one, and not for its size. The same defect
+  had already been fixed one folder over in this branch — `components/findings-preview/index.ts`
+  was narrowed and its header even *names* `SeverityFilterBar/constants.ts` as the consumer it
+  was hurting — while the sibling barrel created in the same branch kept the shape. Fixing the
+  instance you were shown and not the pattern is the failure mode; grep for the shape
+  (`grep -rln 'export \*' --include='index.ts' src`, plus multi-line explicit barrels) when you
+  fix one.
+- `components/category-tag/index.ts` and `components/severity-badge/index.ts` named
+  `isKnownCategory` / `isKnownSeverity`, which only their own folder imports (as `./helpers`).
+  Dropped. Negligible graph cost — the value is that all three barrels in the branch now state
+  the same rule.
+- Counting the graph by hand is worth the twenty lines: a script that resolves `./`, `@/` and
+  `index.ts` and skips type-only edges answered "did this actually shrink" in one run, and
+  contradicted half the finding. Regex over import statements is enough; no need for madge.
 
 ## Open Questions
 
@@ -386,3 +687,15 @@ attribute.
   severity filter is active, or switch to `2 of 5`? Left as totals on 2026-07-28 — the
   header describes the run, not the current view — but it does read oddly next to a
   shorter list.
+- `RunStatus` and `RunTraceDrawer` now both hold an `EventSource` for the same run whenever
+  the drawer is open on a live run, because `useRunEvents` opens one per call site. Each
+  raises `notify.error(parsed.msg)` on an SSE `error` frame (`lib/hooks/reviews.ts:189`), so
+  a failing run toasts **twice**. Introduced knowingly on 2026-08-01 when the drawer started
+  receiving `running` — the alternative was lifting the subscription to the page and
+  prop-drilling events into both, which is a bigger change than the symptom warrants. Fix by
+  sharing one subscription per run id if it starts to grate.
+- `INFO` findings are ordered by `FindingsPanel/constants.ts` `SEVERITY_ORDER` (four keys) but
+  dropped by `findings-preview/helpers.ts` `SEVERITY_LEVELS` (three), so the same finding
+  appears in the run's list and not in the hover card. Both are defensible on their own — see
+  Codebase Patterns. Decide whether `INFO` is a real severity for this product and make the
+  two agree; the server's contract says it is not, the design system says it is.

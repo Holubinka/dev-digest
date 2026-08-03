@@ -277,4 +277,24 @@ describe("FindingsPreview", () => {
       expect(screen.getAllByRole("listitem")).toHaveLength(10);
     });
   });
+
+  /**
+   * `ListFinding.severity` is plain `string` — the DB column is `text` — and the
+   * card used to cast it to `Severity` and hand it to the raw `SeverityBadge`,
+   * which reads `SEV[severity].icon` with no fallback. One such row threw
+   * `Element type is invalid` and took the route down, not just the badge
+   * (INSIGHTS.md, "An unexpected `severity` value takes down the whole findings
+   * page"). `"toString"` is in here because it survived the `in`-based guard as
+   * well as the cast.
+   */
+  describe("a severity the SEV table has no row for", () => {
+    it.each(["MAJOR", "toString", "__proto__", ""])(
+      "still renders the finding when severity is %s",
+      (severity) => {
+        renderPreview({ findings: [{ ...FINDING, severity }] });
+        expect(() => fireEvent.mouseEnter(screen.getByLabelText(LABEL))).not.toThrow();
+        expect(screen.getByText("Hardcoded Stripe secret key")).toBeInTheDocument();
+      },
+    );
+  });
 });

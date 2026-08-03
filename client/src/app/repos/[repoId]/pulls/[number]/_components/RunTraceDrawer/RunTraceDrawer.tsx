@@ -61,7 +61,9 @@ export default function RunTraceDrawer({
   const log: LogLine[] = eventsToLog(events);
   // When historical, fall back to the trace's persisted log for the Live-log tab.
   const persistedLog: LogLine[] = traceLog(trace);
-  const shownLog = running ? log : persistedLog;
+  // Not `running ? log : persistedLog` — that blanks the pane the moment the
+  // run settles, seconds before the persisted trace lands.
+  const shownLog: LogLine[] = log.length > 0 ? log : persistedLog;
 
   const prCtx = prNumber != null ? `${t("drawer.pr", { number: prNumber })} · ` : "";
   const subtitle = `${prCtx}${stillRunning ? t("drawer.running") : t("drawer.completed")}`;
@@ -89,10 +91,12 @@ export default function RunTraceDrawer({
       <Tabs tabs={[...TABS]} value={tab} onChange={setTab} pad="0" />
       <div style={s.tabBody}>
         {tab === "trace" ? (
-          isLoading && !trace ? (
-            <div style={s.emptyNote}>
-              {stillRunning ? t("drawer.tracePending") : t("drawer.loadingTrace")}
-            </div>
+          // `stillRunning` first: `useRunTrace` is disabled while the run is
+          // live, and a disabled query reports `isLoading === false`.
+          stillRunning ? (
+            <div style={s.emptyNote}>{t("drawer.tracePending")}</div>
+          ) : isLoading && !trace ? (
+            <div style={s.emptyNote}>{t("drawer.loadingTrace")}</div>
           ) : trace ? (
             <TraceBody trace={trace} findings={findings} />
           ) : (

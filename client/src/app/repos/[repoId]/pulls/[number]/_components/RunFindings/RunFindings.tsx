@@ -17,7 +17,10 @@ import {
   rankFindings,
   type SeverityCount,
 } from "@/components/findings-preview";
-import { SEVERITY_LEVELS, countBySeverity } from "../SeverityFilterBar";
+// The two modules, not the folder's barrel: this row needs the level list and
+// the tally, and the barrel would bring `SeverityFilterBar.tsx` with them.
+import { SEVERITY_LEVELS } from "../SeverityFilterBar/constants";
+import { countBySeverity } from "../SeverityFilterBar/helpers";
 import { s } from "./styles";
 
 export function RunFindings({

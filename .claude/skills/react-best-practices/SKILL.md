@@ -166,10 +166,10 @@ New arrays, objects, and functions created inline in JSX props break `React.memo
 
 ## Code Organization (MEDIUM)
 
-### Feature-Based Structure
-- Colocate component + hook + helpers + tests per feature
-- Shared utilities go in `utils/` or `components/ui/`
-
-### File Quality
-- Order: imports, constants, helpers, component, exports
+- Order within a file: imports, constants, helpers, component, exports
 - Reuse existing types and constants over creating new ones
+
+**Where files go, how to split a component, and where logic lives are covered in full by
+the [frontend-architecture](../frontend-architecture/SKILL.md) skill — use it for any
+placement question.** Note that it supersedes the line and prop counts stated above: those
+are a prompt to check for a real splitting symptom, not a rule.
