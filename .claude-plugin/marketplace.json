@@ -1,0 +1,20 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "devdigest",
+  "description": "Plugins extracted from the DevDigest reviewer agents.",
+  "owner": {
+    "name": "Vitalii Holubinka"
+  },
+  "plugins": [
+    {
+      "name": "api-contract-reviewer",
+      "description": "Review skills for changes to a published contract: breaking-change severity, response shape, route signature, semver markers, deprecation windows.",
+      "author": {
+        "name": "Vitalii Holubinka"
+      },
+      "category": "code-review",
+      "source": "./plugins/api-contract-reviewer",
+      "homepage": "https://github.com/Holubinka/dev-digest"
+    }
+  ]
+}

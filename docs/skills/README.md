@@ -14,18 +14,23 @@ The human-readable originals of the skills this repo seeds, mirroring how
 | [`assertion-strength-rubric.md`](./assertion-strength-rubric.md) | rubric | Test Quality Reviewer |
 | [`test-smell-catalogue.md`](./test-smell-catalogue.md) | convention | Test Quality Reviewer |
 | [`breaking-change-taxonomy.md`](./breaking-change-taxonomy.md) | rubric | API Contract Reviewer |
+| [`response-schema-contract.md`](./response-schema-contract.md) | rubric | API Contract Reviewer |
 | [`route-signature-checklist.md`](./route-signature-checklist.md) | convention | API Contract Reviewer |
+| [`semver-discipline.md`](./semver-discipline.md) | convention | API Contract Reviewer |
+| [`deprecation-policy.md`](./deprecation-policy.md) | convention | API Contract Reviewer — **imported by URL** |
 | [`flakiness-patterns/`](./flakiness-patterns) | convention | Test Quality Reviewer — **imported by hand** |
 
 The bodies are mirrored into `server/src/db/seed-skills.ts` by
 `scripts/sync-seed-skills.mjs`, which escapes them into template literals. Run it
-after editing any of the four files above; it is what keeps the two copies from
+after editing any of the seeded files above; it is what keeps the two copies from
 drifting.
 
-`flakiness-patterns/` is deliberately **not** seeded. It is packaged as a third
-party would ship a skill — a `SKILL.md`, supporting markdown, and executables that
-have no business being read — so the import path gets exercised by a human rather
-than asserted by a fixture. `scripts/make-skill-zip.sh` zips it.
+Two are deliberately **not** seeded, one per import path. `flakiness-patterns/` is
+packaged as a third party would ship a skill — a `SKILL.md`, supporting markdown,
+and executables that have no business being read — and `scripts/make-skill-zip.sh`
+zips it for the file upload. `deprecation-policy.md` carries its own frontmatter
+and is imported from its raw URL, so **Import from URL** is exercised by a human
+too rather than asserted by a fixture.
 
 The four bound to Test Quality Reviewer are deliberately not variations on one
 another — each asks a question the others cannot:
@@ -39,6 +44,18 @@ another — each asks a question the others cannot:
 
 Coverage, completeness, strength, shape. A new test-quality skill that does not
 answer a question outside that list is probably an edit to one of them.
+
+The five bound to API Contract Reviewer are split the same way:
+
+| Skill | The question it asks |
+|---|---|
+| Breaking change taxonomy | how bad this change is for a caller |
+| Response schema contract | what the reply's shape looked like before and after |
+| Route signature checklist | whether a route's three places moved together |
+| Semver discipline | whether the break carries a version marker |
+| Deprecation policy | whether the old thing survived one release |
+
+Severity, shape, completeness, announcement, transition.
 
 ## Writing a body
 
