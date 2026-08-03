@@ -12,6 +12,30 @@ _Nothing recorded yet._
 
 ## What Doesn't Work
 
+### Testing a guard by calling its classifier directly can pass while the guard is wide open
+
+Both security bugs `/pr-self-review` found on 2026-08-03 had this exact shape: a unit test
+that fed the classifier an input the running system never produces.
+
+`server/test/skill-fetch.test.ts` asserted `ipv6IsPublic('::ffff:127.0.0.1') === false`. But
+`assertPublicHttps` never sees that string — `new URL('https://[::ffff:127.0.0.1]/')` re-spells
+the hostname as `[::ffff:7f00:1]`, and the old dotted-quad regex did not match the hex form. So
+the test passed while loopback, RFC1918 and `169.254.169.254` were all reachable through
+`POST /skills/import/url` and through every redirect hop.
+
+The same session's archive bug is the other half of the pattern: `parseSkillArchive`'s budget
+was only ever exercised with archives built by `fflate.zipSync`, which always writes the
+compressed and uncompressed sizes consistently. A hand-built archive where they disagree is the
+only way to reach the branch that matters.
+
+**The rule.** When a boundary normalises its input — `new URL()`, a decoder, a parser — drive
+the test through the boundary with the raw literal a caller would send, not through the
+classifier with the value you imagine it receives. Where the library is the thing that
+normalises, build the hostile input by hand; a fixture built with the same library can only
+produce inputs that library considers well-formed. Both fixes are pinned that way now:
+`assertPublicHttps('https://[::ffff:127.0.0.1]/x')` and `storedArchiveLyingAboutSize()` in
+`server/test/skills-import.test.ts`.
+
 ### A frozen dependency-cruiser edge silences that edge entirely, not one violation
 
 `.dependency-cruiser-known-violations.json` freezes a *rule + from + to* triple, not a count.
@@ -97,6 +121,22 @@ client maps severity to an icon through a lookup with no fallback (see
 `client/INSIGHTS.md`). A bad row costs one missing preview entry, never a broken page.
 
 ## Tool & Library Notes
+
+### `fflate.unzipSync` copies the COMPRESSED size for a stored entry, not the one its filter reports
+
+**Symptom.** `parseSkillArchive` enforces `MAX_ENTRY_BYTES` and `MAX_TOTAL_BYTES` in the
+`unzipSync` filter and still allocates hundreds of megabytes from a 2 MB upload.
+
+**Cause.** `UnzipFileInfo` carries `originalSize` (uncompressed) and `size` (compressed) as two
+independent numbers read from the central directory — the archive writes whatever it likes in
+each. For a STORED entry (`compression === 0`) fflate copies `size` verbatim
+(`slc(data, b, b + sc)`, `esm/index.mjs:2702` in 0.8.3). Budgeting `originalSize` alone let 200
+entries declaring a kilobyte each point at the same ~2 MB payload.
+
+**Fix.** Budget `Math.max(entry.originalSize, entry.size)` — `server/src/modules/skills/import.ts:42`.
+The pre-inflation filter is still the right mechanism and the deflate path was never affected:
+fflate does not grow a supplied `out` buffer, so a declared-4 GB deflate member really does
+refuse to allocate.
 
 ### `drizzle-kit generate` emits DDL only — a data backfill has to be hand-appended
 
@@ -232,7 +272,24 @@ asymmetry is inert, not a bug.
 
 ## Session Notes
 
-_Nothing recorded yet._
+### 2026-08-03
+
+- Landed the skills module and closed two of its own security holes, both found by
+  `/pr-self-review` and both of which had passed their own tests — see the entry under What
+  Doesn't Work, which is the transferable half.
+- `server/src/platform/skill-injection.ts` sits in `platform/`, not in `modules/skills/`,
+  because `modules/reviews/run-executor.ts` also has to filter a hijacking body out of prompt
+  assembly and `no-cross-module` forbids the import. Three independent locks exist on purpose:
+  the service refuses to enable, the reviews filter drops it at assembly, and the UI explains
+  why. Its docblock says plainly it is a seatbelt for a careless import, not a security
+  boundary — do not let that sentence get edited out.
+- `SkillsService` takes its repository as a defaulted constructor parameter
+  (`repo = new SkillsRepository(container.db)`), the first service here to do so. That is what
+  made `skills-service.test.ts` possible without Docker; the three untested services all build
+  their own.
+- The `arch` gate caught `modules/skills/service.ts → adapters/tokenizer/index.ts`
+  (`no-service-to-adapter-impl`). Using `this.container.tokenizer.count()` fixed the violation
+  and produced an exact token count rather than the `length / 4` estimate.
 
 ## Open Questions
 

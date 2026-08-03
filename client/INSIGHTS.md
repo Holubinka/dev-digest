@@ -396,6 +396,21 @@ Brand names stay literal — the `AppShell` crumb is `"DevDigest"` in every loca
 
 ## Tool & Library Notes
 
+### Two `vi.mock` specifiers for the same module do not merge — the later one replaces the first
+
+**Symptom.** `[vitest] No "useAgents" export is defined on the "@/lib/hooks/agents" mock`, on a
+test that plainly mocks `useAgents` a few lines above.
+
+**Cause.** The component under test reached `lib/hooks/agents` relatively while a child reached
+it as `@/lib/hooks/agents`. Both resolve to the same file — `vitest.config.ts` maps `@` to
+`src` — so the two `vi.mock` factories register against one module id and the second wins,
+taking the first factory's exports with it.
+
+**Fix.** Mock the module once, through whichever specifier, and list every export the whole
+rendered tree needs. `AgentEditorView.test.tsx` and `AgentEditor.test.tsx` both do this and say
+so in a comment. The failure names the *export* rather than the duplication, which is what
+makes it cost a round-trip.
+
 ### A component test fails on `ResizeObserver is not defined`
 
 **Symptom.** A chart or layout-aware component throws in jsdom.
@@ -437,6 +452,18 @@ held, so the inner branch that would have shown the message never ran.
 express "we have not asked yet" through `isLoading` — ask the thing that decides `enabled`.
 
 ## Recurring Errors & Fixes
+
+### `getByDisplayValue` collapses newlines, so it never finds a multi-line textarea
+
+**Symptom.** `Unable to find an element with the display value: "# Rubric\nList every branch."`,
+while the printed DOM shows a textarea holding exactly that.
+
+**Cause.** Testing Library runs its default normalizer over the value, collapsing every run of
+whitespace — including `\n` — to a single space. The needle keeps its newline, so it can never
+match. Single-line inputs are unaffected, which is why this only bites on the body editor.
+
+**Fix.** Query by label and assert the value: `expect(screen.getByLabelText("Skill body
+(Markdown)")).toHaveValue("# Rubric\nList every branch.")`. `ConfigTab.test.tsx` does this.
 
 ### Running `next dev` beside `next start` strips the CSS off the served app
 
@@ -708,6 +735,27 @@ the two sides disagree about which rows exist, which is worse than the bug.
 - Counting the graph by hand is worth the twenty lines: a script that resolves `./`, `@/` and
   `index.ts` and skips type-only edges answered "did this actually shrink" in one run, and
   contradicted half the finding. Regex over import statements is enough; no need for madge.
+
+### 2026-08-03
+
+- Shipped the Skills screens (`/skills`, `/skills/[id]`, the agent editor's Skills tab), then
+  spent a second pass moving three of the pieces after `/pr-self-review` pointed at them. The
+  pattern in all three: something read from more than one folder living inside one of them —
+  `SkillBodyEditor` in `SkillDetail/_components/` with two consumers outside it, `TYPE_COLORS`
+  reached from `/agents/:id` by six `../`, `TYPE_VALUES` owned by one of its three readers.
+- `TYPE_COLORS` did not become a shared constant, it became `components/skill-type/SkillTypeBadge`.
+  Three call sites each carried the identical `<Badge color={TYPE_COLORS[t]}>{t(\`listItem.type.${t}\`)}</Badge>`,
+  so promoting the constant alone would have left the duplication in place. `severity-badge` and
+  `category-tag` are the precedent for the folder shape.
+- Fixing one placement created the next finding: pulling `bodyFilename` out of
+  `SkillDetail/helpers.ts` left `promptBlock` alone one folder above `PreviewTab`, its only
+  consumer. Misplacement has two directions and the second is easy to introduce while fixing
+  the first.
+- Wrote nine component test files (349 tests, up from 294). The one that mattered was
+  `SkillDetail`'s `blocked` gate — the UI half of the injection refusal, where a hijacking body
+  shows the toggle off and asking to enable never reaches the server. It shipped untested.
+  `AgentEditor`'s `tab === "skills"` branch was the other blind spot: `SkillsTab.test.tsx`
+  mounts the tab directly, so nothing covered the dispatch that makes it reachable.
 
 ## Open Questions
 
