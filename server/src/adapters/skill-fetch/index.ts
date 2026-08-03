@@ -1,4 +1,6 @@
 import { lookup } from 'node:dns/promises';
+import { request } from 'node:https';
+import type { IncomingMessage } from 'node:http';
 import { isIP } from 'node:net';
 import type { FetchedMarkdown, SkillFetcher } from '@devdigest/shared';
 import { ExternalServiceError, ValidationError } from '../../platform/errors.js';
@@ -19,13 +21,21 @@ import { ExternalServiceError, ValidationError } from '../../platform/errors.js'
  *    a public host is free to redirect into private space;
  *  - the reply capped WHILE streaming rather than after, and required to be
  *    text/*;
- *  - one deadline over the whole exchange, redirects included.
+ *  - one deadline over the whole exchange, redirects included;
+ *  - **the connection pinned to the address that was checked.** `assertPublicHttps`
+ *    hands back the literal it verified and `get` feeds it to `node:https` as the
+ *    `lookup` result, so DNS is consulted once per hop and the socket cannot go
+ *    anywhere the check did not allow.
  *
- * KNOWN LIMIT: the address is checked at resolution time and the connection is
- * made separately, so a name that resolves differently between the two — DNS
- * rebinding — is not covered. Closing that needs a custom agent pinning the
- * checked IP. Stated plainly rather than implied, because the check reads
- * stronger than it is.
+ * That last point is why this uses `node:https` and not `fetch`: `fetch`
+ * re-resolves the hostname when it connects, which left a window where a name
+ * could answer with a public address during the check and a private one a
+ * moment later — DNS rebinding. It was carried here as a KNOWN LIMIT until
+ * 2026-08-03, when /pr-self-review raised it against the shipped feature.
+ *
+ * What is still NOT covered: a host that is public, reachable, and hostile.
+ * Pinning proves the socket goes where the check allowed; it says nothing about
+ * whether that destination deserved to be trusted.
  */
 
 const MAX_DOCUMENT_BYTES = 2_000_000;
@@ -110,8 +120,16 @@ export function ipv6IsPublic(ip: string): boolean {
   return true;
 }
 
+/** A checked target: where to connect, and the name to present while doing it. */
+export interface VerifiedTarget {
+  url: URL;
+  /** The literal this host resolved to, and the only one we will connect to. */
+  address: string;
+  family: 4 | 6;
+}
+
 /** Parse, require https, and refuse a host that resolves anywhere non-public. */
-export async function assertPublicHttps(raw: string): Promise<URL> {
+export async function assertPublicHttps(raw: string): Promise<VerifiedTarget> {
   let url: URL;
   try {
     url = new URL(raw);
@@ -137,7 +155,11 @@ export async function assertPublicHttps(raw: string): Promise<URL> {
       throw new ValidationError(`Refusing to fetch a non-public address (${address})`);
     }
   }
-  return url;
+
+  // Every address checked out; the first is the one the connection is pinned
+  // to. Returning it is what closes the gap between checking and connecting.
+  const chosen = addresses[0]!;
+  return { url, address: chosen.address, family: chosen.family === 6 ? 6 : 4 };
 }
 
 export class HttpSkillFetcher implements SkillFetcher {
@@ -149,70 +171,110 @@ export class HttpSkillFetcher implements SkillFetcher {
 
       for (let hop = 0; ; hop++) {
         const res = await this.get(target, controller.signal);
-        const location = res.headers.get('location');
+        const status = res.statusCode ?? 0;
+        const location = header(res, 'location');
 
-        if (res.status >= 300 && res.status < 400 && location) {
-          await res.body?.cancel();
+        if (status >= 300 && status < 400 && location) {
+          res.destroy();
           if (hop >= MAX_REDIRECTS) throw new ValidationError('Too many redirects');
-          target = await assertPublicHttps(new URL(location, target).toString());
+          target = await assertPublicHttps(new URL(location, target.url).toString());
           continue;
         }
 
-        if (!res.ok) {
-          await res.body?.cancel();
-          throw new ExternalServiceError(`Fetching the skill failed with ${res.status}`);
+        if (status < 200 || status >= 300) {
+          res.destroy();
+          throw new ExternalServiceError(`Fetching the skill failed with ${status}`);
         }
 
-        const contentType = res.headers.get('content-type') ?? '';
+        const contentType = header(res, 'content-type') ?? '';
         if (!contentType.split(';')[0]?.trim().startsWith('text/')) {
-          await res.body?.cancel();
+          res.destroy();
           throw new ValidationError(
             `Expected a text document, got "${contentType || 'no content-type'}"`,
           );
         }
-        return await readCapped(res, target);
+        return await readCapped(res, target.url);
       }
     } finally {
       clearTimeout(timer);
     }
   }
 
-  private async get(url: URL, signal: AbortSignal): Promise<Response> {
-    try {
-      return await fetch(url, {
-        redirect: 'manual',
-        signal,
-        headers: { accept: 'text/markdown, text/plain;q=0.9, */*;q=0.1' },
+  /**
+   * Issue the request against the address `assertPublicHttps` checked.
+   *
+   * `node:https` is used rather than `fetch` for one reason: its `lookup` hook.
+   * `fetch` re-resolves the hostname when it connects, so a name that answered
+   * with a public address during the check and a private one a moment later —
+   * DNS rebinding — reached the private address anyway. That was the KNOWN
+   * LIMIT this file used to carry. Handing back the already-verified literal,
+   * and never consulting DNS a second time, closes it: the socket can only go
+   * where the check allowed.
+   *
+   * TLS is unaffected. `servername` still carries the hostname, so the
+   * certificate is validated against the name the user typed, not the IP.
+   */
+  private get(target: VerifiedTarget, signal: AbortSignal): Promise<IncomingMessage> {
+    const { url, address, family } = target;
+    return new Promise((resolve, reject) => {
+      const req = request(
+        url,
+        {
+          signal,
+          servername: url.hostname.replace(/^\[|\]$/g, ''),
+          lookup: (_hostname, options, callback) => {
+            // `all: true` asks for every address; answer both shapes of the
+            // callback with the single pinned one.
+            if ((options as { all?: boolean }).all) {
+              (callback as unknown as (e: null, a: Array<{ address: string; family: number }>) => void)(
+                null,
+                [{ address, family }],
+              );
+              return;
+            }
+            callback(null, address, family);
+          },
+          headers: { accept: 'text/markdown, text/plain;q=0.9, */*;q=0.1' },
+        },
+        resolve,
+      );
+      req.on('error', (err: Error) => {
+        reject(new ExternalServiceError(`Could not reach ${url.hostname}: ${err.message}`));
       });
-    } catch (err) {
-      throw new ExternalServiceError(`Could not reach ${url.hostname}: ${(err as Error).message}`);
-    }
+      req.end();
+    });
   }
 }
 
+/** First value of a response header, whatever shape Node hands back. */
+function header(res: IncomingMessage, name: string): string | undefined {
+  const value = res.headers[name];
+  return Array.isArray(value) ? value[0] : value;
+}
+
 /** Read the body, aborting the moment it goes over the cap — not after. */
-async function readCapped(res: Response, url: URL): Promise<FetchedMarkdown> {
-  const reader = res.body?.getReader();
-  if (!reader) return { text: '', finalUrl: url.toString(), bytes: 0 };
-
-  const chunks: Uint8Array[] = [];
+async function readCapped(res: IncomingMessage, url: URL): Promise<FetchedMarkdown> {
+  const chunks: Buffer[] = [];
   let bytes = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    bytes += value.byteLength;
-    if (bytes > MAX_DOCUMENT_BYTES) {
-      await reader.cancel();
-      throw new ValidationError(`That document is larger than ${MAX_DOCUMENT_BYTES} bytes`);
+
+  try {
+    for await (const chunk of res) {
+      const buf = chunk as Buffer;
+      bytes += buf.byteLength;
+      if (bytes > MAX_DOCUMENT_BYTES) {
+        res.destroy();
+        throw new ValidationError(`That document is larger than ${MAX_DOCUMENT_BYTES} bytes`);
+      }
+      chunks.push(buf);
     }
-    chunks.push(value);
+  } catch (err) {
+    if (err instanceof ValidationError) throw err;
+    throw new ExternalServiceError(`Reading the skill failed: ${(err as Error).message}`);
   }
 
-  const merged = new Uint8Array(bytes);
-  let at = 0;
-  for (const chunk of chunks) {
-    merged.set(chunk, at);
-    at += chunk.byteLength;
-  }
-  return { text: new TextDecoder().decode(merged), finalUrl: url.toString(), bytes };
+  return {
+    text: Buffer.concat(chunks).toString('utf8'),
+    finalUrl: url.toString(),
+    bytes,
+  };
 }
