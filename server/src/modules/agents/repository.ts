@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import type { Db } from '../../db/client.js';
 import * as t from '../../db/schema.js';
 import type { CiFailOn, Provider, ReviewStrategy } from '@devdigest/shared';
@@ -188,15 +188,35 @@ export class AgentsRepository {
 
   // ---- agent_skills link table (A2 owns the agent side) -------------------
 
-  /** Skills linked to an agent, in `order` ascending. */
+  /**
+   * Skills linked to an agent, in `order` ascending — and only skills from the
+   * agent's own workspace. The `agent_skills` foreign key proves a skill id
+   * exists, not that it belongs here, and a linked body becomes an instruction
+   * in this agent's prompt. So the join re-checks tenancy instead of trusting
+   * the row: a stray link is invisible rather than load-bearing.
+   */
   async linkedSkills(agentId: string): Promise<LinkedSkillRow[]> {
     const rows = await this.db
       .select({ skill: t.skills, order: t.agentSkills.order })
       .from(t.agentSkills)
       .innerJoin(t.skills, eq(t.agentSkills.skillId, t.skills.id))
-      .where(eq(t.agentSkills.agentId, agentId))
+      .innerJoin(t.agents, eq(t.agents.id, t.agentSkills.agentId))
+      .where(
+        and(eq(t.agentSkills.agentId, agentId), eq(t.skills.workspaceId, t.agents.workspaceId)),
+      )
       .orderBy(asc(t.agentSkills.order));
     return rows.map((r) => ({ skill: r.skill, order: r.order }));
+  }
+
+  /** Of `skillIds`, those that exist in this workspace. Used to reject a
+   *  cross-tenant link before it can become a prompt block. */
+  async skillIdsInWorkspace(workspaceId: string, skillIds: string[]): Promise<string[]> {
+    if (skillIds.length === 0) return [];
+    const rows = await this.db
+      .select({ id: t.skills.id })
+      .from(t.skills)
+      .where(and(eq(t.skills.workspaceId, workspaceId), inArray(t.skills.id, skillIds)));
+    return rows.map((r) => r.id);
   }
 
   async skillIdsForAgent(agentId: string): Promise<string[]> {

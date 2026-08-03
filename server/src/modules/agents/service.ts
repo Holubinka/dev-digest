@@ -8,6 +8,7 @@ import type {
   Provider,
   ReviewStrategy,
 } from '@devdigest/shared';
+import { ValidationError } from '../../platform/errors.js';
 import { AgentsRepository } from './repository.js';
 import { toAgentDto, toAgentVersionDto } from './helpers.js';
 
@@ -152,7 +153,11 @@ export class AgentsService {
   ): Promise<AgentSkillLink[] | undefined> {
     const agent = await this.repo.getById(workspaceId, agentId);
     if (!agent) return undefined;
-    await this.repo.setSkills(agentId, skillIds);
+    // `order` is the array index, and (agent_id, skill_id) is the primary key,
+    // so a repeated id would collide on insert. The set is what the editor means.
+    const ids = [...new Set(skillIds)];
+    await this.assertSkillsInWorkspace(workspaceId, ids);
+    await this.repo.setSkills(agentId, ids);
     return this.skillLinks(agentId);
   }
 
@@ -165,10 +170,28 @@ export class AgentsService {
   ): Promise<AgentSkillLink[] | undefined> {
     const agent = await this.repo.getById(workspaceId, agentId);
     if (!agent) return undefined;
+    await this.assertSkillsInWorkspace(workspaceId, [skillId]);
     const existing = await this.repo.linkedSkills(agentId);
     const resolvedOrder = order ?? existing.length;
     await this.repo.linkSkill(agentId, skillId, resolvedOrder);
     return this.skillLinks(agentId);
+  }
+
+  /**
+   * Refuse a link to a skill from another workspace. Verifying the agent is not
+   * enough: the `agent_skills` foreign key only proves the skill id exists, and
+   * a linked body is spliced into this agent's prompt as an instruction — so a
+   * cross-tenant id would put someone else's text in this workspace's review.
+   */
+  private async assertSkillsInWorkspace(
+    workspaceId: string,
+    skillIds: string[],
+  ): Promise<void> {
+    const known = new Set(await this.repo.skillIdsInWorkspace(workspaceId, skillIds));
+    const unknown = skillIds.filter((id) => !known.has(id));
+    if (unknown.length > 0) {
+      throw new ValidationError('Unknown skill id', { skill_ids: unknown });
+    }
   }
 
   /**
