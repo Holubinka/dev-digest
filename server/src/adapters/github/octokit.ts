@@ -34,6 +34,21 @@ const PAGE_SIZE = 100;
 const MAX_PR_FILES = 1000;
 const MAX_PR_COMMITS = 250;
 
+/**
+ * The row shapes, taken from the endpoint methods rather than hand-written.
+ *
+ * `paginate` has to be reached through `as never` — its overloads do not
+ * resolve through a generic helper — and that erasure would otherwise take
+ * Octokit's generated payload types with it, leaving the maps below asserting
+ * a shape instead of checking one. A renamed field would then compile to
+ * `path: undefined` on every file: the same silent loss of the diff this
+ * pagination exists to stop. Derived from `Octokit` itself, not imported from
+ * `@octokit/types`, which is a transitive dependency this package does not
+ * declare.
+ */
+type ListedFile = Awaited<ReturnType<Octokit['rest']['pulls']['listFiles']>>['data'][number];
+type ListedCommit = Awaited<ReturnType<Octokit['rest']['pulls']['listCommits']>>['data'][number];
+
 function mapStatus(state: string, merged: boolean | undefined): PrStatus {
   if (merged) return 'merged';
   if (state === 'closed') return 'closed';
@@ -129,23 +144,21 @@ export class OctokitGitHubClient implements GitHubClient {
             pull_number: n,
           });
           const params = { owner: repo.owner, repo: repo.name, pull_number: n };
-          const files = await this.paginateUpTo<
-            PrDetail['files'][number],
-            { filename: string; additions: number; deletions: number; patch?: string }
-          >(this.octokit.rest.pulls.listFiles, params, MAX_PR_FILES, (f) => ({
+          const files = await this.paginateUpTo<PrDetail['files'][number], ListedFile>(
+            this.octokit.rest.pulls.listFiles,
+            params,
+            MAX_PR_FILES,
+            (f) => ({
             path: f.filename,
             additions: f.additions,
             deletions: f.deletions,
             patch: f.patch,
           }));
-          const commits = await this.paginateUpTo<
-            PrDetail['commits'][number],
-            {
-              sha: string;
-              commit: { message: string; author?: { name?: string; date?: string } | null };
-              author?: { login?: string } | null;
-            }
-          >(this.octokit.rest.pulls.listCommits, params, MAX_PR_COMMITS, (c) => ({
+          const commits = await this.paginateUpTo<PrDetail['commits'][number], ListedCommit>(
+            this.octokit.rest.pulls.listCommits,
+            params,
+            MAX_PR_COMMITS,
+            (c) => ({
             sha: c.sha,
             message: c.commit.message,
             author: c.commit.author?.name ?? c.author?.login ?? 'unknown',
