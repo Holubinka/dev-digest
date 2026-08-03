@@ -71,7 +71,8 @@ the push and the PR. A critical found by a review subagent stops only the PR.
 - The API exits with `ERR_MODULE_NOT_FOUND` when `reviewer-core/node_modules` is missing —
   its raw source is imported at runtime. Install dependencies there too.
 - `relation ... does not exist` on first run means migrations were never applied.
-- Port 5432 is the Dockerized Postgres; `scripts/e2e.sh` uses 5433 to stay out of its way.
+- Port 5434 is the Dockerized Postgres, published from 5432 inside the container;
+  `scripts/e2e.sh` uses 5433 to stay out of its way.
 
 ## Do not touch
 

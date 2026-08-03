@@ -7,7 +7,7 @@ import React from "react";
 import { useTranslations } from "next-intl";
 import { Markdown } from "@devdigest/ui";
 import type { Skill } from "@devdigest/shared";
-import { promptBlock } from "../../helpers";
+import { promptBlock } from "./helpers";
 import { s } from "./styles";
 
 export function PreviewTab({ skill }: { skill: Skill }) {
