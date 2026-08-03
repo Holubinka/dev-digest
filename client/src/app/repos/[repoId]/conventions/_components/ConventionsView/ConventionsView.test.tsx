@@ -1,9 +1,9 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { screen, cleanup, fireEvent } from "@testing-library/react";
 import type { ConventionsResponse } from "@devdigest/shared";
-import messages from "../../../../../../../messages/en/conventions.json";
-import skillsMessages from "../../../../../../../messages/en/skills.json";
-import { renderWithProviders } from "@/test/skills";
+import messages from "@/../messages/en/conventions.json";
+import skillsMessages from "@/../messages/en/skills.json";
+import { renderWithProviders } from "@/test/render";
 import { convention } from "@/test/conventions";
 
 vi.mock("next/navigation", () => ({

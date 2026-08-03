@@ -59,6 +59,13 @@ export const MAX_CANDIDATES = 24;
 export const MAX_EVIDENCE_LINES = 12;
 
 /**
+ * Characters kept per evidence site, on top of the line cap. A generated or
+ * minified file is one line long, so the line cap alone would store megabytes
+ * per site and re-serve them on every list request.
+ */
+export const MAX_EVIDENCE_CHARS = 2_000;
+
+/**
  * How long a quoted line must be before a substring match counts. Below this a
  * fragment like `}` or `return;` would "match" almost anywhere.
  */

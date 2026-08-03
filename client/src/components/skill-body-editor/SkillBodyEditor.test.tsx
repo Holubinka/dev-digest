@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
-import messages from "../../../../../messages/en/skills.json";
+import messages from "@/../messages/en/skills.json";
 import { SkillBodyEditor } from "./SkillBodyEditor";
 
 afterEach(cleanup);

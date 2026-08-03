@@ -11,10 +11,10 @@ import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Button, FormField, Modal, SelectInput, TextInput, Toggle } from "@devdigest/ui";
 import type { ConventionCandidate, Skill } from "@devdigest/shared";
-import { SkillBodyEditor } from "@/app/skills/_components/SkillBodyEditor";
+import { SkillBodyEditor } from "@/components/skill-body-editor";
 import { useCreateSkill } from "@/lib/hooks/skills";
 import { useToast } from "@/lib/toast";
-import { TYPE_VALUES } from "@/app/skills/_components/constants";
+import { TYPE_VALUES } from "@/components/skill-type";
 import { composeSkillBody, evidenceFiles, skillName } from "./helpers";
 import { s } from "./styles";
 

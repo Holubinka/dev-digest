@@ -1,6 +1,6 @@
 import type { ConventionCandidate, ConventionEvidence } from '@devdigest/shared';
 import type { ConventionRow, ConventionScanRow } from '../../db/rows.js';
-import { MAX_EVIDENCE_LINES, MIN_SNIPPET_MATCH_CHARS } from './constants.js';
+import { MAX_EVIDENCE_CHARS, MAX_EVIDENCE_LINES, MIN_SNIPPET_MATCH_CHARS } from './constants.js';
 
 /**
  * Grounding for extracted conventions — the code half of the feature.
@@ -148,7 +148,8 @@ export function verifyEvidence(
       snippet: content
         .split('\n')
         .slice(at.line - 1, endLine)
-        .join('\n'),
+        .join('\n')
+        .slice(0, MAX_EVIDENCE_CHARS),
     });
   }
   return verified;

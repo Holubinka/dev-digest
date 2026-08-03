@@ -10,8 +10,8 @@ import { Button, FormField, Modal, SelectInput, TextInput } from "@devdigest/ui"
 import type { Skill } from "@devdigest/shared";
 import { useCreateSkill } from "../../../../lib/hooks/skills";
 import { useToast } from "../../../../lib/toast";
-import { SkillBodyEditor } from "../SkillBodyEditor";
-import { TYPE_VALUES } from "../constants";
+import { SkillBodyEditor } from "@/components/skill-body-editor";
+import { TYPE_VALUES } from "@/components/skill-type";
 import { s } from "./styles";
 
 export function CreateSkillModal({ onClose }: { onClose: () => void }) {

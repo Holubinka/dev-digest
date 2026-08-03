@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
-import messages from "../../../../../../../messages/en/conventions.json";
+import messages from "@/../messages/en/conventions.json";
 import { convention } from "@/test/conventions";
 import { ConventionCard } from "./ConventionCard";
 

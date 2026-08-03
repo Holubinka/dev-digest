@@ -14,6 +14,7 @@ import {
   EXTRACT_TIMEOUT_MS,
   MAX_CANDIDATES,
   MAX_FILE_CHARS,
+  MAX_RULE_CHARS,
   MAX_SAMPLE_TOKENS,
   MIN_FILE_CHARS,
   MIN_VERIFIED_EVIDENCE,
@@ -326,7 +327,9 @@ export class ConventionsService {
       seen.add(key);
       out.push({
         category: raw.category,
-        rule: raw.rule,
+        // Bounded here, not in the schema: the request-body cap covers a
+        // hand-edited rule, and the model-written one is the untrusted path.
+        rule: raw.rule.slice(0, MAX_RULE_CHARS),
         evidence,
         // The model's own number, discounted by how much of what it cited was
         // actually there. A rule that quoted four places and proved two is not

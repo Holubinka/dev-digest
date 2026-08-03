@@ -9,8 +9,6 @@ import {
 } from '@devdigest/shared';
 import type { VerifiedEvidence } from './helpers.js';
 
-export type { ConventionRow, ConventionScanRow };
-
 /**
  * Conventions data-access. Owns `conventions` and `convention_scans`, and reads
  * `repos` for the owner/name/clone a scan needs — a read, not ownership, which

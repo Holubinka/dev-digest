@@ -1,7 +1,8 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { screen, cleanup, fireEvent } from "@testing-library/react";
 import messages from "../../../../../messages/en/skills.json";
-import { renderWithProviders, skill } from "../../../../test/skills";
+import { skill } from "../../../../test/skills";
+import { renderWithProviders } from "../../../../test/render";
 import { SkillCard } from "./SkillCard";
 
 afterEach(cleanup);
