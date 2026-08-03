@@ -16,6 +16,24 @@ import { withRetry, withTimeout } from '../../platform/resilience.js';
 
 const TIMEOUT = 30_000;
 
+/** GitHub's maximum for these list endpoints; asking for more is ignored. */
+const PAGE_SIZE = 100;
+
+/**
+ * Caps on how far a PR is walked. GitHub itself stops at 3000 files and 250
+ * commits, so these only bound the request count on a PR nobody would review
+ * by hand anyway — 10 and 3 round trips at worst, inside `TIMEOUT`.
+ *
+ * They are NOT the reason a diff can be partial. Before 2026-08-03 a single
+ * `per_page: 100` call was the whole import, so a PR of 161 files reached the
+ * agents as its first 100 by GitHub's ordering — alphabetical, which on this
+ * repo meant every `client/` file and not one `server/` file. The reviewer
+ * then correctly reported a contract as "not changed in this diff" when it had
+ * been changed in a file it was never shown.
+ */
+const MAX_PR_FILES = 1000;
+const MAX_PR_COMMITS = 250;
+
 function mapStatus(state: string, merged: boolean | undefined): PrStatus {
   if (merged) return 'merged';
   if (state === 'closed') return 'closed';
@@ -29,8 +47,42 @@ function mapStatus(state: string, merged: boolean | undefined): PrStatus {
 export class OctokitGitHubClient implements GitHubClient {
   private octokit: Octokit;
 
-  constructor(token: string) {
-    this.octokit = new Octokit({ auth: token });
+  /**
+   * `octokit` is injectable so the pagination can be tested without a network;
+   * production keeps building it from the token, so no call site changes.
+   */
+  constructor(token: string, octokit: Octokit = new Octokit({ auth: token })) {
+    this.octokit = octokit;
+  }
+
+  /**
+   * Walk every page of a list endpoint, stopping at `max` items.
+   *
+   * `paginate`'s map callback returns `[]` because the items are accumulated
+   * here — returning them as well would double the memory for a large PR.
+   */
+  private async paginateUpTo<Item, Row>(
+    route: Parameters<Octokit['paginate']>[0],
+    params: Record<string, unknown>,
+    max: number,
+    map: (row: Row) => Item,
+  ): Promise<Item[]> {
+    const out: Item[] = [];
+    await this.octokit.paginate(
+      route as never,
+      { ...params, per_page: PAGE_SIZE } as never,
+      ((response: { data: Row[] }, done: () => void) => {
+        for (const row of response.data) {
+          out.push(map(row));
+          if (out.length >= max) {
+            done();
+            break;
+          }
+        }
+        return [];
+      }) as never,
+    );
+    return out;
   }
 
   async listPullRequests(repo: RepoRef): Promise<PrMeta[]> {
@@ -76,18 +128,29 @@ export class OctokitGitHubClient implements GitHubClient {
             repo: repo.name,
             pull_number: n,
           });
-          const { data: files } = await this.octokit.rest.pulls.listFiles({
-            owner: repo.owner,
-            repo: repo.name,
-            pull_number: n,
-            per_page: 100,
-          });
-          const { data: commits } = await this.octokit.rest.pulls.listCommits({
-            owner: repo.owner,
-            repo: repo.name,
-            pull_number: n,
-            per_page: 100,
-          });
+          const params = { owner: repo.owner, repo: repo.name, pull_number: n };
+          const files = await this.paginateUpTo<
+            PrDetail['files'][number],
+            { filename: string; additions: number; deletions: number; patch?: string }
+          >(this.octokit.rest.pulls.listFiles, params, MAX_PR_FILES, (f) => ({
+            path: f.filename,
+            additions: f.additions,
+            deletions: f.deletions,
+            patch: f.patch,
+          }));
+          const commits = await this.paginateUpTo<
+            PrDetail['commits'][number],
+            {
+              sha: string;
+              commit: { message: string; author?: { name?: string; date?: string } | null };
+              author?: { login?: string } | null;
+            }
+          >(this.octokit.rest.pulls.listCommits, params, MAX_PR_COMMITS, (c) => ({
+            sha: c.sha,
+            message: c.commit.message,
+            author: c.commit.author?.name ?? c.author?.login ?? 'unknown',
+            committed_at: c.commit.author?.date,
+          }));
           const linkedIssue = await this.resolveLinkedIssue(repo, pr.body ?? '');
           return {
             number: pr.number,
@@ -103,18 +166,8 @@ export class OctokitGitHubClient implements GitHubClient {
             opened_at: pr.created_at,
             updated_at: pr.updated_at,
             body: pr.body,
-            files: files.map((f) => ({
-              path: f.filename,
-              additions: f.additions,
-              deletions: f.deletions,
-              patch: f.patch,
-            })),
-            commits: commits.map((c) => ({
-              sha: c.sha,
-              message: c.commit.message,
-              author: c.commit.author?.name ?? c.author?.login ?? 'unknown',
-              committed_at: c.commit.author?.date,
-            })),
+            files,
+            commits,
             linked_issue: linkedIssue,
           };
         })(),
