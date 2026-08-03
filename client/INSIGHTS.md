@@ -438,6 +438,34 @@ express "we have not asked yet" through `isLoading` — ask the thing that decid
 
 ## Recurring Errors & Fixes
 
+### Running `next dev` beside `next start` strips the CSS off the served app
+
+**Symptom.** The app on `:3000` renders as unstyled HTML. Every asset request —
+`/_next/static/css/<hash>.css` and every JS chunk — returns **400**, from Next itself
+(`X-Powered-By: Next.js`), on a plain `curl` as well as in the browser. The page still
+returns 200, so it looks like a CSS bug rather than a build one.
+
+**Cause.** `next dev` and `next start` share one `client/.next`. Starting a dev server in the
+same checkout — even on a different port, for a different purpose — overwrites the production
+build's assets: dev emits `static/css/app/layout.css` and empties `BUILD_ID`, while the
+already-served HTML still points at the production `static/css/e8c45e3aa3e80c6c.css`, which no
+longer exists. Observed 2026-08-03: a dev server started on `:3100` to read an unminified
+error broke the production server on `:3000`.
+
+**Fix.** Do not run both against one checkout. Confirm what the HTML asks for actually exists:
+
+```sh
+REF=$(curl -s localhost:3000/skills | grep -o '/_next/static/css/[^"]*\.css' | head -1)
+curl -s -o /dev/null -w '%{http_code}\n' "localhost:3000$REF"   # 400 ⇒ .next was clobbered
+```
+
+Recover with `rm -rf .next && pnpm build`, then restart. An empty `.next/BUILD_ID` is the
+quickest tell that a dev server has been through the directory.
+
+Related: `next start` serves a build and watches nothing, so a route added on a branch will
+404 until someone rebuilds — which reads like "the page does not exist" rather than "the
+build is stale".
+
 ### An unexpected `severity` value takes down the whole findings page
 
 **Symptom.** The PR detail page renders only a Next.js error overlay:
