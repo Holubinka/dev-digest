@@ -9,6 +9,9 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
+    "arch": "depcruise src --config --ignore-known",
+    "arch:strict": "depcruise src --config",
+    "arch:baseline": "depcruise-baseline src",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:seed": "tsx src/db/seed.ts"

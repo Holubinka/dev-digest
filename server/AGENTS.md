@@ -5,12 +5,10 @@ file only covers what is specific to this package.
 
 ## Layering
 
-`modules/<name>/routes.ts → service.ts → repository.ts`. Routes validate and delegate;
-services hold logic and reach I/O only through the DI container
-(`platform/container.ts`); repositories own the SQL. Do not query the DB from a route.
-
-Every external dependency is an adapter in `adapters/` behind an interface. Tests use
-`adapters/mocks.ts` (`MockLLMProvider`, `MockGitClient`) — never real network or keys.
+`modules/<name>/routes.ts → service.ts → repository.ts`, every external dependency an
+adapter behind an interface. Enforced, not advised: `pnpm arch` runs the twelve rules in
+`.dependency-cruiser.cjs` and CI fails on a new violation. Rules, rationale and the
+frozen backlog: **the `onion-architecture` skill**.
 
 ## Conventions
 
