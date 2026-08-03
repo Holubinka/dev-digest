@@ -24,6 +24,14 @@ import { toJsonSchema, parseWithRepair } from './structured.js';
 
 const NOT_SUPPORTED = 'OpenRouterProvider only implements completeStructured';
 
+/**
+ * Ten minutes for one structured completion, every retry included. Generous on
+ * purpose: a 143k-token review prompt has legitimately taken five and a half
+ * minutes here. The point is that the call ENDS and says why, not that it ends
+ * quickly — a run stuck with no answer is worse than a run that failed.
+ */
+const DEFAULT_DEADLINE_MS = 600_000;
+
 export interface OpenRouterProviderOptions {
   /** OpenAI-compatible base URL (default: OpenRouter). */
   baseURL?: string;
@@ -32,8 +40,35 @@ export interface OpenRouterProviderOptions {
   /** Per-request timeout (ms) — the SDK retries on timeout/5xx/429 with backoff. */
   timeoutMs?: number;
   maxRetries?: number;
+  /**
+   * Wall-clock ceiling for ONE `completeStructured`, covering every attempt.
+   *
+   * `timeoutMs` bounds a single HTTP request; it does not bound this call,
+   * because two retry loops sit on top of it — the SDK's own `maxRetries` and
+   * the schema-repair loop below — and they multiply. At the defaults that is
+   * 3 × 3 × 90s of timeouts alone, and a review run stayed `running` for over
+   * half an hour on 2026-08-03 with no token count and no error while it
+   * ground through them. A caller that has to show a status needs the whole
+   * operation to end, not each of its parts.
+   */
+  deadlineMs?: number;
   /** Injected cost estimator; returns USD or null when the model is unknown. */
   estimateCost?: (model: string, tokensIn: number, tokensOut: number) => number | null;
+}
+
+/** Thrown when one `completeStructured` outlives its wall-clock budget. */
+export class DeadlineExceededError extends Error {
+  constructor(
+    readonly schemaName: string,
+    readonly deadlineMs: number,
+    readonly attempts: number,
+  ) {
+    super(
+      `OpenRouter gave up on ${schemaName} after ${Math.round(deadlineMs / 1000)}s ` +
+        `(${attempts} attempt(s)) — the model did not answer in time`,
+    );
+    this.name = 'DeadlineExceededError';
+  }
 }
 
 export class OpenRouterProvider implements LLMProvider {
@@ -41,6 +76,7 @@ export class OpenRouterProvider implements LLMProvider {
   private client: OpenAI;
   private baseURL: string;
   private apiKey: string;
+  private deadlineMs: number;
   private estimateCost?: OpenRouterProviderOptions['estimateCost'];
 
   constructor(apiKey: string, opts: OpenRouterProviderOptions = {}) {
@@ -48,6 +84,7 @@ export class OpenRouterProvider implements LLMProvider {
     this.apiKey = apiKey;
     this.baseURL = opts.baseURL ?? 'https://openrouter.ai/api/v1';
     this.estimateCost = opts.estimateCost;
+    this.deadlineMs = opts.deadlineMs ?? DEFAULT_DEADLINE_MS;
     this.client = new OpenAI({
       apiKey,
       baseURL: this.baseURL,
@@ -65,8 +102,22 @@ export class OpenRouterProvider implements LLMProvider {
     let costFromApi: number | null = null;
     let lastRaw = '';
 
+    const startedAt = Date.now();
+    const expiresAt = startedAt + this.deadlineMs;
+
     for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
-      const res = await this.client.chat.completions.create({
+      // Checked before each attempt AND enforced during it: the check stops a
+      // fresh 143k-token request going out on a budget already spent, and the
+      // signal cuts one that is hanging. Racing a promise would leave the
+      // socket open and the tokens still being paid for.
+      const remaining = expiresAt - Date.now();
+      if (remaining <= 0) throw new DeadlineExceededError(req.schemaName, this.deadlineMs, attempt - 1);
+
+      const res = await this.withDeadline(
+        remaining,
+        req.schemaName,
+        attempt,
+        (signal) => this.client.chat.completions.create({
         model: req.model,
         messages,
         temperature: req.temperature ?? 0,
@@ -81,7 +132,8 @@ export class OpenRouterProvider implements LLMProvider {
         // OpenRouter usage accounting — ask it to return the REAL generation
         // cost (USD) in `usage.cost`, instead of estimating from a price book.
         ...(this.id === 'openrouter' ? { usage: { include: true } } : {}),
-      });
+        }, { signal }),
+      );
 
       // OpenRouter can return HTTP 200 with no `choices` (an upstream provider
       // error / moderation / free-tier limit in the body) — surface it.
@@ -113,6 +165,31 @@ export class OpenRouterProvider implements LLMProvider {
       messages.push({ role: 'user', content: parsed.repromptMessage });
     }
     throw new Error(`OpenRouter structured output failed schema validation for ${req.schemaName}`);
+  }
+
+  /**
+   * Run one attempt under what is left of the budget, aborting it if it runs
+   * out. An `AbortError` from the SDK is re-thrown as a deadline error so the
+   * caller sees the budget, not a generic cancellation.
+   */
+  private async withDeadline<T>(
+    remainingMs: number,
+    schemaName: string,
+    attempt: number,
+    run: (signal: AbortSignal) => Promise<T>,
+  ): Promise<T> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), remainingMs);
+    try {
+      return await run(controller.signal);
+    } catch (err) {
+      if (controller.signal.aborted) {
+        throw new DeadlineExceededError(schemaName, this.deadlineMs, attempt);
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**
