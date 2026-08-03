@@ -5,11 +5,15 @@
     "headingPrefix": "Conventions in ",
     "repoFallback": "repo",
     "subtitle": "Scan the cloned repo to surface house-rules — each backed by evidence you can turn into a Skill.",
+    "scanSummary": "Detected from {files} sample files · {model}",
     "scanning": "Scanning…",
     "rescan": "Re-scan",
     "runExtraction": "Run extraction",
     "extractionFailed": "Extraction failed",
     "loadError": "Could not load conventions.",
+    "deselectAll": "Deselect all",
+    "acceptedCount": "{accepted} of {total} accepted",
+    "createSkill": "Create skill",
     "empty": {
       "title": "No conventions extracted yet",
       "body": "Scan the repo to surface house-rules — naming, error handling, structure — each backed by evidence you can turn into a Skill.",
@@ -19,8 +23,42 @@
   },
   "card": {
     "confidence": "Confidence",
+    "accept": "Accept",
     "accepted": "Accepted",
-    "accepting": "Accepting…",
-    "acceptAsSkill": "Accept as Skill"
+    "reject": "Reject",
+    "rejected": "Rejected",
+    "edit": "Edit this rule",
+    "editRule": "Reword the rule…",
+    "save": "Save",
+    "cancel": "Cancel",
+    "alsoAt": "Also at"
+  },
+  "category": {
+    "naming": "naming",
+    "structure": "structure",
+    "error-handling": "error handling",
+    "async": "async",
+    "typing": "typing",
+    "testing": "testing",
+    "api": "api",
+    "imports": "imports",
+    "logging": "logging",
+    "docs": "docs"
+  },
+  "skill": {
+    "title": "Create skill from conventions",
+    "mergedFrom": "Merged from {count} accepted {count, plural, one {convention} other {conventions}} in {repo}. Everything below is editable before you save.",
+    "defaultDescription": "{count} house {count, plural, one {convention} other {conventions}} extracted from {repo}",
+    "name": "Name",
+    "description": "Description",
+    "type": "Type",
+    "enabled": "Enabled",
+    "enabledHint": "Whether this block is added to agents' prompts.",
+    "body": "Skill body",
+    "footerNote": "Saved as v1 · added to Skills Lab",
+    "cancel": "Cancel",
+    "submit": "Create skill",
+    "creating": "Creating…",
+    "createdToast": "Created “{name}”."
   }
 }
