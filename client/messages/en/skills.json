@@ -3,23 +3,27 @@
     "crumbLab": "Skills Lab",
     "crumbSkills": "Skills",
     "heading": "Skills",
+    "subtitle": "Reusable instruction blocks. Bind them to an agent; their order is their order in the prompt.",
     "addSkill": "Add Skill",
     "searchPlaceholder": "Search skills…",
     "loadError": "Could not load skills.",
     "menu": {
+      "create": "Create manually",
       "fromFile": "Import from file",
-      "fromUrl": "Import from URL",
-      "community": "Search community skills…"
+      "fromUrl": "Import from URL"
     },
     "empty": {
       "title": "No skills yet",
-      "body": "Import a skill from a file, a URL, or the community catalog.",
-      "cta": "Import from file"
+      "body": "Write one from scratch, or import a Markdown file or an archive.",
+      "cta": "Create manually"
     },
     "selectPrompt": {
       "title": "Select a skill",
-      "body": "Pick a skill on the left to preview its body."
-    }
+      "body": "Pick a skill on the left to read or edit it."
+    },
+    "agentCount": "{count, plural, =0 {No agents} one {# agent} other {# agents}}",
+    "delete": "Delete skill",
+    "deleteConfirm": "Delete the skill “{name}”? Every agent using it loses it. This cannot be undone."
   },
   "detail": {
     "crumbSkill": "Skill",
@@ -28,36 +32,112 @@
     "notFound": {
       "title": "Skill not found",
       "body": "It may have been deleted."
+    },
+    "enabled": "Enabled",
+    "version": "v{version}",
+    "disabledNote": "disabled — no agent will receive it",
+    "tabs": {
+      "config": "Config",
+      "preview": "Preview",
+      "versions": "Versions",
+      "stats": "Stats"
     }
   },
+  "create": {
+    "title": "Create a skill",
+    "subtitle": "Name it, say what it is for, and write the body the agent will receive.",
+    "name": "Name",
+    "namePlaceholder": "uncovered-branch-rubric",
+    "type": "Type",
+    "submit": "Create skill",
+    "creating": "Creating…",
+    "starterBody": "# Rule\n\nWork through these steps and report what they turn up.\n\n1. \n2. \n\nCite the changed line the finding is about.",
+    "createdToast": "Created “{name}”",
+    "footerNote": "Saved enabled — it reaches a bound agent’s next review.",
+    "bodyHint": "This text is appended to the agent’s prompt as instructions. Write a procedure with a step that produces a list, not a description of a quality.",
+    "descriptionHint": "The one line an agent reads to decide the skill applies. Write it as an instruction, in the imperative."
+  },
+  "editor": {
+    "name": "Name",
+    "description": "Description",
+    "descriptionHint": "This is the skill's interface — the one line an agent reads to decide the skill applies. Write it as an instruction, in the imperative: “Flag tests that assert on mock call counts instead of behaviour.” Not “about test quality”.",
+    "descriptionPlaceholder": "Flag every branch this diff adds that no test exercises.",
+    "type": "Type",
+    "save": "Save skill",
+    "saving": "Saving…",
+    "savedToast": "Saved “{name}” (v{version})",
+    "unsaved": "unsaved",
+    "tokens": "≈{count} tok",
+    "tokensPlain": "{count} tokens"
+  },
+  "body": {
+    "label": "Skill body (Markdown)",
+    "hint": "Saving a changed body records a new version. A rename, a retype or the enabled toggle does not.",
+    "placeholder": "# Rule\nDescribe what the agent must do…"
+  },
+  "previewTab": {
+    "renderedHeading": "Rendered",
+    "promptHeading": "As the agent receives it",
+    "promptHint": "This is verbatim what is appended to the agent's prompt — as instructions, carrying the same weight as the agent's own system prompt.",
+    "empty": "This skill has no body yet."
+  },
+  "versions": {
+    "heading": "Change history",
+    "hint": "Every body change is recorded. A restore appends a new version rather than rewriting the past.",
+    "current": "current",
+    "empty": "No history yet.",
+    "loadError": "Could not load the history.",
+    "diff": "Diff",
+    "hideDiff": "Hide diff",
+    "restore": "Restore",
+    "restoring": "Restoring…",
+    "restoreConfirm": "Restore the body from v{version}? It becomes the current body and is recorded as a new version — nothing in the history is lost.",
+    "restoredToast": "Restored the body from v{from} as v{version}",
+    "initial": "initial version",
+    "against": "compared with v{version}",
+    "againstNothing": "the first recorded body",
+    "unchanged": "No lines changed.",
+    "stat": "+{added} −{removed}"
+  },
   "drawer": {
-    "title": "Add a skill",
-    "subtitle": "Import from a file, a URL, or search vetted community skills",
+    "title": "Import a skill",
+    "subtitle": "From a Markdown file, an archive, or a URL",
     "tabs": {
       "file": "From file",
-      "url": "From URL",
-      "community": "Community"
+      "url": "From URL"
     },
     "importFailed": "Import failed"
   },
   "file": {
-    "nameLabel": "Skill name",
-    "nameHint": "Optional — derived from the first heading if blank.",
-    "namePlaceholder": "pr-quality-rubric",
-    "bodyLabel": "Skill body (Markdown)",
-    "bodyHint": "Pasted content is wrapped as untrusted data — never executed as instructions.",
-    "bodyPlaceholder": "# Rule\nDescribe the rule…",
-    "importing": "Importing…",
-    "import": "Import skill",
-    "success": "Imported \"{name}\" (stored as untrusted data)."
+    "dropHint": "Drop a .md, .markdown or .zip file here",
+    "browse": "Choose a file",
+    "reading": "Reading…",
+    "hint": "Only Markdown is read from an archive. Scripts and binaries are never opened — you will see exactly what was skipped."
   },
   "url": {
     "label": "Skill URL",
-    "hint": "Fetched server-side, stored as untrusted, and left disabled until vetted.",
-    "placeholder": "https://example.com/skills/security.md",
+    "hint": "Fetched by the server over https. Private and link-local addresses are refused.",
+    "placeholder": "https://example.com/skills/flakiness.md",
     "fetching": "Fetching…",
-    "import": "Import from URL",
-    "success": "Imported \"{name}\". Disabled until you vet + enable it."
+    "fetch": "Fetch"
+  },
+  "import": {
+    "coreFrom": "Body taken from",
+    "evidenceCount": "{count, plural, one {# Markdown file found} other {# Markdown files found}}",
+    "skippedTitle": "Not read",
+    "skipped": {
+      "executable": "executable — never opened",
+      "not_markdown": "not Markdown",
+      "unsafe_path": "unsafe path",
+      "too_large": "too large"
+    },
+    "trustTitle": "This body becomes instructions.",
+    "trustBody": "A skill's text is added to the agent's prompt with the same standing as the agent's own system prompt — it is not quoted as data. Anything written here can redirect the review. Read it before you enable it.",
+    "save": "Save as disabled",
+    "saving": "Saving…",
+    "savedToast": "Imported “{name}”. It is disabled until you turn it on.",
+    "cancel": "Cancel",
+    "startOver": "Choose another file"
   },
   "community": {
     "searchPlaceholder": "Search community skills (e.g. security)…",
@@ -72,8 +152,6 @@
     "import": "Import"
   },
   "listItem": {
-    "needsVetting": "needs vetting",
-    "vettingTitle": "Untrusted source — vet before enabling",
     "type": {
       "rubric": "rubric",
       "convention": "convention",
@@ -82,20 +160,33 @@
     },
     "source": {
       "manual": "Manual",
+      "imported_file": "File",
+      "imported_url": "URL",
       "extracted": "Extracted",
-      "community": "Community",
-      "imported_url": "Imported"
+      "community": "Community"
     }
   },
-  "preview": {
-    "untrustedBadge": "untrusted source",
-    "enabled": "Enabled",
-    "disabled": "Disabled",
-    "save": "Save",
-    "edit": "Edit",
-    "untrustedNotice": "This skill came from an untrusted source. Its body is stored as data (delimiter-wrapped) and must be vetted before it is enabled for an agent.",
-    "bodyLabel": "Skill body (Markdown)",
-    "bodyHint": "Saving a changed body creates a new immutable version.",
-    "version": "v{version}"
+  "injection": {
+    "badge": "injection",
+    "title": "This body tries to hijack the prompt",
+    "body": "A skill is added to the agent’s prompt as instructions, so text like this can override the review. The skill is kept so you can read it, but it cannot be enabled and will not reach any model.",
+    "cannotEnable": "Cannot be enabled while this is present",
+    "line": "line {line}",
+    "limits": "Pattern matching only — a rewording or another language can slip past it. Read the body; do not rely on this check."
+  },
+  "stats": {
+    "heading": "What this skill has done",
+    "hint": "Counted from the runs of the agents that bind this skill right now. A run does not record which skills it used, so this attributes by current binding rather than by history.",
+    "agents": "Agents",
+    "runs": "Runs",
+    "findings": "Findings",
+    "accepted": "Accepted",
+    "dismissed": "Dismissed",
+    "acceptRate": "Accept rate",
+    "bodyTokens": "Body size",
+    "tokens": "{count} tok",
+    "noRate": "nothing judged yet",
+    "unused": "No agent binds this skill yet, so there is nothing to count.",
+    "loadError": "Could not load the stats."
   }
 }

@@ -91,7 +91,15 @@
     "title": "Skills",
     "enabledCount": "{linked} of {total} enabled",
     "filterPlaceholder": "Filter skills…",
-    "orderHint": "Order matters — earlier skills appear earlier in the assembled prompt. Toggle to attach."
+    "orderHint": "Order matters — earlier skills appear earlier in the assembled prompt. Drag to reorder.",
+    "empty": "No skills yet. Create one in the Skills Lab.",
+    "loadError": "Could not load the skills for this agent.",
+    "moveUp": "Move up",
+    "moveDown": "Move down",
+    "bind": "Bind {name}",
+    "unbind": "Unbind {name}",
+    "globallyDisabled": "disabled — will not enter the prompt",
+    "injection": "injection — cannot be used"
   },
   "mount": {
     "body": "Mount point for {owner}. The Agent Editor shell + tab routing are wired by A2 — {owner} renders this tab."

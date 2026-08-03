@@ -6,7 +6,7 @@ import * as schema from '../../db/schema.js';
 import type { AgentRow } from '../../db/rows.js';
 import type { ReviewRepository, FindingRow, PullRow, ReviewRow } from './repository.js';
 import { REVIEW_STRATEGY } from './constants.js';
-import { taskLine } from './helpers.js';
+import { attachedSkills, skillBodiesFor, taskLine } from './helpers.js';
 import { loadDiff } from './diff-loader.js';
 
 /** Thrown by a run when the user cancels it mid-flight (between map files). */
@@ -183,6 +183,9 @@ export class ReviewRunExecutor {
 
       const task = taskLine(pull) + rankNote;
 
+      // L02 — the agent's linked, globally-enabled skill bodies, in binding order.
+      const skillBodies = await this.buildSkillBodies(agent.id, runLog);
+
       // ---- Engine: assemble → single-pass → grounding -----------------------
       // The pure review pipeline lives in @devdigest/reviewer-core (shared with
       // the CI runner). The service owns only I/O: repo-intel context resolution
@@ -195,6 +198,10 @@ export class ReviewRunExecutor {
         // Per-agent review strategy (configured in the Agent editor); falls back
         // to the studio default. single-pass = whole diff in one call.
         strategy: agent.strategy ?? REVIEW_STRATEGY,
+        // L02 — skills. `length > 0` rather than truthiness: `[]` is truthy, and
+        // the point of the guard is that an agent with nothing bound produces a
+        // prompt byte-identical to the pre-skills shape.
+        ...(skillBodies.length > 0 ? { skills: skillBodies } : {}),
         // T1.3 — pass the callers digest only when we built one. assemblePrompt
         // omits the section when this is empty/undefined.
         ...(callersDigest ? { callers: callersDigest } : {}),
@@ -356,6 +363,37 @@ export class ReviewRunExecutor {
     }
     runLog.info(`callers digest: ${rows.length} caller signature(s) attached`);
     return out.join('\n');
+  }
+
+  /**
+   * L02 — resolve the agent's linked skill bodies for the prompt's
+   * `## Skills / rules` slot, in binding order, dropping globally-disabled ones.
+   *
+   * ON TRUST: `assemblePrompt` joins these RAW — there is no `<untrusted>`
+   * wrapper around a skill the way there is around the diff or the PR body — so
+   * a skill body is an INSTRUCTION, standing exactly where the agent's own
+   * system prompt stands. That is the whole reason an imported skill is stored
+   * disabled and has to be turned on by a human first.
+   *
+   * Best-effort: a lookup failure logs and returns [], so a review degrades to
+   * the pre-skills prompt instead of failing the run.
+   */
+  private async buildSkillBodies(agentId: string, runLog: RunLogger): Promise<string[]> {
+    const links = await this.agents.linkedSkills(agentId).catch((err: Error) => {
+      runLog.info(`skills: lookup failed — ${err.message}`);
+      return [];
+    });
+    // One source for both numbers: the names must describe the bodies that
+    // actually went, not the bindings that merely exist.
+    const attached = attachedSkills(links);
+    const bodies = skillBodiesFor(links);
+    if (bodies.length === 0) return [];
+    const tokens = bodies.reduce((n, b) => n + this.container.tokenizer.count(b), 0);
+    const names = attached.map((l) => l.skill.name);
+    runLog.info(
+      `skills: ${bodies.length} skill(s), ${tokens} token(s) attached — ${names.join(', ')}`,
+    );
+    return bodies;
   }
 
   /**

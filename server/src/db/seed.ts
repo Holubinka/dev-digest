@@ -6,7 +6,11 @@ import {
   GENERAL_REVIEWER_PROMPT,
   SECURITY_REVIEWER_PROMPT,
   PERFORMANCE_REVIEWER_PROMPT,
+  TEST_QUALITY_REVIEWER_PROMPT,
+  API_CONTRACT_REVIEWER_PROMPT,
 } from './seed-prompts.js';
+import { SEED_SKILLS } from './seed-skills.js';
+import { seedSkillsLab } from './seed-fixtures.js';
 
 /** Default provider/model for the built-in reviewer agents. */
 const DEFAULT_PROVIDER = 'openrouter' as const;
@@ -18,11 +22,12 @@ const DEFAULT_MODEL = 'deepseek/deepseek-v4-flash';
  *
  * Seeds: default workspace + system user + membership, default settings,
  * demo repo (acme/payments-api), PR #482 with files/commits, a sample review
- * with a few findings, and the three built-in agents (General + Security +
- * Performance), all on the default openrouter/deepseek-v4-flash provider+model.
+ * with a few findings, the five built-in agents, the skills two of them bind,
+ * and the offline `devdigest/skills-lab` fixtures — all on the default
+ * openrouter/deepseek-v4-flash provider+model.
  *
- * Course lessons populate the other tables (skills, conventions, memory, eval,
- * …) once their features are built — they start empty here.
+ * Course lessons populate the other tables (conventions, memory, eval, …) once
+ * their features are built — they start empty here.
  */
 
 export const DEFAULT_WORKSPACE_NAME = 'default';
@@ -175,7 +180,7 @@ export async function seed(db: Db): Promise<{ workspaceId: string; userId: strin
     ]);
   }
 
-  // ---- built-in agents (the three starter presets) ----
+  // ---- built-in agents ----
   // Prompt bodies live in ./seed-prompts.ts (mirrored in docs/agent-prompts/*.md).
   const seedAgents: Array<typeof t.agents.$inferInsert> = [
     {
@@ -211,6 +216,34 @@ export async function seed(db: Db): Promise<{ workspaceId: string; userId: strin
       version: 1,
       createdBy: userId,
     },
+    // These two carry only their role, severity rubric and citation rule. The
+    // checklist they review against lives in their SKILLS — see
+    // docs/agent-prompts/README.md. repo_intel is off so that binding a skill is
+    // the only thing that changes between two runs of the same PR.
+    {
+      workspaceId,
+      name: 'Test Quality Reviewer',
+      description: 'Flags uncovered branches, missing corner cases, over-mocking and flakiness.',
+      provider: DEFAULT_PROVIDER,
+      model: DEFAULT_MODEL,
+      systemPrompt: TEST_QUALITY_REVIEWER_PROMPT,
+      repoIntel: false,
+      enabled: true,
+      version: 1,
+      createdBy: userId,
+    },
+    {
+      workspaceId,
+      name: 'API Contract Reviewer',
+      description: 'Detects breaking changes to route signatures, payload shapes and status codes.',
+      provider: DEFAULT_PROVIDER,
+      model: DEFAULT_MODEL,
+      systemPrompt: API_CONTRACT_REVIEWER_PROMPT,
+      repoIntel: false,
+      enabled: true,
+      version: 1,
+      createdBy: userId,
+    },
   ];
   for (const a of seedAgents) {
     const [existing] = await db
@@ -219,6 +252,56 @@ export async function seed(db: Db): Promise<{ workspaceId: string; userId: strin
       .where(and(eq(t.agents.workspaceId, workspaceId), eq(t.agents.name, a.name)));
     if (!existing) await db.insert(t.agents).values(a);
   }
+
+  // ---- built-in skills, and the agents that bind them ----
+  // Bodies live in docs/skills/*.md, generated into ./seed-skills.ts. The fifth
+  // skill ("Flakiness patterns") is NOT here on purpose: it ships as an archive
+  // under docs/skills/flakiness-patterns/ so the import path gets walked by a
+  // human rather than asserted by a fixture.
+  const skillIdByName = new Map<string, string>();
+  for (const skill of SEED_SKILLS) {
+    const [existing] = await db
+      .select()
+      .from(t.skills)
+      .where(and(eq(t.skills.workspaceId, workspaceId), eq(t.skills.name, skill.name)));
+    if (existing) {
+      skillIdByName.set(skill.name, existing.id);
+      continue;
+    }
+    const [row] = await db
+      .insert(t.skills)
+      .values({ workspaceId, source: 'manual', enabled: true, version: 1, ...skill })
+      .returning();
+    await db.insert(t.skillVersions).values({ skillId: row!.id, version: 1, body: skill.body });
+    skillIdByName.set(skill.name, row!.id);
+  }
+
+  // Order is prompt order: find what is not covered at all, then what is covered
+  // but not actually checked, then the shapes that make a test lie.
+  const bindings: Record<string, string[]> = {
+    'Test Quality Reviewer': [
+      'Uncovered branch rubric',
+      'Boundary and edge-case rubric',
+      'Assertion strength rubric',
+      'Test smell catalogue',
+    ],
+    'API Contract Reviewer': ['Breaking change taxonomy', 'Route signature checklist'],
+  };
+  for (const [agentName, skillNames] of Object.entries(bindings)) {
+    const [agent] = await db
+      .select()
+      .from(t.agents)
+      .where(and(eq(t.agents.workspaceId, workspaceId), eq(t.agents.name, agentName)));
+    if (!agent) continue;
+    // `order` is the array index, which is the order the bodies appear in the
+    // assembled prompt.
+    const rows = skillNames
+      .map((name, order) => ({ agentId: agent.id, skillId: skillIdByName.get(name), order }))
+      .filter((r): r is { agentId: string; skillId: string; order: number } => !!r.skillId);
+    if (rows.length > 0) await db.insert(t.agentSkills).values(rows).onConflictDoNothing();
+  }
+
+  await seedSkillsLab(db, workspaceId);
 
   return { workspaceId, userId };
 }

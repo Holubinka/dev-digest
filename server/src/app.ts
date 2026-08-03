@@ -2,6 +2,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
+import multipart from '@fastify/multipart';
 import { FastifySSEPlugin } from 'fastify-sse-v2';
 import {
   validatorCompiler,
@@ -16,6 +17,7 @@ import { createDb, type Db } from './db/client.js';
 import { Container, type ContainerOverrides } from './platform/container.js';
 import { AppError } from './platform/errors.js';
 import { modules } from './modules/index.js';
+import { MAX_UPLOAD_BYTES } from './modules/skills/constants.js';
 import { ReviewService } from './modules/reviews/service.js';
 
 // Attach the DI container to every request/instance.
@@ -89,6 +91,14 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(helmet);
   await app.register(cors, { origin: [config.webOrigin], credentials: true });
   await app.register(FastifySSEPlugin);
+
+  // Skill import uploads. Multipart installs its own content-type parser, so the
+  // `bodyLimit` above does NOT apply to these requests — `limits.fileSize` is
+  // the real cap. One file, no other parts: the preview route wants a document
+  // or an archive and nothing else.
+  await app.register(multipart, {
+    limits: { fileSize: MAX_UPLOAD_BYTES, files: 1, fields: 0, parts: 2 },
+  });
 
   // Global rate limit. Disabled under test so integration suites can hammer
   // endpoints via inject(); per-route overrides live on the routes themselves.

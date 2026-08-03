@@ -7,7 +7,11 @@ export interface EditorTab {
   icon: IconName;
 }
 
-/** Editor tabs. Part-0 ships Config only; later lessons add the rest. */
+/** Editor tabs. Evals, Stats and CI arrive with the lessons that fill them. */
 export const TABS: readonly EditorTab[] = [
   { key: "config", labelKey: "editor.tabs.config", icon: "Settings" },
+  { key: "skills", labelKey: "editor.tabs.skills", icon: "Sparkles" },
 ];
+
+/** What `?tab=` accepts. Derived, so the route cannot drift from the tab bar. */
+export const VALID_TABS: readonly string[] = TABS.map((t) => t.key);

@@ -64,6 +64,45 @@ empty fixture list, a lint rule with a typo in its glob. Record in the skill or 
 rules have been seen to fail, so the next editor knows which greens are meaningful. The same
 instinct as the entry above about proving an instruction file was actually loaded.
 
+### `/pr-self-review` converges — re-run it after every fix, and expect the next pass to be smaller
+
+Measured across four full passes on `feat/skills`, 2026-08-03: **7 findings → 2 → 1 → 0**.
+The shape is worth knowing in advance, because pass 3's only finding was *caused by* pass 2's
+fix — moving `bodyFilename` out of `SkillDetail/helpers.ts` left `promptBlock` alone in a
+folder above its only consumer. A pass that finds one thing is not the tool failing to
+converge; it is the tool reviewing code that did not exist when the previous pass ran. Two
+consecutive clean passes across both agents is the real stopping condition.
+
+**The adversarial verifier (SKILL.md §3.4) earned its cost on the first run that reached it,
+and in both directions.** It confirmed one critical — reproducing an SSRF bypass against the
+real exported function under `tsx`, including a live TCP connection to a loopback listener —
+and refuted another, measuring a claimed memory-amplification critical as a bounded,
+GC-reclaimed ~1.35 GB spike with no OOM across 12 sequential requests, which is a `major` on a
+local-first single-user tool. Neither verdict was reachable by reading the diff. Budget for it:
+each verifier ran 14–28 tool calls.
+
+A refuted critical is still worth fixing when its *mechanism* reproduced. Both of this run's
+security fixes were one-liners; only the severity was overstated.
+
+### A finding whose mechanism is real can still be unreachable — measure, then fix it anyway
+
+Three of the eleven findings this repo's own agents raised on PR #7 were graded CRITICAL
+with a real mechanism and no reachable path. Each took minutes to settle by running
+something rather than reasoning:
+
+| Claim | What the measurement showed |
+|---|---|
+| zip STORED entries amplify memory | reproduces, but bounded and GC-reclaimed; ~1.35 GB steady state, no OOM over 12 requests |
+| stats leak across workspaces | `service.stats` 404s a foreign skill before the count runs; both link paths verify the workspace |
+| a throwing `destroy()` masks the size refusal | `Readable.destroy()` returns the stream and does not throw; double-destroy is silent |
+
+The verifier prong (`pr-self-review` SKILL.md §3.4) refuted the first, and the other two
+were settled by hand in a shell. **All three were fixed anyway**, and one of those fixes
+paid for itself immediately: the test written for the unreachable `destroy()` claim failed
+against the first attempt at fixing it, because `break` also destroys the stream
+(`server/INSIGHTS.md`). The rule that generalises — an overstated severity is not a wrong
+finding, and the cheapest way to tell them apart is to run the thing.
+
 ## What Doesn't Work
 
 ### Committing a documentation layer by path while the files it references stay untracked
@@ -165,6 +204,77 @@ Assertions accumulate where bugs were, so a suite grown by fixing review finding
 map. Three contract-breaking mutations passed the whole suite *simultaneously*, the worst
 being `scope.sh`'s `source: "gate scope"` literal → `"agent scope"`, which silently turns
 every deterministic critical into an unanchored note. Nothing pinned that one string.
+
+### A skills before/after shows nothing when the prompt already carries the checklist
+
+**Symptom.** On 2026-08-03 the L02 control experiment — same PR, same agent, skills unbound
+then bound — did not reproduce. Measured on `devdigest/skills-lab` #101 with
+`deepseek/deepseek-v4-flash`: without skills 3 findings, with skills 1. On #102, 4 findings
+either way. Every plumbing signal was correct (skills block present, `+652` and `+624`
+`tokens_in`, `skills: 2 skill(s), 651 token(s) attached — …` in the log), and the outcome
+still did not move.
+
+**Cause.** Two things, in order of size.
+
+First, the prompt leaked the rubric. `test-quality-reviewer.md` v1 said *"Weigh three things:
+how much of the new behaviour is actually exercised, whether the assertions are about
+observable behaviour…, and whether anything will make it pass for unrelated reasons"* — which
+is the three bound skills in miniature. `api-contract-reviewer.md` v1 was worse: *"Removing or
+renaming something a caller reads is breaking. Narrowing a type is breaking…"* is the
+breaking-change taxonomy verbatim. Stripping both to one sentence (v2, pushed via
+`PUT /agents/:id`) narrowed the gap but did not close it.
+
+Second, and bigger: **the fixtures are too small to need a checklist.** A 17-line file with
+four branches and one test is caught by any reviewer prompt that mentions tests at all. A
+rubric earns its place by forcing systematic enumeration over a diff too large to hold in
+one pass — which is exactly what a 25-line fixture removes.
+
+**Fix.** Do not tune the fixture until a model bites; that manufactures a result. Either
+report the plumbing evidence and say the outcome did not reproduce, or build the fixture
+around the skills that encode *non-obvious* rules — a test that mocks the unit under test and
+asserts on the mock (looks like a passing test), a `Date.now()` read without injection — and
+size the diff so enumeration is doing real work. `docs/skills/test-smell-catalogue.md` and
+`flakiness-patterns/` are those skills; PR #101 exercises only the branch rubric.
+
+The one difference that *was* visible: with prompt v1, the baseline cited `test/pricing.test.ts:1-8`
+for every gap while the skilled run cited `src/pricing.ts:12-14` — the rubric's "cite the
+branch, not the test file" rule landing. That disappeared once v2 stopped over-specifying, so
+it was the prompt's richness, not the skill.
+
+**Correction, 2026-08-03 (later the same day).** It reproduces — the fixture was the problem,
+not the feature. `devdigest/skills-lab` #103 was built so that branch coverage is COMPLETE:
+`totalWithTax` has a throw branch and a happy path, and there is a test for each. What no test
+has is an assertion about the returned value — two assert on a `vi.spyOn` spy, the third only
+checks `typeof total === 'number'` — while the implementation rounds wrongly
+(`Math.round(x) / 100` instead of `Math.round(x * 100) / 100`), so 100 at 10% returns 1.1
+instead of 110 and the suite stays green.
+
+Measured, same model, same PR, skills unbound then bound:
+
+| | findings | what it caught |
+|---|---|---|
+| without | 1 WARNING | only "rounding test does not assert the rounded value" |
+| with | 1 CRITICAL + 2 WARNING | the **actual bug**, cited on `src/invoice.ts:8-10`, plus both smells |
+
+So the lesson is sharper than "the prompt leaked". A checklist that enumerates *branches* adds
+nothing when a human can see all the branches at once — #101 is that case. A checklist that
+tells the model to read *assertions* changes the outcome even on ten lines, because "is this
+assertion vacuous" is not something a scope-only prompt thinks to ask. Build the fixture
+around the rule you are demonstrating, and prefer rules about the quality of what is there
+over rules about the quantity of what is missing.
+
+**Addition, 2026-08-03.** Two more skills — a boundary/edge-case rubric and an
+assertion-strength rubric — were bound to Test Quality Reviewer, and the effect is measurable
+rather than decorative. #101 went from ONE consolidated finding to five: three named branches
+plus two the earlier set could not produce at all ("non-integer total, rounding not
+exercised", "NaN and Infinity for total"). On #103 the vacuous assertion moved from WARNING to
+CRITICAL, because a rubric that says "name the change that would still pass" states the
+problem directly where a smell catalogue only matches a shape.
+
+Each of the four asks a question the others cannot — coverage, completeness, strength, shape —
+and that is the test for whether a fifth is worth adding. The cost is real and worth quoting:
+the skills block went from 651 to 1764 tokens, and `tokens_in` on #101 from 2252 to 3357. At
+these fixture sizes the skills are now half the prompt.
 
 ## Codebase Patterns
 
@@ -372,6 +482,23 @@ using it, and never let a `jq … > f` and a consumer of `f` share the same path
 
 ## Recurring Errors & Fixes
 
+### `pkill -f "tsx src/server.ts"` kills the dev server you were being careful not to touch
+
+**Symptom.** On 2026-08-03 an agent started its own API on `API_PORT=3101` precisely so it
+would not disturb the long-running dev server on 3001, ran its experiment, then cleaned up
+with `pkill -f "tsx src/server.ts"` — and took down 3001 as well. The `tsx watch` parent
+(alive for 2 days) survived, so nothing looked broken; the port simply stopped listening
+until the next file save triggered a restart.
+
+**Cause.** `pkill -f` matches the whole command line of every process, and both servers are
+the same command. Choosing a different port isolates the listener, not the process name.
+
+**Fix.** Capture the PID at spawn and kill that: `pnpm exec tsx src/server.ts & echo $!`, then
+`kill "$pid"`. When the PID is lost, narrow by port instead —
+`lsof -nP -iTCP:3101 -sTCP:LISTEN -t | xargs kill` — which cannot match a process listening
+somewhere else. Check `lsof -nP -iTCP:3001 -sTCP:LISTEN` before and after, so a mistake is
+visible rather than inferred.
+
 ### The two vendored `shared/` copies drift silently
 
 **Symptom.** A Zod contract or adapter interface behaves differently depending on which
@@ -419,6 +546,43 @@ nothing mechanically enforces the mirror, the way `shared-sync` does for the ven
 contracts. Changing the ordering in one file means changing it in the other by hand; the
 doc comment on each names its counterpart.
 
+### `/pr-self-review` scopes against your LOCAL `main`, so a stale local `main` silently widens the review
+
+**Symptom.** The report prints `base <sha> → HEAD <sha>` naming a commit that is not the base
+the PR will actually use, and `routed[]` carries far more files than the branch changed. On
+2026-08-03 `feat/skills` scoped to 156 routed files across 105 commits; the PR it produced
+contained 24 commits and 161 changed files, because the other 81 commits were already merged.
+
+**Cause.** `scripts/pr-self-review/scope.sh:19` computes `git merge-base "$MAIN" HEAD` against
+the **local** ref. Local `main` was 23 commits behind `origin/main`, which had since merged
+`feat/findings-severity-filter` — the branch this one was cut from.
+
+**Fix.** `git fetch origin` before running, and check `git branch -vv` for a `[origin/main:
+behind N]` marker. Over-scoping only costs tokens, so it is not an emergency — but read the
+base sha in the report before believing the finding count. Confirm the real PR base with
+`git merge-base --is-ancestor <branch-point> origin/main`.
+
+**Confirmed 2026-08-03.** `git branch -f main origin/main` (safe while `main` is not checked
+out) took the pagination branch's scope from **68 routed files to 1** — the one file it
+actually changes. The 67 others were commits already merged into `origin/main`.
+
+### A dev server started without `watch` serves code that no longer exists
+
+**Symptom.** The API on :3001 kept answering `/skills` correctly through several branch
+switches that removed those files from disk — and then, an hour after a bug was fixed and
+committed, re-imported PR #7 through the OLD code and silently undid the corrected data
+(`pr_files` went 161 rows back to 100).
+
+**Cause.** It was launched as `tsx src/server.ts`, not `tsx watch`. Node had the modules in
+memory, so the process was immune to the working tree and to every fix landed since it
+booted.
+
+**Fix.** Check before trusting a live check:
+`ps -o command= -p "$(lsof -nP -iTCP:3001 -sTCP:LISTEN -t)"`. If `watch` is absent, restart
+deliberately after any `server/**` change you intend to exercise. Restart by PID, and check
+the process tree first — the web on :3000 is a separate group here (`pnpm start`), but
+`scripts/dev.sh` traps EXIT and does tie them together.
+
 ### A push is rejected for the whole branch when a commit adds a workflow file
 
 **Symptom.** `! [remote rejected] … (refusing to allow a Personal Access Token to create or
@@ -435,6 +599,20 @@ on 2026-07-28 pushing the new `shared-sync.yml`.
 write it into `.git/config` via `git remote set-url`. SSH bypasses the check entirely, but
 only with a registered key: `ssh -T git@github.com` answered `Permission denied
 (publickey)` here, so it was no fallback.
+
+**Correction (2026-08-03) — the `server/.env` token no longer carries the scope either.**
+Pushing `feat/skills`, whose `0d3e549` edits one line of `.github/workflows/e2e-web.yml`,
+was rejected with that token too. Three routes were checked and all three are dead:
+`~/.devdigest/secrets.json` holds a `GITHUB_TOKEN` that is byte-identical to the `.env`
+one, `ssh -T git@github.com` still answers `Permission denied (publickey)`, and `gh` is not
+installed. There is no credential on this machine that can push a workflow file — the
+permission has to be added to the fine-grained PAT (Repository permissions → Workflows →
+Read and write), or the owner pushes from their own session. Do not hunt for a fourth
+credential; there is not one.
+
+Dropping the offending line is not a workaround here: `.github/workflows/e2e-web.yml` boots
+Postgres with `docker compose up -d` against the repo's own compose file, which publishes
+**5434**, so reverting `DATABASE_URL` to 5432 would break the e2e job.
 
 ## Session Notes
 
@@ -538,8 +716,48 @@ only with a registered key: `ssh -T git@github.com` answered `Permission denied
   died — the escalation order to `SKILL.md` §2, the graph commands to the config header. A
   baseline whose findings do not change the artifact was not worth running.
 
+### 2026-08-03
+
+- Finished the skills lesson and opened PR #7 (`feat/skills` → `main`, 24 commits, 161 files).
+  Package-level detail is in `server/INSIGHTS.md` and `client/INSIGHTS.md`; what belongs here
+  is the tooling.
+- **The gate's own review found two real security bugs in the branch that built it.** That is
+  the first run where Track B produced a critical at all, so §3.4's adversarial verifier
+  executed for the first time — and immediately mattered in both directions, confirming one
+  and refuting the other. See the entry under What Works for the numbers.
+- Four passes cost roughly 1.2M subagent tokens end to end. Worth it here because the branch
+  ships an SSRF surface; not a default for every branch. `--gates` remains the right mode for
+  a push.
+- The verdict is HEAD-bound, so the loop is: fix → commit → re-scope → re-gate → re-dispatch.
+  Editing the tree while Track B agents are mid-flight produces findings against a file that
+  no longer exists; every pass here waited for both agents before touching anything.
+- Briefing each pass with what the previous one already fixed is what kept the reports from
+  repeating themselves — the third and fourth `conventions` briefs list the closed findings by
+  name and say a short report is the expected shape. Without that, an agent re-derives the
+  same placement finding and the count never falls.
+
+### 2026-08-03 (evening)
+
+- PR #7 grew from the skills feature into a demonstration of the product reviewing itself.
+  Eleven findings raised by DevDigest's own agents were fixed on the branch; two more went
+  out as PR #8 (merged). Every one of them came from an agent, not from a gate.
+- **The pagination bug was the hinge.** Until `pulls.listFiles` paginated, the agents saw
+  100 of 161 files — alphabetically all of `client/`, none of the 46 under `server/`. Six of
+  the eleven findings could not have been raised before that fix, and one false positive
+  (`SkillSource` "not changed in this diff", 0.95 confidence, reproduced twice) was caused
+  entirely by it. An agent reasoning correctly over a truncated context is confident and
+  wrong, and no gate in this repo could have caught it.
+- Three CRITICALs were overstated (see What Doesn't Work). Measuring each cost minutes;
+  fixing them anyway cost little and caught one real defect.
+- Cost of the whole exercise: roughly $0.08 per five-agent run over a 145k-token diff,
+  13-330s per agent when the provider cooperated.
+
 ## Open Questions
 
 - `AGENTS.md` standardises instructions but not capabilities. `.claude/skills/*` and the
   `engineering-insights` skill stay Claude-only, so a Codex or Cursor session in this repo
   gets the conventions without the tooling built on them. No portable format exists yet.
+- `scope.sh` diffing against local `main` (Recurring Errors & Fixes) is arguably a bug in the
+  script rather than a user error — `git merge-base origin/main HEAD` would be correct
+  whenever a remote exists. Left alone on 2026-08-03 because over-scoping is safe and the
+  branch was already under review; worth deciding before the next lesson.

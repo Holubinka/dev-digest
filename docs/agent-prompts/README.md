@@ -9,6 +9,8 @@ in the DB). The canonical, reviewable copies live next to this file:
 - [`general-reviewer.md`](./general-reviewer.md)
 - [`security-reviewer.md`](./security-reviewer.md)
 - [`performance-reviewer.md`](./performance-reviewer.md)
+- [`test-quality-reviewer.md`](./test-quality-reviewer.md)
+- [`api-contract-reviewer.md`](./api-contract-reviewer.md)
 
 > The DB is the source of truth at run time. These files are the human-readable
 > originals — when you change a prompt, edit the file here **and** push it to the
@@ -99,6 +101,29 @@ numbers and gates from what the model returns:
    is no minimum or target — zero is a good answer. Models treat "return at most N
    findings" as a quota and pad the list with repeats to hit N, which also corrupts
    the score. State that the count is free and repeats are forbidden.
+
+## The citation rule (needed once findings are about absence)
+
+The three original agents report on code the diff contains, so citing it is easy.
+An agent that reports on what the diff *omits* — a missing test, an unupdated
+caller — has nothing obvious to point at, and `groundFindings` deletes any finding
+whose range misses a hunk. Such a prompt must therefore say explicitly: anchor the
+finding to the changed line that creates the obligation — the new branch, the new
+signature, the new test file — never to the unchanged file where the fix would go.
+`test-quality-reviewer.md` and `api-contract-reviewer.md` both carry this block.
+
+## Prompts scope the review; skills supply the checklist
+
+`test-quality-reviewer.md` and `api-contract-reviewer.md` deliberately stop at
+*what domain to review and how to judge severity*. The enumerable rubric — list
+every branch and name its covering test; the test-smell catalogue; the breaking-
+change taxonomy — lives in the **skills** bound to those agents, not in the prompt.
+
+That split is the point of the feature and it is load-bearing for the control
+experiment: with the checklist inlined here, the same agent finds the defect with
+no skills bound, and the before/after shows nothing. If you are tempted to
+"improve" either prompt by adding a `## What to look for` list of specific checks,
+put it in a skill instead.
 
 ## How the engine uses the output (why the conventions matter)
 

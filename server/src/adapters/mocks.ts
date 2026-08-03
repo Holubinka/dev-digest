@@ -31,6 +31,8 @@ import type {
   AuthWorkspace,
   SecretsProvider,
   SecretKey,
+  SkillFetcher,
+  FetchedMarkdown,
 } from '@devdigest/shared';
 import { parseUnifiedDiff } from './git/diff-parser.js';
 
@@ -326,5 +328,19 @@ export class MockSecretsProvider implements SecretsProvider {
   constructor(private secrets: Partial<Record<string, string>> = {}) {}
   async get(key: SecretKey): Promise<string | undefined> {
     return this.secrets[key as string];
+  }
+}
+
+// ---------- Mock skill fetcher ----------
+/**
+ * Serves canned documents by URL. A URL with no entry throws, so a test that
+ * meant to stub a fetch and did not cannot silently pass on a default body.
+ */
+export class MockSkillFetcher implements SkillFetcher {
+  constructor(private documents: Record<string, string> = {}) {}
+  async fetchMarkdown(url: string): Promise<FetchedMarkdown> {
+    const text = this.documents[url];
+    if (text === undefined) throw new Error(`MockSkillFetcher has no document for ${url}`);
+    return { text, finalUrl: url, bytes: Buffer.byteLength(text) };
   }
 }

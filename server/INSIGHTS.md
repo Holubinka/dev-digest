@@ -12,6 +12,30 @@ _Nothing recorded yet._
 
 ## What Doesn't Work
 
+### Testing a guard by calling its classifier directly can pass while the guard is wide open
+
+Both security bugs `/pr-self-review` found on 2026-08-03 had this exact shape: a unit test
+that fed the classifier an input the running system never produces.
+
+`server/test/skill-fetch.test.ts` asserted `ipv6IsPublic('::ffff:127.0.0.1') === false`. But
+`assertPublicHttps` never sees that string — `new URL('https://[::ffff:127.0.0.1]/')` re-spells
+the hostname as `[::ffff:7f00:1]`, and the old dotted-quad regex did not match the hex form. So
+the test passed while loopback, RFC1918 and `169.254.169.254` were all reachable through
+`POST /skills/import/url` and through every redirect hop.
+
+The same session's archive bug is the other half of the pattern: `parseSkillArchive`'s budget
+was only ever exercised with archives built by `fflate.zipSync`, which always writes the
+compressed and uncompressed sizes consistently. A hand-built archive where they disagree is the
+only way to reach the branch that matters.
+
+**The rule.** When a boundary normalises its input — `new URL()`, a decoder, a parser — drive
+the test through the boundary with the raw literal a caller would send, not through the
+classifier with the value you imagine it receives. Where the library is the thing that
+normalises, build the hostile input by hand; a fixture built with the same library can only
+produce inputs that library considers well-formed. Both fixes are pinned that way now:
+`assertPublicHttps('https://[::ffff:127.0.0.1]/x')` and `storedArchiveLyingAboutSize()` in
+`server/test/skills-import.test.ts`.
+
 ### A frozen dependency-cruiser edge silences that edge entirely, not one violation
 
 `.dependency-cruiser-known-violations.json` freezes a *rule + from + to* triple, not a count.
@@ -43,6 +67,25 @@ A gate whose config is untracked is indistinguishable from a passing gate. `git 
 config is part of trusting the result.
 
 ## Codebase Patterns
+
+### A link table's foreign key proves existence, not tenancy
+
+`agent_skills.skill_id` references `skills.id` and nothing more. `AgentsService.setSkills`
+verified that the *agent* belonged to the caller's workspace and then handed arbitrary skill
+ids straight to the insert, while `linkedSkills` joined `t.skills` with no workspace
+predicate at all. So `POST /agents/:id/skills {"skill_ids":["<other-tenant-skill>"]}`
+succeeded, and once L02 made skill bodies reach the prompt that is another workspace's text
+instructing this workspace's review.
+
+It was unreachable for as long as `skills` stayed empty, which is exactly why it survived
+review: an over-provisioned table hides its own tenancy bugs until the lesson that fills it.
+Closed on 2026-08-03 by checking ids against the workspace before the write
+(`AgentsRepository.skillIdsInWorkspace`) **and** re-checking tenancy inside the
+`linkedSkills` join, so a stray row already in the table is invisible rather than
+load-bearing. `server/test/skills.it.test.ts` pins both halves.
+
+When the next lesson fills `conventions`, `memory`, `eval` or `ci`, audit the same shape
+before wiring it up: parent scoped, child assumed.
 
 ### Rollups on `GET /repos/:id/pulls` are read-time maps, and null ≠ zero
 
@@ -78,6 +121,49 @@ client maps severity to an icon through a lookup with no fallback (see
 `client/INSIGHTS.md`). A bad row costs one missing preview entry, never a broken page.
 
 ## Tool & Library Notes
+
+### `break` out of a `for await` destroys the stream, so teardown errors land inside the `try`
+
+**Symptom.** `readCapped` in `adapters/skill-fetch/index.ts` refuses an oversized document.
+A review argued the refusal could be masked by a throwing `res.destroy()`, since the
+destroy sat inside a `try` whose `catch` rewrites anything that is not a `ValidationError`.
+Moving the throw out of the block did NOT fix it — the test written for the finding failed
+against the restructured code.
+
+**Cause.** Leaving a `for await (const chunk of stream)` with `break` calls the async
+iterator's `return()`, which destroys the stream. Measured 2026-08-03: after `break`,
+`stream.destroyed === true` and the producer stopped after 3 of 50 chunks. So the teardown
+happens *inside* the loop body's block no matter where the `throw` is written.
+
+**Fix.** Decide first, tear down second, and let the decision outrank the teardown:
+
+```ts
+if (bytes > MAX) { overflowed = true; break; }
+} catch (err) {
+  if (!overflowed) throw new ExternalServiceError(...);  // only a failure BEFORE the refusal
+}
+if (overflowed) throw new ValidationError(...);
+```
+
+Worth knowing separately: `Readable.destroy()` does not throw synchronously — it returns
+the stream, and destroying twice is silent — so the reported path was never reachable. The
+shape still invited it, and the test caught a real defect in the first fix.
+
+### `fflate.unzipSync` copies the COMPRESSED size for a stored entry, not the one its filter reports
+
+**Symptom.** `parseSkillArchive` enforces `MAX_ENTRY_BYTES` and `MAX_TOTAL_BYTES` in the
+`unzipSync` filter and still allocates hundreds of megabytes from a 2 MB upload.
+
+**Cause.** `UnzipFileInfo` carries `originalSize` (uncompressed) and `size` (compressed) as two
+independent numbers read from the central directory — the archive writes whatever it likes in
+each. For a STORED entry (`compression === 0`) fflate copies `size` verbatim
+(`slc(data, b, b + sc)`, `esm/index.mjs:2702` in 0.8.3). Budgeting `originalSize` alone let 200
+entries declaring a kilobyte each point at the same ~2 MB payload.
+
+**Fix.** Budget `Math.max(entry.originalSize, entry.size)` — `server/src/modules/skills/import.ts:42`.
+The pre-inflation filter is still the right mechanism and the deflate path was never affected:
+fflate does not grow a supplied `out` buffer, so a declared-4 GB deflate member really does
+refuse to allocate.
 
 ### `drizzle-kit generate` emits DDL only — a data backfill has to be hand-appended
 
@@ -213,7 +299,24 @@ asymmetry is inert, not a bug.
 
 ## Session Notes
 
-_Nothing recorded yet._
+### 2026-08-03
+
+- Landed the skills module and closed two of its own security holes, both found by
+  `/pr-self-review` and both of which had passed their own tests — see the entry under What
+  Doesn't Work, which is the transferable half.
+- `server/src/platform/skill-injection.ts` sits in `platform/`, not in `modules/skills/`,
+  because `modules/reviews/run-executor.ts` also has to filter a hijacking body out of prompt
+  assembly and `no-cross-module` forbids the import. Three independent locks exist on purpose:
+  the service refuses to enable, the reviews filter drops it at assembly, and the UI explains
+  why. Its docblock says plainly it is a seatbelt for a careless import, not a security
+  boundary — do not let that sentence get edited out.
+- `SkillsService` takes its repository as a defaulted constructor parameter
+  (`repo = new SkillsRepository(container.db)`), the first service here to do so. That is what
+  made `skills-service.test.ts` possible without Docker; the three untested services all build
+  their own.
+- The `arch` gate caught `modules/skills/service.ts → adapters/tokenizer/index.ts`
+  (`no-service-to-adapter-impl`). Using `this.container.tokenizer.count()` fixed the violation
+  and produced an exact token count rather than the `length / 4` estimate.
 
 ## Open Questions
 
