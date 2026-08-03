@@ -62,8 +62,26 @@ on `^1.4.0` gets the break on its next install.
 
 or the old export stays as a re-export until the next major.
 
+## Quote the marker or it is not there
+
+A version bump counts only if you can quote the changed line that made it:
+
+```diff
+- "version": "1.4.0",
++ "version": "2.0.0",
+```
+
+If that line is not in the diff, the bump did not happen. Do not conclude "the
+change is properly versioned" from the absence of evidence — that sentence has
+been written about a diff that bumped nothing, and it turned a CRITICAL into an
+approval. No quotable marker means the break is unannounced, which is the
+finding.
+
 ## Scope
 
 Only report a missing bump for a surface this diff actually breaks. A private,
 unpublished package (`"private": true`, `version: 0.0.0`) has no consumer to
-protect — say so and move on rather than inventing a bump for it.
+protect — say so and move on rather than inventing a bump for it. That exemption
+covers the version marker only; the change can still be a breaking change under
+the other rules, and an HTTP contract has consumers whatever the package version
+says.
