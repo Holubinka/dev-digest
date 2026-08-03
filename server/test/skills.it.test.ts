@@ -461,6 +461,33 @@ d('/skills', () => {
     await app.close();
   });
 
+  /**
+   * `order` is the array index and `(agent_id, skill_id)` is the primary key, so
+   * a repeated id would collide on insert. A UI that sends the same skill twice
+   * should get the set it meant, not a 500.
+   */
+  it('takes a repeated id as the set it means, keeping the first position', async () => {
+    const app = await makeApp();
+    const mk = async (name: string) =>
+      (await app.inject({ method: 'POST', url: '/skills', payload: { ...createBody, name } }))
+        .json().id as string;
+    const [a, b] = [await mk('Dedupe A'), await mk('Dedupe B')];
+    const agentId = (
+      await app.inject({ method: 'POST', url: '/agents', payload: agentBody })
+    ).json().id as string;
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/agents/${agentId}/skills`,
+      payload: { skill_ids: [a, b, a] },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().map((l: { skill_id: string }) => l.skill_id)).toEqual([a, b]);
+    expect(res.json().map((l: { order: number }) => l.order)).toEqual([0, 1]);
+    await app.close();
+  });
+
   it('previews an upload without saving it, and only saves on confirmation', async () => {
     const app = await makeApp();
     const before = await countSkills();

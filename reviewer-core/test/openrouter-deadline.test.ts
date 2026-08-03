@@ -88,16 +88,23 @@ describe('completeStructured deadline', () => {
    * what multiplied into half an hour in the first place.
    */
   it('does not start another attempt once the budget is gone', async () => {
-    const create = vi.fn(async () => {
-      await new Promise((r) => setTimeout(r, 40));
-      // Valid JSON, wrong shape: the repair loop would otherwise try again.
-      return { choices: [{ message: { content: '{"nope":1}' } }], usage: {} };
-    });
-    const provider = withClient(new OpenRouterProvider('k', { deadlineMs: 60 }), create as never);
+    // The clock is driven, not waited on: a real 40ms sleep against a real 60ms
+    // budget decides the outcome by how loaded the machine is.
+    vi.useFakeTimers();
+    try {
+      const create = vi.fn(async () => {
+        vi.advanceTimersByTime(50);
+        // Valid JSON, wrong shape: the repair loop would otherwise try again.
+        return { choices: [{ message: { content: '{"nope":1}' } }], usage: {} };
+      });
+      const provider = withClient(new OpenRouterProvider('k', { deadlineMs: 100 }), create as never);
 
-    await expect(provider.completeStructured(request())).rejects.toThrow(DeadlineExceededError);
-    // Two attempts fit inside 60ms; a third would have exceeded it.
-    expect(create.mock.calls.length).toBeLessThan(3);
+      await expect(provider.completeStructured(request())).rejects.toThrow(DeadlineExceededError);
+      // 50 + 50 spends the whole 100; the third attempt finds nothing left.
+      expect(create).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('leaves a call that answers in time completely alone', async () => {

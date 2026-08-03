@@ -74,6 +74,37 @@ describe("SkillDetail", () => {
     expect(screen.getByText("v3")).toBeInTheDocument();
   });
 
+  it("shows a skeleton while the skill is still loading, not an empty pane", () => {
+    hooks.useSkill.mockReturnValue({ data: undefined, isLoading: true, isError: false });
+    render(
+      <NextIntlClientProvider locale="en" messages={{ skills: messages }}>
+        <ToastProvider>
+          <SkillDetail id="sk1" />
+        </ToastProvider>
+      </NextIntlClientProvider>,
+    );
+
+    expect(screen.queryByText("Save skill")).not.toBeInTheDocument();
+    expect(screen.queryByText("Could not load this skill.")).not.toBeInTheDocument();
+    expect(document.querySelectorAll('[class*="skeleton"], [data-skeleton]').length).toBeGreaterThan(0);
+  });
+
+  it("marks a globally disabled skill so its absence from prompts is visible", () => {
+    renderDetail({ enabled: false });
+    expect(screen.getByText("disabled — no agent will receive it")).toBeInTheDocument();
+  });
+
+  it("does not show that badge when the skill is on", () => {
+    renderDetail();
+    expect(screen.queryByText("disabled — no agent will receive it")).not.toBeInTheDocument();
+  });
+
+  it("shows the injection badge instead of the disabled one when both would apply", () => {
+    renderDetail({ injection: [HIJACK], enabled: false });
+    expect(screen.getByText("injection")).toBeInTheDocument();
+    expect(screen.queryByText("disabled — no agent will receive it")).not.toBeInTheDocument();
+  });
+
   it("keeps the open tab in the URL so a link lands where it was left", () => {
     renderDetail();
     fireEvent.click(screen.getByText("Preview"));
