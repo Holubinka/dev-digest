@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="60" viewBox="0 0 240 60">
+  <!-- Part of the import fixture: not Markdown, so it is listed as skipped.
+       Text rather than a binary, so the fixture stays diffable in git. -->
+  <rect x="0" y="0" width="240" height="60" fill="#1b1d21" rx="6"/>
+  <text x="16" y="35" font-family="monospace" font-size="14" fill="#8ab4f8">flaky → re-run → trust lost</text>
+</svg>

@@ -166,6 +166,42 @@ map. Three contract-breaking mutations passed the whole suite *simultaneously*, 
 being `scope.sh`'s `source: "gate scope"` literal → `"agent scope"`, which silently turns
 every deterministic critical into an unanchored note. Nothing pinned that one string.
 
+### A skills before/after shows nothing when the prompt already carries the checklist
+
+**Symptom.** On 2026-08-03 the L02 control experiment — same PR, same agent, skills unbound
+then bound — did not reproduce. Measured on `devdigest/skills-lab` #101 with
+`deepseek/deepseek-v4-flash`: without skills 3 findings, with skills 1. On #102, 4 findings
+either way. Every plumbing signal was correct (skills block present, `+652` and `+624`
+`tokens_in`, `skills: 2 skill(s), 651 token(s) attached — …` in the log), and the outcome
+still did not move.
+
+**Cause.** Two things, in order of size.
+
+First, the prompt leaked the rubric. `test-quality-reviewer.md` v1 said *"Weigh three things:
+how much of the new behaviour is actually exercised, whether the assertions are about
+observable behaviour…, and whether anything will make it pass for unrelated reasons"* — which
+is the three bound skills in miniature. `api-contract-reviewer.md` v1 was worse: *"Removing or
+renaming something a caller reads is breaking. Narrowing a type is breaking…"* is the
+breaking-change taxonomy verbatim. Stripping both to one sentence (v2, pushed via
+`PUT /agents/:id`) narrowed the gap but did not close it.
+
+Second, and bigger: **the fixtures are too small to need a checklist.** A 17-line file with
+four branches and one test is caught by any reviewer prompt that mentions tests at all. A
+rubric earns its place by forcing systematic enumeration over a diff too large to hold in
+one pass — which is exactly what a 25-line fixture removes.
+
+**Fix.** Do not tune the fixture until a model bites; that manufactures a result. Either
+report the plumbing evidence and say the outcome did not reproduce, or build the fixture
+around the skills that encode *non-obvious* rules — a test that mocks the unit under test and
+asserts on the mock (looks like a passing test), a `Date.now()` read without injection — and
+size the diff so enumeration is doing real work. `docs/skills/test-smell-catalogue.md` and
+`flakiness-patterns/` are those skills; PR #101 exercises only the branch rubric.
+
+The one difference that *was* visible: with prompt v1, the baseline cited `test/pricing.test.ts:1-8`
+for every gap while the skilled run cited `src/pricing.ts:12-14` — the rubric's "cite the
+branch, not the test file" rule landing. That disappeared once v2 stopped over-specifying, so
+it was the prompt's richness, not the skill.
+
 ## Codebase Patterns
 
 ### The two `docker-compose.yml` files are byte-identical duplicates
@@ -371,6 +407,23 @@ source; guard with `[ -s "$f" ] && jq -e 'type == "array" or type == "object"' "
 using it, and never let a `jq … > f` and a consumer of `f` share the same path.
 
 ## Recurring Errors & Fixes
+
+### `pkill -f "tsx src/server.ts"` kills the dev server you were being careful not to touch
+
+**Symptom.** On 2026-08-03 an agent started its own API on `API_PORT=3101` precisely so it
+would not disturb the long-running dev server on 3001, ran its experiment, then cleaned up
+with `pkill -f "tsx src/server.ts"` — and took down 3001 as well. The `tsx watch` parent
+(alive for 2 days) survived, so nothing looked broken; the port simply stopped listening
+until the next file save triggered a restart.
+
+**Cause.** `pkill -f` matches the whole command line of every process, and both servers are
+the same command. Choosing a different port isolates the listener, not the process name.
+
+**Fix.** Capture the PID at spawn and kill that: `pnpm exec tsx src/server.ts & echo $!`, then
+`kill "$pid"`. When the PID is lost, narrow by port instead —
+`lsof -nP -iTCP:3101 -sTCP:LISTEN -t | xargs kill` — which cannot match a process listening
+somewhere else. Check `lsof -nP -iTCP:3001 -sTCP:LISTEN` before and after, so a mistake is
+visible rather than inferred.
 
 ### The two vendored `shared/` copies drift silently
 

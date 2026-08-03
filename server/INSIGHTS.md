@@ -44,6 +44,25 @@ config is part of trusting the result.
 
 ## Codebase Patterns
 
+### A link table's foreign key proves existence, not tenancy
+
+`agent_skills.skill_id` references `skills.id` and nothing more. `AgentsService.setSkills`
+verified that the *agent* belonged to the caller's workspace and then handed arbitrary skill
+ids straight to the insert, while `linkedSkills` joined `t.skills` with no workspace
+predicate at all. So `POST /agents/:id/skills {"skill_ids":["<other-tenant-skill>"]}`
+succeeded, and once L02 made skill bodies reach the prompt that is another workspace's text
+instructing this workspace's review.
+
+It was unreachable for as long as `skills` stayed empty, which is exactly why it survived
+review: an over-provisioned table hides its own tenancy bugs until the lesson that fills it.
+Closed on 2026-08-03 by checking ids against the workspace before the write
+(`AgentsRepository.skillIdsInWorkspace`) **and** re-checking tenancy inside the
+`linkedSkills` join, so a stray row already in the table is invisible rather than
+load-bearing. `server/test/skills.it.test.ts` pins both halves.
+
+When the next lesson fills `conventions`, `memory`, `eval` or `ci`, audit the same shape
+before wiring it up: parent scoped, child assumed.
+
 ### Rollups on `GET /repos/:id/pulls` are read-time maps, and null ≠ zero
 
 The list endpoint denormalises nothing. Each rollup is its own `inArray` query over the
