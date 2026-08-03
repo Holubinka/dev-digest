@@ -84,6 +84,25 @@ each verifier ran 14–28 tool calls.
 A refuted critical is still worth fixing when its *mechanism* reproduced. Both of this run's
 security fixes were one-liners; only the severity was overstated.
 
+### A finding whose mechanism is real can still be unreachable — measure, then fix it anyway
+
+Three of the eleven findings this repo's own agents raised on PR #7 were graded CRITICAL
+with a real mechanism and no reachable path. Each took minutes to settle by running
+something rather than reasoning:
+
+| Claim | What the measurement showed |
+|---|---|
+| zip STORED entries amplify memory | reproduces, but bounded and GC-reclaimed; ~1.35 GB steady state, no OOM over 12 requests |
+| stats leak across workspaces | `service.stats` 404s a foreign skill before the count runs; both link paths verify the workspace |
+| a throwing `destroy()` masks the size refusal | `Readable.destroy()` returns the stream and does not throw; double-destroy is silent |
+
+The verifier prong (`pr-self-review` SKILL.md §3.4) refuted the first, and the other two
+were settled by hand in a shell. **All three were fixed anyway**, and one of those fixes
+paid for itself immediately: the test written for the unreachable `destroy()` claim failed
+against the first attempt at fixing it, because `break` also destroys the stream
+(`server/INSIGHTS.md`). The rule that generalises — an overstated severity is not a wrong
+finding, and the cheapest way to tell them apart is to run the thing.
+
 ## What Doesn't Work
 
 ### Committing a documentation layer by path while the files it references stay untracked
@@ -543,6 +562,27 @@ behind N]` marker. Over-scoping only costs tokens, so it is not an emergency —
 base sha in the report before believing the finding count. Confirm the real PR base with
 `git merge-base --is-ancestor <branch-point> origin/main`.
 
+**Confirmed 2026-08-03.** `git branch -f main origin/main` (safe while `main` is not checked
+out) took the pagination branch's scope from **68 routed files to 1** — the one file it
+actually changes. The 67 others were commits already merged into `origin/main`.
+
+### A dev server started without `watch` serves code that no longer exists
+
+**Symptom.** The API on :3001 kept answering `/skills` correctly through several branch
+switches that removed those files from disk — and then, an hour after a bug was fixed and
+committed, re-imported PR #7 through the OLD code and silently undid the corrected data
+(`pr_files` went 161 rows back to 100).
+
+**Cause.** It was launched as `tsx src/server.ts`, not `tsx watch`. Node had the modules in
+memory, so the process was immune to the working tree and to every fix landed since it
+booted.
+
+**Fix.** Check before trusting a live check:
+`ps -o command= -p "$(lsof -nP -iTCP:3001 -sTCP:LISTEN -t)"`. If `watch` is absent, restart
+deliberately after any `server/**` change you intend to exercise. Restart by PID, and check
+the process tree first — the web on :3000 is a separate group here (`pnpm start`), but
+`scripts/dev.sh` traps EXIT and does tie them together.
+
 ### A push is rejected for the whole branch when a commit adds a workflow file
 
 **Symptom.** `! [remote rejected] … (refusing to allow a Personal Access Token to create or
@@ -695,6 +735,22 @@ Postgres with `docker compose up -d` against the repo's own compose file, which 
   repeating themselves — the third and fourth `conventions` briefs list the closed findings by
   name and say a short report is the expected shape. Without that, an agent re-derives the
   same placement finding and the count never falls.
+
+### 2026-08-03 (evening)
+
+- PR #7 grew from the skills feature into a demonstration of the product reviewing itself.
+  Eleven findings raised by DevDigest's own agents were fixed on the branch; two more went
+  out as PR #8 (merged). Every one of them came from an agent, not from a gate.
+- **The pagination bug was the hinge.** Until `pulls.listFiles` paginated, the agents saw
+  100 of 161 files — alphabetically all of `client/`, none of the 46 under `server/`. Six of
+  the eleven findings could not have been raised before that fix, and one false positive
+  (`SkillSource` "not changed in this diff", 0.95 confidence, reproduced twice) was caused
+  entirely by it. An agent reasoning correctly over a truncated context is confident and
+  wrong, and no gate in this repo could have caught it.
+- Three CRITICALs were overstated (see What Doesn't Work). Measuring each cost minutes;
+  fixing them anyway cost little and caught one real defect.
+- Cost of the whole exercise: roughly $0.08 per five-agent run over a 145k-token diff,
+  13-330s per agent when the provider cooperated.
 
 ## Open Questions
 

@@ -51,7 +51,29 @@ the pattern to copy: injected as a callback so the engine holds no pricing table
 
 ## Tool & Library Notes
 
-_Nothing recorded yet._
+### Nested retry loops multiply, and nothing here bounded the call itself
+
+**Symptom.** A review run sits in `running` for over half an hour with `tokens_in` null
+and `error` null, while the same prompt completed in 13-331s an hour earlier. Measured on
+2026-08-03 across five runs on PR #7.
+
+**Cause.** Three limits, all per-part, none over the whole:
+`new OpenAI({ timeout: 90_000, maxRetries: 2 })` bounds one HTTP request and retries it
+three times; `completeStructured`'s schema-repair loop then runs the whole thing up to
+three times more. 3 x 3 x 90s of timeouts before anything gives up, plus SDK backoff, and
+the repair loop re-sends the entire prompt each time — which is why one run recorded
+`tokens_in: 288906` on a 144k-token diff.
+
+**Fix.** `deadlineMs` (default 600_000) is a wall-clock budget over the whole
+`completeStructured`. It is checked before each attempt so a spent budget does not send
+another 143k-token request, and enforced during one with an `AbortSignal` so a hanging
+request is actually cut — `Promise.race` would reject the wrapper and leave the socket
+open with the tokens still being paid for. Exceeding it throws `DeadlineExceededError`,
+which is what lets a caller record `failed` with a reason instead of `running` forever.
+
+Two properties are worth keeping when touching this: the budget covers the whole call and
+not each attempt (per-attempt is what multiplied in the first place), and a real provider
+error still propagates unchanged — the clock only takes the blame when the clock ran out.
 
 ## Recurring Errors & Fixes
 
@@ -69,7 +91,14 @@ encodes this too: `reviewer-core/**` changes trigger the `server-unit` workflow.
 
 ## Session Notes
 
-_Nothing recorded yet._
+### 2026-08-03
+
+- Added the wall-clock deadline above. It fired in production the same evening: Test
+  Quality Reviewer went `failed` at 600s with `OpenRouter gave up on Review after 600s
+  (1 attempt(s))`, where an hour earlier the same agent had sat in `running` indefinitely.
+  The provider (OpenRouter, `deepseek/deepseek-v4-flash`) intermittently does not answer
+  large prompts at all while `/models` and short completions stay fast — so this is not a
+  bug to fix upstream, it is a condition to survive.
 
 ## Open Questions
 

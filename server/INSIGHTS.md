@@ -122,6 +122,33 @@ client maps severity to an icon through a lookup with no fallback (see
 
 ## Tool & Library Notes
 
+### `break` out of a `for await` destroys the stream, so teardown errors land inside the `try`
+
+**Symptom.** `readCapped` in `adapters/skill-fetch/index.ts` refuses an oversized document.
+A review argued the refusal could be masked by a throwing `res.destroy()`, since the
+destroy sat inside a `try` whose `catch` rewrites anything that is not a `ValidationError`.
+Moving the throw out of the block did NOT fix it — the test written for the finding failed
+against the restructured code.
+
+**Cause.** Leaving a `for await (const chunk of stream)` with `break` calls the async
+iterator's `return()`, which destroys the stream. Measured 2026-08-03: after `break`,
+`stream.destroyed === true` and the producer stopped after 3 of 50 chunks. So the teardown
+happens *inside* the loop body's block no matter where the `throw` is written.
+
+**Fix.** Decide first, tear down second, and let the decision outrank the teardown:
+
+```ts
+if (bytes > MAX) { overflowed = true; break; }
+} catch (err) {
+  if (!overflowed) throw new ExternalServiceError(...);  // only a failure BEFORE the refusal
+}
+if (overflowed) throw new ValidationError(...);
+```
+
+Worth knowing separately: `Readable.destroy()` does not throw synchronously — it returns
+the stream, and destroying twice is silent — so the reported path was never reachable. The
+shape still invited it, and the test caught a real defect in the first fix.
+
 ### `fflate.unzipSync` copies the COMPRESSED size for a stored entry, not the one its filter reports
 
 **Symptom.** `parseSkillArchive` enforces `MAX_ENTRY_BYTES` and `MAX_TOTAL_BYTES` in the
