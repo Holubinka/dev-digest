@@ -9,7 +9,7 @@
 import React from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { Button, FormField, Modal, SelectInput, TextInput, Toggle } from "@devdigest/ui";
+import { Button, FormField, Icon, Modal, SelectInput, TextInput, Toggle } from "@devdigest/ui";
 import type { ConventionCandidate, Skill } from "@devdigest/shared";
 import { SkillBodyEditor } from "@/components/skill-body-editor";
 import { useCreateSkill } from "@/lib/hooks/skills";
@@ -61,7 +61,7 @@ export function CreateSkillFromConventionsModal({
 
   return (
     <Modal
-      width={760}
+      width={1100}
       title={t("skill.title")}
       subtitle={name}
       onClose={onClose}
@@ -85,7 +85,19 @@ export function CreateSkillFromConventionsModal({
     >
       <div style={s.body}>
         <div style={s.banner}>
-          {t("skill.mergedFrom", { count: accepted.length, repo: repoName })}
+          <Icon.Wrench size={15} style={s.bannerIcon} />
+          <span>
+            {t.rich("skill.mergedFrom", {
+              count: accepted.length,
+              repo: repoName,
+              b: (chunks) => <strong style={s.bannerStrong}>{chunks}</strong>,
+              name: (chunks) => (
+                <span className="mono" style={s.bannerRepo}>
+                  {chunks}
+                </span>
+              ),
+            })}
+          </span>
         </div>
 
         <FormField label={t("skill.name")} required>

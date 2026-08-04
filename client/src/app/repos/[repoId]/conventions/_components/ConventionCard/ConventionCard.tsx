@@ -6,10 +6,11 @@
 
 import React from "react";
 import { useTranslations } from "next-intl";
-import { Button, Chip, Icon, MonoLink, ProgressBar, Textarea } from "@devdigest/ui";
+import { Button, Icon, IconBtn, MonoLink, ProgressBar, Textarea } from "@devdigest/ui";
 import type { ConventionCandidate } from "@devdigest/shared";
 import { githubBlobUrl } from "@/lib/github-urls";
 import { confidenceColor, lineLabel } from "./helpers";
+import { COPIED_FEEDBACK_MS } from "./constants";
 import { s } from "./styles";
 
 export function ConventionCard({
@@ -27,6 +28,20 @@ export function ConventionCard({
 }) {
   const t = useTranslations("conventions");
   const [draft, setDraft] = React.useState<string | null>(null);
+  const [copied, setCopied] = React.useState(false);
+
+  // `navigator.clipboard` is undefined outside a secure context, and jsdom has
+  // no clipboard at all — a failed copy leaves the icon alone rather than
+  // claiming success.
+  const copy = (text: string) => {
+    navigator.clipboard?.writeText(text).then(
+      () => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), COPIED_FEEDBACK_MS);
+      },
+      () => {},
+    );
+  };
 
   const linkTo = (path: string, line: number, endLine: number) =>
     repoFullName && candidate.head_sha
@@ -82,23 +97,31 @@ export function ConventionCard({
         {candidate.evidence_path && candidate.evidence_snippet && (
           <div style={s.evidence}>
             <div style={s.evidenceHeader}>
-              <MonoLink
-                href={linkTo(
-                  candidate.evidence_path,
-                  candidate.evidence_line ?? 1,
-                  candidate.evidence_end_line ?? candidate.evidence_line ?? 1,
-                )}
-              >
-                {candidate.evidence_path}
-                {lineLabel(candidate.evidence_line, candidate.evidence_end_line)}
-              </MonoLink>
+              <span style={s.evidencePath}>
+                <MonoLink
+                  href={linkTo(
+                    candidate.evidence_path,
+                    candidate.evidence_line ?? 1,
+                    candidate.evidence_end_line ?? candidate.evidence_line ?? 1,
+                  )}
+                >
+                  {candidate.evidence_path}
+                  {lineLabel(candidate.evidence_line, candidate.evidence_end_line)}
+                </MonoLink>
+              </span>
+              <IconBtn
+                icon={copied ? "Check" : "Copy"}
+                label={copied ? t("card.copied") : t("card.copy")}
+                size={26}
+                onClick={() => copy(candidate.evidence_snippet ?? "")}
+              />
             </div>
             <pre className="mono" style={s.snippet}>
               {candidate.evidence_snippet}
             </pre>
             {candidate.extra_evidence.length > 0 && (
               <div style={s.moreEvidence}>
-                <span style={s.confidenceLabel}>{t("card.alsoAt")}</span>
+                <span style={s.label}>{t("card.alsoAt")}</span>
                 {candidate.extra_evidence.map((e) => (
                   <MonoLink key={`${e.path}:${e.line}`} href={linkTo(e.path, e.line, e.end_line)}>
                     {e.path}
@@ -111,8 +134,8 @@ export function ConventionCard({
         )}
 
         <div style={s.metaRow}>
-          <Chip icon="Tag">{t(`category.${candidate.category}`)}</Chip>
-          <span style={s.confidenceLabel}>{t("card.confidence")}</span>
+          <span style={s.category}>{t(`category.${candidate.category}`)}</span>
+          <span style={s.label}>{t("card.confidence")}</span>
           <div style={s.confidenceBar}>
             <ProgressBar value={confidence} color={confidenceColor(confidence)} />
           </div>
@@ -123,7 +146,6 @@ export function ConventionCard({
       <div style={s.actions}>
         <Button
           kind={accepted ? "primary" : "secondary"}
-          size="sm"
           icon="Check"
           full
           disabled={pending}
@@ -132,8 +154,7 @@ export function ConventionCard({
           {accepted ? t("card.accepted") : t("card.accept")}
         </Button>
         <Button
-          kind="ghost"
-          size="sm"
+          kind="secondary"
           icon="X"
           full
           disabled={pending}

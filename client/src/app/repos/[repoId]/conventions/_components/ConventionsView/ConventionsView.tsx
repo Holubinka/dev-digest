@@ -62,93 +62,95 @@ export function ConventionsView({ repoId }: { repoId: string }) {
         />
       )}
 
-      <div style={s.header}>
-        <div>
-          <h1 style={s.title}>
-            {t("page.headingPrefix")}
-            <span className="mono" style={s.repo}>
-              {repoName}
+      <div style={s.page}>
+        <div style={s.header}>
+          <div>
+            <h1 style={s.title}>
+              {t("page.headingPrefix")}
+              <span className="mono" style={s.repo}>
+                {repoName}
+              </span>
+            </h1>
+            <p style={s.subtitle}>
+              {data?.scan
+                ? t("page.scanSummary", {
+                    files: data.scan.sample_files,
+                    model: data.scan.model,
+                  })
+                : t("page.subtitle")}
+            </p>
+          </div>
+          <Button
+            kind="secondary"
+            icon="RefreshCw"
+            onClick={runScan}
+            loading={extract.isPending}
+            disabled={extract.isPending}
+          >
+            {extract.isPending ? t("page.scanning") : data?.scan ? t("page.rescan") : t("page.runExtraction")}
+          </Button>
+        </div>
+
+        {candidates.length > 0 && (
+          <div style={s.toolbar}>
+            <Button
+              kind="ghost"
+              size="sm"
+              icon="X"
+              disabled={accepted.length === 0 || update.isPending}
+              onClick={() => accepted.forEach((c) => setStatus(c.id, "pending"))}
+            >
+              {t("page.deselectAll")}
+            </Button>
+            <span style={s.count}>
+              {t("page.acceptedCount", { accepted: accepted.length, total: candidates.length })}
             </span>
-          </h1>
-          <p style={s.subtitle}>
-            {data?.scan
-              ? t("page.scanSummary", {
-                  files: data.scan.sample_files,
-                  model: data.scan.model,
-                })
-              : t("page.subtitle")}
-          </p>
-        </div>
-        <Button
-          kind="secondary"
-          icon="RefreshCw"
-          onClick={runScan}
-          loading={extract.isPending}
-          disabled={extract.isPending}
-        >
-          {extract.isPending ? t("page.scanning") : data?.scan ? t("page.rescan") : t("page.runExtraction")}
-        </Button>
-      </div>
+            <Button
+              kind="primary"
+              size="sm"
+              icon="Sparkles"
+              disabled={accepted.length === 0}
+              onClick={() => setCreating(true)}
+            >
+              {t("page.createSkill")}
+            </Button>
+          </div>
+        )}
 
-      {candidates.length > 0 && (
-        <div style={s.toolbar}>
-          <Button
-            kind="ghost"
-            size="sm"
-            icon="X"
-            disabled={accepted.length === 0 || update.isPending}
-            onClick={() => accepted.forEach((c) => setStatus(c.id, "pending"))}
-          >
-            {t("page.deselectAll")}
-          </Button>
-          <span style={s.count}>
-            {t("page.acceptedCount", { accepted: accepted.length, total: candidates.length })}
-          </span>
-          <Button
-            kind="primary"
-            size="sm"
-            icon="Sparkles"
-            disabled={accepted.length === 0}
-            onClick={() => setCreating(true)}
-          >
-            {t("page.createSkill")}
-          </Button>
-        </div>
-      )}
-
-      {isLoading ? (
-        <div style={s.loadingStack}>
-          {Array.from({ length: SKELETON_ROWS }).map((_, i) => (
-            <Skeleton key={i} height={120} />
-          ))}
-        </div>
-      ) : isError ? (
-        <ErrorState
-          title={t("page.loadError")}
-          body={error instanceof ApiError ? error.message : t("page.loadError")}
-          onRetry={() => refetch()}
-        />
-      ) : candidates.length === 0 ? (
-        <EmptyState
-          icon="ListChecks"
-          title={t("page.empty.title")}
-          body={t("page.empty.body")}
-          cta={t("page.empty.cta")}
-          onCta={runScan}
-          ctaLoading={extract.isPending}
-        />
-      ) : (
-        candidates.map((c) => (
-          <ConventionCard
-            key={c.id}
-            candidate={c}
-            repoFullName={activeRepo?.full_name}
-            pending={update.isPending}
-            onStatus={(status) => setStatus(c.id, status)}
-            onRule={(rule) => update.mutate({ id: c.id, patch: { rule } })}
+        {isLoading ? (
+          <div style={s.loadingStack}>
+            {Array.from({ length: SKELETON_ROWS }).map((_, i) => (
+              <Skeleton key={i} height={120} />
+            ))}
+          </div>
+        ) : isError ? (
+          <ErrorState
+            title={t("page.loadError")}
+            body={error instanceof ApiError ? error.message : t("page.loadError")}
+            onRetry={() => refetch()}
           />
-        ))
-      )}
+        ) : candidates.length === 0 ? (
+          <EmptyState
+            icon="ListChecks"
+            title={t("page.empty.title")}
+            body={t("page.empty.body")}
+            cta={t("page.empty.cta")}
+            onCta={runScan}
+            ctaLoading={extract.isPending}
+          />
+        ) : (
+          candidates.map((c) => (
+            <ConventionCard
+              key={c.id}
+              candidate={c}
+              repoFullName={activeRepo?.full_name}
+              pending={update.isPending}
+              onStatus={(status) => setStatus(c.id, status)}
+              onRule={(rule) => update.mutate({ id: c.id, patch: { rule } })}
+            />
+          ))
+        )}
+      </div>
     </AppShell>
   );
 }

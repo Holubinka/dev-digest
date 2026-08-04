@@ -31,7 +31,9 @@
     "editRule": "Reword the rule…",
     "save": "Save",
     "cancel": "Cancel",
-    "alsoAt": "Also at"
+    "alsoAt": "Also at",
+    "copy": "Copy the quoted code",
+    "copied": "Copied"
   },
   "category": {
     "naming": "naming",
@@ -47,7 +49,7 @@
   },
   "skill": {
     "title": "Create skill from conventions",
-    "mergedFrom": "Merged from {count} accepted {count, plural, one {convention} other {conventions}} in {repo}. Everything below is editable before you save.",
+    "mergedFrom": "Merged from <b>{count} accepted {count, plural, one {convention} other {conventions}}</b> in <name>{repo}</name>. Everything below is editable before you save.",
     "defaultDescription": "{count} house {count, plural, one {convention} other {conventions}} extracted from {repo}",
     "name": "Name",
     "description": "Description",

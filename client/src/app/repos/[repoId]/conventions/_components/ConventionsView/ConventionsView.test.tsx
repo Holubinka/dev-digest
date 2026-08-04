@@ -121,8 +121,11 @@ describe("ConventionsView", () => {
     renderView();
     fireEvent.click(screen.getByRole("button", { name: "Create skill" }));
 
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
-    expect(screen.getByText(/Merged from 1 accepted convention/)).toBeInTheDocument();
+    // The banner emphasises the count and the repo, so the sentence is split
+    // across elements — assert on what the dialog reads as, not on one node.
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Merged from 1 accepted convention in Holubinka/dev-digest.",
+    );
   });
 
   it("accepts a candidate through the card", () => {
