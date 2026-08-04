@@ -10,6 +10,8 @@ export function Sidebar({ ctx }: { ctx: ShellContext }) {
   const Link = ctx.Link ?? DefaultLink;
   return (
     <aside
+      className="dd-sidebar"
+      data-open={ctx.sidebarOpen ? "true" : "false"}
       style={{
         width: 264,
         flexShrink: 0,

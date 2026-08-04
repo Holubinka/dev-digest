@@ -62,8 +62,8 @@ export function ConventionsView({ repoId }: { repoId: string }) {
         />
       )}
 
-      <div style={s.page}>
-        <div style={s.header}>
+      <div className="dd-page" style={s.page}>
+        <div className="dd-page-header" style={s.header}>
           <div>
             <h1 style={s.title}>
               {t("page.headingPrefix")}
@@ -92,7 +92,7 @@ export function ConventionsView({ repoId }: { repoId: string }) {
         </div>
 
         {candidates.length > 0 && (
-          <div style={s.toolbar}>
+          <div className="dd-toolbar" style={s.toolbar}>
             <Button
               kind="ghost"
               size="sm"
@@ -102,7 +102,7 @@ export function ConventionsView({ repoId }: { repoId: string }) {
             >
               {t("page.deselectAll")}
             </Button>
-            <span style={s.count}>
+            <span className="dd-toolbar-count" style={s.count}>
               {t("page.acceptedCount", { accepted: accepted.length, total: candidates.length })}
             </span>
             <Button

@@ -6,16 +6,17 @@ import type { CSSProperties } from "react";
  *  list uses: a card is a rule plus a quote of code, and a quote stretched
  *  across an ultrawide monitor is unreadable. */
 export const s = {
+  /** `padding` is set by the `.dd-page` rule in globals.css — a breakpoint
+   *  changes it, and an inline value would win over the media query. */
   page: {
     maxWidth: 1180,
     margin: "0 auto",
-    padding: "28px 32px 56px",
   } satisfies CSSProperties,
+  /** `gap` and the stacking direction belong to `.dd-page-header`. */
   header: {
     display: "flex",
     alignItems: "flex-start",
     justifyContent: "space-between",
-    gap: 24,
   } satisfies CSSProperties,
   title: {
     fontSize: 26,
@@ -36,6 +37,7 @@ export const s = {
     gap: 14,
     padding: "22px 0 18px",
   } satisfies CSSProperties,
-  count: { fontSize: 13, color: "var(--text-muted)", marginRight: "auto" } satisfies CSSProperties,
+  /** `marginRight` belongs to `.dd-toolbar-count`. */
+  count: { fontSize: 13, color: "var(--text-muted)" } satisfies CSSProperties,
   loadingStack: { display: "flex", flexDirection: "column", gap: 16 } satisfies CSSProperties,
 } as const;

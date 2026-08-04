@@ -96,11 +96,11 @@ export const s = {
   label: { fontSize: 12.5, color: "var(--text-muted)" } satisfies CSSProperties,
   confidenceBar: { width: 145 } satisfies CSSProperties,
   confidenceValue: { fontSize: 12.5, color: "var(--text-secondary)" } satisfies CSSProperties,
+  /** Direction and width belong to `.dd-card-actions`: below 1024px the column
+   *  becomes a row under the evidence. */
   actions: {
     display: "flex",
-    flexDirection: "column",
     gap: 10,
-    width: 196,
     flexShrink: 0,
   } satisfies CSSProperties,
 } as const;

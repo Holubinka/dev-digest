@@ -23,6 +23,9 @@ export function AppFrame({
         alignItems: "stretch",
       }}
     >
+      {ctx.sidebarOpen && (
+        <div className="dd-scrim" onClick={ctx.onToggleSidebar} aria-hidden="true" />
+      )}
       <Sidebar ctx={ctx} />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         <Topbar ctx={ctx} crumb={crumb} />

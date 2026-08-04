@@ -166,3 +166,115 @@
     transform: translateY(0);
   }
 }
+
+/* Responsive layout.
+   The shell and every screen style themselves with inline `CSSProperties`, which
+   cannot express a media query — the same reason the `.dd-md` block above exists.
+   So the breakpoints live here, keyed on stable `dd-` class names the components
+   set alongside their inline styles.
+
+   ONE RULE MAKES THIS WORK: a property a breakpoint changes is declared HERE and
+   never in the component's `styles.ts`. An inline style beats a stylesheet rule
+   whatever the selector, so a `flexDirection` left inline silently wins over the
+   media query and the layout simply does not respond. Everything static stays in
+   `styles.ts`; the handful of properties below are CSS's alone.
+
+   900px  — the sidebar stops being a column and becomes an overlay drawer.
+   1024px — a convention card stacks its actions under the evidence.
+   680px  — the page header and toolbar stop being single rows. */
+
+.dd-nav-toggle {
+  display: none;
+}
+
+/* `width` moved out of the Topbar's inline style for the same reason as the
+   card's direction: a breakpoint changes it. */
+.dd-topbar-search {
+  width: 260px;
+}
+
+.dd-page {
+  padding: 28px 32px 56px;
+}
+
+.dd-page-header {
+  gap: 24px;
+}
+
+.dd-toolbar-count {
+  margin-right: auto;
+}
+
+.dd-card-actions {
+  flex-direction: column;
+  width: 196px;
+}
+
+@media (max-width: 900px) {
+  .dd-sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 60;
+    transform: translateX(-100%);
+    transition: transform 0.18s ease;
+    box-shadow: var(--shadow-modal);
+  }
+  .dd-sidebar[data-open="true"] {
+    transform: none;
+  }
+  .dd-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    background: rgba(0, 0, 0, 0.5);
+    animation: ddfadein 0.15s ease;
+  }
+  .dd-nav-toggle {
+    display: inline-flex;
+  }
+  /* The search box is 260px of fixed chrome; on a phone it lands on top of the
+     breadcrumb. It collapses to its magnifier, and still opens the palette. */
+  .dd-topbar-search {
+    width: auto;
+  }
+  .dd-topbar-search-label {
+    display: none;
+  }
+}
+
+@media (max-width: 1024px) {
+  .dd-card {
+    flex-direction: column;
+  }
+  .dd-card-actions {
+    flex-direction: row;
+    width: 100%;
+  }
+  .dd-card-actions > * {
+    flex: 1;
+  }
+}
+
+@media (max-width: 680px) {
+  .dd-page {
+    padding: 20px 16px 40px;
+  }
+  .dd-page-header {
+    flex-direction: column;
+    gap: 14px;
+  }
+  .dd-toolbar {
+    flex-wrap: wrap;
+  }
+  .dd-toolbar-count {
+    order: 3;
+    width: 100%;
+    margin-right: 0;
+  }
+  .dd-card-meta {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+}

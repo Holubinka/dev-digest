@@ -52,7 +52,7 @@ export function ConventionCard({
   const confidence = Math.round((candidate.confidence ?? 0) * 100);
 
   return (
-    <div data-convention-id={candidate.id} style={s.card(candidate.status)}>
+    <div className="dd-card" data-convention-id={candidate.id} style={s.card(candidate.status)}>
       <div style={s.main}>
         {draft === null ? (
           <div style={s.ruleRow}>
@@ -133,7 +133,7 @@ export function ConventionCard({
           </div>
         )}
 
-        <div style={s.metaRow}>
+        <div className="dd-card-meta" style={s.metaRow}>
           <span style={s.category}>{t(`category.${candidate.category}`)}</span>
           <span style={s.label}>{t("card.confidence")}</span>
           <div style={s.confidenceBar}>
@@ -143,7 +143,7 @@ export function ConventionCard({
         </div>
       </div>
 
-      <div style={s.actions}>
+      <div className="dd-card-actions" style={s.actions}>
         <Button
           kind={accepted ? "primary" : "secondary"}
           icon="Check"
