@@ -36,6 +36,24 @@ describe('detectInjection — attacks it must catch', () => {
     const rules = detectInjection(body).map((m) => m.rule);
     expect(rules.filter((r) => r === 'override_instructions')).toHaveLength(1);
   });
+  it('fires on every rule for the hostile fixture', async () => {
+    // docs/skills/fixtures/hostile-skill.md is the demo import: one body that
+    // trips the whole ruleset. Pinning it here means a rule loosened until it
+    // stops matching fails the suite instead of quietly letting the fixture in.
+    const { readFileSync } = await import('node:fs');
+    const { fileURLToPath } = await import('node:url');
+    const path = fileURLToPath(new URL('../../docs/skills/fixtures/hostile-skill.md', import.meta.url));
+    const rules = detectInjection(readFileSync(path, 'utf8')).map((m) => m.rule);
+    expect([...rules].sort()).toEqual([
+      'exfiltration',
+      'fence_break',
+      'override_instructions',
+      'prompt_disclosure',
+      'role_marker',
+      'role_reassignment',
+      'suppress_findings',
+    ]);
+  });
 });
 
 describe('detectInjection — ordinary skill text it must NOT flag', () => {
