@@ -25,15 +25,17 @@ The bodies are mirrored into `server/src/db/seed-skills.ts` by
 after editing any of the seeded files above; it is what keeps the two copies from
 drifting.
 
-[`fixtures/hostile-skill.md`](./fixtures/hostile-skill.md) is not a skill at all.
-It is a body that trips all seven rules in `server/src/platform/skill-injection.ts`
-— override, role reassignment, a forged `</untrusted>` fence, a forged `system:`
-marker, categorical suppression, exfiltration to a URL, and a request for the
-system prompt. Import it to watch the refusal: the skill is stored so the text
-can be read, lands `enabled: false` whatever the request asked for, shows its
-seven matches on the card, and `PUT /skills/:id {enabled:true}` is refused with a
-`validation_error`. Do not "fix" the file; its value is that it still trips
-every rule.
+A hostile body — one that trips all seven rules in
+`server/src/platform/skill-injection.ts` at once — is deliberately NOT kept here.
+This folder is scanned by the conventions extractor and read by anyone browsing
+the repo, and a file whose whole purpose is to look like a legitimate skill does
+not belong in either. It lives outside the repo for the import demo, and the
+canonical copy is inlined in `server/test/skill-injection.test.ts`, which pins
+the exact rule set it must trip.
+
+What the refusal looks like: the skill is stored so the text can be read, lands
+`enabled: false` whatever the request asked for, shows its seven matches on the
+card, and `PUT /skills/:id {enabled:true}` comes back `validation_error`.
 
 Two are deliberately **not** seeded, one per import path. `flakiness-patterns/` is
 packaged as a third party would ship a skill — a `SKILL.md`, supporting markdown,
