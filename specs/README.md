@@ -26,3 +26,4 @@ implementation; note the divergence instead.
 | [`02-onion-architecture-skill.md`](02-onion-architecture-skill.md) | Implemented 2026-08-01 |
 | [`03-pr-self-review-skill.md`](03-pr-self-review-skill.md) | Implemented 2026-08-02 |
 | [`04-agents-for-tests-review-and-docs.md`](04-agents-for-tests-review-and-docs.md) | Planned 2026-08-05 |
+| [`05-intent-layer.md`](05-intent-layer.md) | Implemented 2026-08-05 |

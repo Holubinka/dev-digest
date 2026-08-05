@@ -259,6 +259,15 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
         .update(t.pullRequests)
         .set({
           body: detail.body ?? null,
+          // Cache the linked issue so a review run needs zero GitHub calls.
+          linkedIssue: detail.linked_issue
+            ? {
+                number: detail.linked_issue.number,
+                title: detail.linked_issue.title,
+                body: detail.linked_issue.body ?? null,
+                state: detail.linked_issue.state,
+              }
+            : null,
           // Diff stats aren't on GitHub's PR-list payload — backfill them from
           // the detail fetch so the Pull Requests list shows real size/files.
           additions: detail.additions,
@@ -299,6 +308,7 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
           author: c.author,
           committed_at: c.committedAt?.toISOString() ?? null,
         })),
+        linked_issue: pr.linkedIssue ?? null,
       };
     }
   });

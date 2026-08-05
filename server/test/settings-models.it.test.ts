@@ -8,7 +8,7 @@ import type { SecretsProvider } from '@devdigest/shared';
 import {
   resolveFeatureModel,
   getFeatureModelOverride,
-} from '../src/modules/settings/feature-models.js';
+} from '../src/modules/_shared/feature-models.js';
 
 const hasDocker = await dockerAvailable();
 const d = hasDocker ? describe : describe.skip;
@@ -54,6 +54,37 @@ d('Settings: feature models + secrets status (Testcontainers pg)', () => {
     expect(await resolveFeatureModel(app.container, workspaceId, 'risk_brief')).toEqual({
       provider: 'openai',
       model: 'gpt-4.1',
+    });
+
+    await app.close();
+  });
+
+  /**
+   * 05 pinned `review_intent`'s default in THREE places — both vendored copies
+   * of the registry and `client/src/lib/feature-models.ts`, which no gate
+   * compares. This is the assertion that the server actually resolves what
+   * Settings claims it will.
+   */
+  it('review_intent defaults to openrouter/z-ai/glm-4.7-flash, and follows an override', async () => {
+    const app = await buildApp({ config: config(), db: pg.handle.db, overrides: {} });
+
+    expect(await resolveFeatureModel(app.container, workspaceId, 'review_intent')).toEqual({
+      provider: 'openrouter',
+      model: 'z-ai/glm-4.7-flash',
+    });
+
+    const put = await app.inject({
+      method: 'PUT',
+      url: '/settings',
+      payload: {
+        feature_models: { review_intent: { provider: 'anthropic', model: 'claude-haiku-x' } },
+      },
+    });
+    expect(put.statusCode).toBe(200);
+
+    expect(await resolveFeatureModel(app.container, workspaceId, 'review_intent')).toEqual({
+      provider: 'anthropic',
+      model: 'claude-haiku-x',
     });
 
     await app.close();

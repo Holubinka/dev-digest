@@ -371,20 +371,6 @@
   },
   {
     "type": "dependency",
-    "from": "src/modules/settings/feature-models.ts",
-    "to": "node_modules/drizzle-orm/index.d.ts",
-    "unresolvedTo": "drizzle-orm",
-    "dependencyTypes": [
-      "npm",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-sql-outside-repository"
-    }
-  },
-  {
-    "type": "dependency",
     "from": "src/platform/jobs.ts",
     "to": "node_modules/drizzle-orm/index.d.ts",
     "unresolvedTo": "drizzle-orm",

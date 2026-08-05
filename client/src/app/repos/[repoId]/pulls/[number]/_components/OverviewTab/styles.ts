@@ -1,6 +1,14 @@
 import type { CSSProperties } from "react";
 
 export const s = {
+  /** INTENT + the reserved BLAST RADIUS slot. Cut once, so nothing is re-cut later. */
+  cardRow: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: 16,
+    marginBottom: 24,
+    alignItems: "start",
+  } satisfies CSSProperties,
   descriptionBox: {
     border: "1px solid var(--border)",
     borderRadius: 8,

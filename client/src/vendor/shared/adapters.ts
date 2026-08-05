@@ -67,6 +67,17 @@ export interface StructuredRequest<T> {
    * the `session_id` body field; ignored by providers that don't support it.
    */
   sessionId?: string;
+  /**
+   * Whether the model may spend reasoning tokens on this call. ABSENT BY
+   * DEFAULT — omitting it leaves every existing call exactly as it was, and the
+   * model's own default applies. Only `false` is acted on, and only on
+   * OpenRouter (`reasoning: { enabled: false }`).
+   *
+   * Turn it off for a short extraction: reasoning tokens bill at the output
+   * rate and buy nothing. Measured 2026-08-05 on the intent classifier —
+   * 1078 completion tokens with reasoning on, 113 with it off, same answer.
+   */
+  reasoning?: boolean;
 }
 
 export interface StructuredResult<T> {

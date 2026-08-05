@@ -335,6 +335,25 @@ mutates — and that pair was serialised. It was not anticipated for an agent th
 **Anything that shells out to a gate conflicts with `test-writer`, whatever files it reads.**
 Serialise `test-writer` against every other dispatch, not just the ones sharing its paths.
 
+### An astral-character truncation test proves nothing unless the cap lands mid-pair
+
+The repo-wide rule is `[...text].slice(0, n).join('')`, never `String.slice`
+(`server/INSIGHTS.md:103`). On 2026-08-05 the reviewer-core test for the new 1500-code-point
+`## Intent` cap was first written as `'𝒳'.repeat(2000)` — and it did **not** discriminate.
+
+Every astral character is exactly 2 UTF-16 units and the cap 1500 is even, so
+`String.slice(0, 1500)` lands precisely on a pair boundary: 750 whole characters, no lone
+surrogate, no `�`. An assertion of "the output contains no replacement character" passes for
+**both** implementations, so the test would have gone green against the bug it exists to catch.
+
+Prefix one ASCII character — `` `A${'𝒳'.repeat(2000)}` `` — and the 1500th UTF-16 unit falls in
+the middle of a pair. Now `String.slice` yields 751 code points / length 1500 with a dangling
+`\uD835`, while the correct form yields 1500 code points / length 2999 with none. Assert the
+**code-point count** and `/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(out) === false`; `includes('�')`
+is the wrong probe, because a lone surrogate only becomes `�` after a UTF-8 round-trip, not in the
+JS string. Applies to every cap in the repo: `truncateChars` (`modules/pulls/status.ts`),
+`MAX_INTENT_CHARS` and `MAX_PR_DESCRIPTION_CHARS` (`reviewer-core/src/prompt.ts`).
+
 ## Codebase Patterns
 
 ### The two `docker-compose.yml` files are byte-identical duplicates
@@ -505,6 +524,67 @@ The same pass found a second pair pulling against each other, also now documente
 `layering.md` §7: escape 2 (`container.agentsRepo`) forces a `*Row` across a slice boundary, which
 §3.5 forbids. `dependency-cruiser` cannot see it — the type is imported from the neutral
 `db/rows.ts`, so `no-cross-module` never matches and it is not in the baseline either.
+
+### `FEATURE_MODELS` exists in THREE copies and the vendor gate compares only two
+
+**Symptom.** Settings → Models shows a feature's model with a "using default" tag, the server
+resolves a *different* model for that same feature, and every gate is green — `pnpm arch`,
+both typechecks, all three test suites and `diff -r` on the vendored copies.
+
+**Cause.** The registry is vendored twice as usual (`server/src/vendor/shared/contracts/platform.ts`,
+`client/src/vendor/shared/contracts/platform.ts`), and the `repo · vendor` gate
+(`diff -r server/src/vendor/shared client/src/vendor/shared`) compares exactly those two. The
+copy the **UI actually renders** is a third, hand-maintained file:
+`client/src/lib/feature-models.ts`. `SettingsModels.tsx` imports `FEATURE_MODELS` from there and
+not from `@devdigest/shared`, deliberately — importing a runtime *value* out of the vendored
+barrel breaks Next's webpack resolution, and the file says so at `:4-11`. Nothing compares copy
+three to copies one and two. Typecheck cannot: the type is structural and identical in all three.
+
+**Fix.** Any change to `FEATURE_MODELS` — a new feature, a renamed label, a changed
+`defaultProvider`/`defaultModel` — is a **three-file** edit. 05 changed `review_intent`'s default
+to `openrouter` / `z-ai/glm-4.7-flash` in all three on 2026-08-05. Verify with
+
+```sh
+LC_ALL=en_US.UTF-8 grep -n "<the old model>" \
+  server/src/vendor/shared/contracts/platform.ts \
+  client/src/vendor/shared/contracts/platform.ts \
+  client/src/lib/feature-models.ts
+```
+
+and pin the server side with a test rather than a constant —
+`server/test/settings-models.it.test.ts` now asserts `resolveFeatureModel(…, 'review_intent')`
+resolves to the pair Settings claims it will. That assertion is the only automated link between
+copy one and copy three; there is still no gate, and adding one is an open question, not a
+solved problem.
+
+### In map-reduce, `ReviewOutcome.assembly` matches no prompt that was actually sent
+
+`reviewer-core/src/review/run.ts:150` assembles the WHOLE diff before the loop and keeps that as
+the traced `assembly`; `:181` overwrites it only on the single-pass path. So on a map-reduce run
+the assembly persisted to `run_traces.trace.prompt_assembly` is a prompt no model ever received —
+its non-diff sections are byte-identical to every chunk's, but its diff is the whole diff while
+each chunk carried one `sliceDiff` slice.
+
+Anything the server derives per chunk from that one assembly is therefore right for eight sections
+and wrong for the ninth, silently. `modules/reviews/prompt-log.ts` handles it by refusing to hash
+content whose code-point length disagrees with the length reviewer-core reported for that section
+(`withDigest`), so a future change to how the engine chunks costs a `null` digest instead of a
+plausible wrong one. Copy that guard rather than the assumption, and note that
+`outcome.prompts[]` — one entry per prompt actually sent, labelled by chunk — is the thing to
+iterate, not `outcome.chunks` paired with `outcome.assembly`.
+
+### `tokens_approx` at chars ÷ 4 ran 15% LOW against a real provider count
+
+Measured 2026-08-06 on run `42d30ecf` (PR #3, `deepseek/deepseek-v4-flash`, single-pass): the
+prompt log reported 110 157 code points → `total_tokens_approx` 27 541, and OpenRouter billed
+`tokens_in` 32 294. The divisor lives at `reviewer-core/src/prompt.ts` `CHARS_PER_TOKEN_APPROX`
+and is deliberately arithmetic — it runs once per chunk and must not touch the network — so the
+gap is the design, not a bug to tune away.
+
+Consequence worth carrying: `tokens_approx` is for *attributing* a prompt's bulk between its
+sections (the diff was 82% of that prompt), never for deciding whether something fits a context
+window or what it will cost. `agent_runs.tokens_in` is the only authoritative figure, and it
+arrives after the call, not before it.
 
 ## Tool & Library Notes
 
@@ -897,6 +977,41 @@ so prefer the import or package form (`from 'express'`, `"express":`) or exclude
 Applies to any "no reference to X remains" gate: `next`, `react`, `test` and `vector` are all
 words before they are technologies.
 
+### Adding a required field to a vendored Zod contract fails a test, not the typecheck
+
+**Symptom.** On 2026-08-05 `Intent` in `vendor/shared/contracts/brief.ts` gained a required
+`risk_areas: z.array(z.string())`. `cd server && pnpm typecheck` was clean; the unit run then
+failed with `invalid_type … path: ["risk_areas"] … Required` from `server/test/contracts.test.ts`.
+
+**Cause.** Two independent gaps line up. `tsc` reads `src/` and zero files from `test/`
+(`server/INSIGHTS.md:278`), so no fixture is type-checked. And `server/test/contracts.test.ts`
+pins a hand-written literal per contract — `Intent.parse({ intent, in_scope, out_of_scope })` —
+which is a *runtime* assertion about a shape `tsc` never sees. Widening the schema invalidates
+the literal without any compile-time signal.
+
+**Fix.** After widening anything in either `vendor/shared` copy, run
+`pnpm exec vitest run --exclude '**/*.it.test.ts'` — a clean `typecheck` is not evidence. Grep
+`server/test/contracts.test.ts` for the contract's name before assuming there is no fixture; it
+covers `Intent`, `BlastRadius`, `Risks`, `PrHistory` and the findings contracts. Update the
+literal and, where the new field is genuinely required, add the negative case asserting the old
+three-field object now throws — otherwise the fixture silently documents an optional field.
+
+### A redaction test whose sentinel contains a double quote passes for the wrong reason
+
+**Symptom.** `server/test/prompt-log-redaction.test.ts` asserted `JSON.stringify(log)` does not
+contain `+const apiKey = "hunter2-…";`. Against a deliberately leaking implementation it still
+reported the sentinel absent — while the same leak was caught by a different sentinel one line
+later, which is what exposed it.
+
+**Cause.** `JSON.stringify` escapes `"` to `\"`, so the serialised log holds
+`+const apiKey = \"hunter2-…\"` and a `toContain` on the raw literal never matches. The test
+was passing on the escaping, not on the redaction.
+
+**Fix.** Keep every sentinel in a "no secret reached this sink" test free of `"` and `\`, and
+prove the test discriminates by breaking the implementation on purpose before trusting it green.
+The companion assertion — one test asserting the sentinels ARE present in the un-redacted input —
+is what turns a silently-vacuous suite into a failing one.
+
 ## Session Notes
 
 ### 2026-07-27
@@ -1092,6 +1207,14 @@ words before they are technologies.
   `registry.sh` has reported it `major` on every run through 2026-08-05. It is **not** in
   `skills-lock.json`, so it is locally authored and trimming it is a decision someone here can
   make — the `major` is a standing to-do, not an upstream constraint to live with.
+- `assemblePrompt` cuts `pr_description` with `String.slice(0, 4000)` (UTF-16 units) while it cuts
+  `intent` with `[...s].slice(0, 1500).join('')` (code points) — `reviewer-core/src/prompt.ts`.
+  The prompt log made the inconsistency visible on a real run 2026-08-06: PR #3's body reported
+  `chars: 3999` for a 4000-unit slice, i.e. one astral character that happened to land whole. A
+  body whose 4000th UTF-16 unit falls *inside* a pair ships a lone high surrogate to the model,
+  which is exactly the defect `server/INSIGHTS.md` records for `slice`. Left alone because the
+  prompt-log plan did not ask for it and `reviewer-core/test/prompt.test.ts:74` pins the current
+  `length === 4000`; fixing it means changing both the cut and that assertion.
 - **Resolved 2026-08-05,** the four body defects above, all found by the agents themselves on
   their first dispatch: `test-writer` step 2 now judges the mutation by the runner's output rather
   than by whether `tsc` would accept it; `plan-verifier` Rule 3 now admits a document's declared

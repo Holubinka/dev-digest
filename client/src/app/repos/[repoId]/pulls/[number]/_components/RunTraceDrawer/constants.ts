@@ -10,9 +10,11 @@ export const LOG_HEIGHT = 420;
 export const TABS = ["trace", "log"] as const;
 export type TraceTab = (typeof TABS)[number];
 
-/** Prompt-assembly block accent colours (by leg). */
+/** Prompt-assembly block accent colours (by leg), in the order they assemble. */
 export const PROMPT_COLORS = {
   system: "var(--text-muted)",
+  prDescription: "var(--info)",
+  intent: "var(--accent-text)",
   skills: "var(--accent)",
   memory: "var(--warn)",
   repoMap: "var(--accent)",
