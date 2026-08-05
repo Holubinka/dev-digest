@@ -25,3 +25,4 @@ implementation; note the divergence instead.
 | [`01-agents-md-migration.md`](01-agents-md-migration.md) | Implemented 2026-08-01 |
 | [`02-onion-architecture-skill.md`](02-onion-architecture-skill.md) | Implemented 2026-08-01 |
 | [`03-pr-self-review-skill.md`](03-pr-self-review-skill.md) | Implemented 2026-08-02 |
+| [`04-agents-for-tests-review-and-docs.md`](04-agents-for-tests-review-and-docs.md) | Planned 2026-08-05 |
