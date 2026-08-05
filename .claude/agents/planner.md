@@ -168,6 +168,14 @@ that it must not skip one.
 
 ## The plan
 
+**Size it against the code it plans.** A plan approaching the length of the implementation has
+stopped being a plan and become a second implementation in prose: it costs more to write, and then
+every `implementer` and every reviewer pays to read it again. Aim below a third. Where a section
+exists for the human approving the plan rather than the agent executing it — the survey of
+alternatives, constraints already written down in `AGENTS.md` or in a skill — keep the lines that
+change a decision and cite the source for the rest. A step the implementer can derive from the
+skill you already named does not need to be spelled out again here.
+
 Write it in English, with these headings, in this order. Drop a section only by writing
 `_None._` under it — never by omitting it.
 

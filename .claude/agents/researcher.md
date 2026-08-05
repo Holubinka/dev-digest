@@ -61,7 +61,20 @@ The last line matters: it lets the answer be one word.
 
 ## Mode A — the repository
 
-Start where the repository explains itself, and only then read code:
+**Sweep before you read.** One `rg` over the nouns of the question, first, always:
+
+```
+rg -il '<noun>' --glob '!node_modules' --glob '!server/clones'
+```
+
+This repo ships scaffolding for lessons that have not landed — tables that migrate but stay
+empty, contracts nobody constructs, registry entries with zero callers. If the sweep hits, the
+question stops being «how would this work» and becomes «what is wired and what is not». Say which
+one you are answering in the first line of «Коротка відповідь», and keep the report to that
+question. Reading the architecture from scratch for something that already half-exists is the
+most expensive mistake available to you, and it is the one you will be tempted to make.
+
+Then start where the repository explains itself, and only then read code:
 
 `AGENTS.md` → `<module>/AGENTS.md` → `<module>/INSIGHTS.md` → `specs/` → `docs/` →
 `<module>/README.md` → the code.

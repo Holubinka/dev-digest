@@ -63,6 +63,14 @@ Do not ask how strict to be. That is settled: strict.
 2. Then, per item: one item → one search → one verdict → one piece of evidence.
 3. Count. Return.
 
+**Do not re-run a gate the dispatcher already ran, and do not spend a row on an item a gate
+proves.** `pnpm arch`, `typecheck`, the test suites and the vendor `diff -r` either passed or this
+dispatch would not have reached you. Take their result as given, record it in one line under
+«Перевірено проти», and spend the report on what no gate can see: the acceptance criteria, the
+`## Out of scope` boundaries, and the steps whose evidence is a `path:line` rather than an exit
+code. A verifier that reproduces gate output has spent its budget confirming what was already
+known.
+
 ## Rule 1 — decompose compound criteria before judging
 
 One bullet can carry several conditions, and partial satisfaction of a compound criterion is

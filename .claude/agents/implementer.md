@@ -191,6 +191,13 @@ you outside the plan, stop and report with the failing output.
 
 ## Before you report complete
 
+**Exercise what you built through its real entry point, if it has one.** A route: `curl` it against
+the running API. A page: open it. A CLI path: run it. Green gates prove the code compiles and the
+fakes returned their fixtures — they say nothing about whether the thing works against a real
+provider, a real database, or a real browser, and that is exactly where the defects that survive
+review live. Paste the real response into your report. If nothing is running and you cannot start
+it, say so plainly rather than letting passing tests imply the feature was seen to work.
+
 Run the `engineering-insights` skill. `AGENTS.md` requires it before any substantial task is
 called done, and you are the one holding what this session actually learned — a convention that
 contradicted the framework default, a failure that cost real time, a question left open. Append

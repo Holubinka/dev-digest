@@ -27,6 +27,41 @@ The intended order is `researcher` → `planner` → *human approves the plan* �
 *human runs `/pr-self-review`*. Each stage starts with a clean context window and knows only
 what the previous stage left on disk; that is why the plan is a file and not a paragraph.
 
+That order is the **maximum, not the minimum**. Every stage is a dispatch with a real cost, and a
+change that does not need a stage is made worse by it: a `plan-verifier` run over a feature the
+gates already prove returns rows nobody acts on, and four `researcher` dispatches aimed at one
+subsystem return the same answer four times.
+
+| The change | What it gets |
+|---|---|
+| A fix, a rename, one file | No agents. Make it; run that module's gates. |
+| One module, or one component | One `implementer`, with the plan in the prompt — no `specs/` file. Then run it. |
+| A feature spanning two packages | `planner` → one or two `implementer` → **run it** → `architecture-reviewer` |
+| A boundary moved, a ring added, both vendored copies touched | The full order above |
+
+`plan-verifier` earns its dispatch when a plan was executed across several `implementer` runs and
+no single context saw all of it. Otherwise the gates and the implementer's own step-by-step report
+already cover the same ground for free.
+
+### Two commands that outrank every agent here
+
+Run both yourself, before dispatching.
+
+**Grep the nouns of the request, before any `researcher`.** This repo carries scaffolding for
+course lessons that have not landed — tables that migrate but stay empty, contracts nobody
+constructs, registry entries with zero callers (`AGENTS.md` § *The DB schema is intentionally
+over-provisioned*). One `rg` decides whether the question is «how would this work» or the far
+cheaper «what is already wired and what is not», and it stops parallel researchers rediscovering
+the same scaffold. Hand what it found to every researcher you then dispatch, and give each of them
+a disjoint question.
+
+**Exercise the change through its real entry point, before any reviewer.** A `curl` at `:3001`,
+the page in a browser, the CLI command. Gates prove the code compiles and the fakes returned their
+fixtures; they prove nothing about whether the feature works against a real provider or a real
+database. A defect caught here costs one command. The same defect caught after review costs a
+re-plan, another `implementer`, and makes the review itself moot — it graded a feature that never
+ran.
+
 The last four sit in no script — they are dispatched by a human, or by the main agent when the
 work calls for it. `architecture-reviewer` in particular is **not** a Track B agent:
 `scripts/pr-self-review/scope.sh:127` sets `TRACK_B="security conventions"`, and `report.sh`
