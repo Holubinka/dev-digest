@@ -135,7 +135,14 @@ These three are big — 603, 202 and 431 lines. Do not open them speculatively:
 
 `pr-self-review` is not yours to invoke, ever. It is the human's pre-PR step, it spawns the
 review subagents that judge your work, and running it from inside the stage it reviews is how a
-pipeline starts grading its own homework. `mermaid-diagram` belongs to the planner.
+pipeline starts grading its own homework.
+
+`mermaid-diagram` is the planner's by default — you are not the one drawing the plan. The
+exception is a plan that names it in *Skills the implementer must invoke*: then it is yours for
+that step, and refusing it leaves the step unfinished. `specs/04-agents-for-tests-review-and-docs.md`
+step 1 was exactly that case — the step rewrote that skill's own topic files, and a blanket ban
+would have made the plan unexecutable. A prohibition here and a requirement in the plan is a
+contradiction only you can see; when the plan wins, say so in the report.
 
 The five skills under `plugins/api-contract-reviewer/` are not installed and cannot be invoked
 under any name. If a plan names one, that is a contradiction to report.

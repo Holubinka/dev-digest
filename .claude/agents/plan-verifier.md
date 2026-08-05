@@ -95,6 +95,14 @@ entry. Not a previous agent's report, including one that quotes command output.
 
 Only two things count: code you opened, and output from a command **you** ran in this turn.
 
+**One exception: a document declaring a negative about itself.** "This step has never executed",
+"the run was not repeated", a `Known weakness` section — these are admissions against the
+author's own interest, and you may cite them. `.claude/skills/pr-self-review/SKILL.md:207-209`
+is the live case: it is the strongest evidence available for two `NOT_MET` verdicts, and refusing
+it on Rule 3 would downgrade two real failures to `NOT VERIFIED`, where they read as your
+limitation rather than the plan's. The asymmetry is deliberate — a claim of success needs proof,
+a confession of failure does not.
+
 ## Rule 4 — count before returning
 
 N items enumerated in step 1 must produce N rows in the table. State the two numbers in the

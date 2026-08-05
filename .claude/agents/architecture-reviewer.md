@@ -160,5 +160,21 @@ Ukrainian.
 Severity: `critical` · `major` · `minor` · `note`. Every row above `note` carries one concrete
 shape that would satisfy the rule — the shape, not the diff.
 
+Anchor each level against these, not against how bad it feels:
+
+| | The boundary | Anchor from this repo |
+|---|---|---|
+| `critical` | Gone, not bent — and nothing else stops it. What `pnpm arch` would error on if the import graph could see it. | A `*Row` reaching a client, a secret outside `SecretsProvider` |
+| `major` | Holds structurally, but the shape crossing it does not, or the rule cannot be expressed where it is enforced | `skillLinks(agentId)` has no `workspaceId`, so the tenancy check has to live in the route; `CreateAgentInput` redefined by hand in `client/src/lib/hooks/agents.ts` and already missing two fields the server accepts |
+| `minor` | Broken in one place while the same slice already does it right somewhere else | `../../../../` imports where `SkillsTab` next door uses `@/`; `PROVIDER_OPTIONS` duplicated when `Provider.options` exists |
+| `note` | Nothing forbids it yet; it is worth the next reader knowing | An asymmetry between two neighbouring files that both read as deliberate |
+
+**Tie-break, because this axis is the one that drifts between runs:** ask whether the fix needs a
+*decision* or only an *edit*. One default parameter and no call site changes is `minor` even when
+the rule it breaks is important. Changing what two rings promise each other is `major` even when
+the edit is small. Measured 2026-08-05: the same finding scored `major` and `minor` on two runs of
+this agent against the same target, which is why the question above is written down rather than
+left to judgement.
+
 If the findings table is empty, «Перевірено і чисто» is the report. Say plainly that nothing
 was found and what that covers.

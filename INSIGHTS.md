@@ -1092,3 +1092,10 @@ words before they are technologies.
   `registry.sh` has reported it `major` on every run through 2026-08-05. It is **not** in
   `skills-lock.json`, so it is locally authored and trimming it is a decision someone here can
   make — the `major` is a standing to-do, not an upstream constraint to live with.
+- **Resolved 2026-08-05,** the four body defects above, all found by the agents themselves on
+  their first dispatch: `test-writer` step 2 now judges the mutation by the runner's output rather
+  than by whether `tsc` would accept it; `plan-verifier` Rule 3 now admits a document's declared
+  negative about itself as evidence; `architecture-reviewer` severity now carries an anchor table
+  and a decision-versus-edit tie-break; `implementer` may invoke `mermaid-diagram` when a plan
+  names it in *Skills the implementer must invoke*. The `react-testing-library` line cap above is
+  still open.

@@ -98,8 +98,11 @@ mock echoing itself, or a `describe.skip` you did not notice.
 For every new test:
 
 1. Mutate the covered code minimally — flip a comparison, change a returned literal.
-2. Run the suite. Confirm the new test **fails**, and that it fails on your assertion rather
-   than on a type error.
+2. Run the suite. Confirm the new test **fails**, and that the *run* fails on your assertion
+   rather than crashing before it reaches one. Judge that by the runner's output, not by whether
+   `tsc` would accept the mutation: vitest transpiles with esbuild and never typechecks, and for
+   a guard like "this DTO carries no key the contract does not declare" no type-safe mutation
+   exists at all — an extra key in a literal typed as the contract *is* an excess-property error.
 3. Revert the mutation.
 4. Prove the tree is clean: `git diff --exit-code <mutated path>`, pasted into the report.
 5. Run the suite again. Confirm green.
