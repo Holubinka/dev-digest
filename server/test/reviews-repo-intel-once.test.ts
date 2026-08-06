@@ -19,6 +19,7 @@ import { describe, it, expect } from 'vitest';
 import type { Container } from '../src/platform/container.js';
 import { ReviewRunExecutor } from '../src/modules/reviews/run-executor.js';
 import type { ReviewRepository } from '../src/modules/reviews/repository.js';
+import type { ReviewAgent, ReviewPull, ReviewRepo } from '../src/modules/reviews/types.js';
 import { MockGitClient, MockLLMProvider } from '../src/adapters/mocks.js';
 import { runBus } from '../src/platform/sse.js';
 
@@ -32,7 +33,7 @@ function repoIntelSpy() {
     facade: {
       getCallerSignatures: async () => {
         calls.push('getCallerSignatures');
-        return [];
+        return [{ file: 'src/limiter.ts', symbol: 'limit', signature: 'function limit()' }];
       },
       getRepoMap: async () => {
         calls.push('getRepoMap');
@@ -46,7 +47,7 @@ function repoIntelSpy() {
   };
 }
 
-const agent = (id: string, repoIntel = true) => ({
+const agent = (id: string, repoIntel = true): ReviewAgent => ({
   id,
   name: `agent-${id}`,
   version: 1,
@@ -58,10 +59,9 @@ const agent = (id: string, repoIntel = true) => ({
   repoIntel,
 });
 
-const PULL = {
+const PULL: ReviewPull = {
   id: 'pr-1',
   repoId: 'repo-1',
-  workspaceId: 'ws-1',
   number: 482,
   title: 'Rate-limit the pricing API',
   author: 'octocat',
@@ -70,7 +70,7 @@ const PULL = {
   headSha: 'abc123',
 };
 
-const REPO_ROW = { id: 'repo-1', owner: 'acme', name: 'payments-api' };
+const REPO: ReviewRepo = { owner: 'acme', name: 'payments-api' };
 
 function harness(spy: ReturnType<typeof repoIntelSpy>) {
   const container = {
@@ -97,16 +97,13 @@ function harness(spy: ReturnType<typeof repoIntelSpy>) {
   return new ReviewRunExecutor(container, repo, agents);
 }
 
-/** `executeRuns` takes rows; the stubs above carry only the fields it reads. */
-const run = (executor: ReviewRunExecutor, jobs: { agent: unknown; runId: string }[]) =>
-  (
-    executor.executeRuns as unknown as (
-      w: string,
-      p: unknown,
-      r: unknown,
-      j: unknown[],
-    ) => Promise<void>
-  )('ws-1', PULL, REPO_ROW, jobs);
+/**
+ * No cast: `executeRuns` names `ReviewPull` / `ReviewRepo` / `ReviewAgent`, so
+ * the fixtures above ARE its arguments. It used to take three database rows,
+ * and the cast this replaces was the visible cost of that.
+ */
+const run = (executor: ReviewRunExecutor, jobs: { agent: ReviewAgent; runId: string }[]) =>
+  executor.executeRuns('ws-1', PULL, REPO, jobs);
 
 describe('repo-intel enrichment is batch pre-work', () => {
   it('queries the index three times for three agents, not nine', async () => {
@@ -143,5 +140,44 @@ describe('repo-intel enrichment is batch pre-work', () => {
     ]);
 
     expect(spy.calls).toEqual([]);
+  });
+});
+
+/**
+ * The batch logger fans out to every queued run. Anything emitted while
+ * enrichment is being resolved therefore lands in EVERY run's SSE buffer and
+ * persisted trace — including a run that opted out and received none of it.
+ */
+describe('the enrichment report reaches only the runs that used it', () => {
+  const linesFor = (runId: string) =>
+    runBus.buffer(runId).map((e) => e.msg);
+
+  it('tells the opted-in run what was attached and the opted-out run that it was not', async () => {
+    const spy = repoIntelSpy();
+    await run(harness(spy), [
+      { agent: agent('on', true), runId: 'log-on' },
+      { agent: agent('off', false), runId: 'log-off' },
+    ]);
+
+    const on = linesFor('log-on');
+    const off = linesFor('log-off');
+
+    expect(on.some((m) => m.includes('caller signature(s) attached'))).toBe(true);
+    // The claim is about a prompt, and this agent's prompt has no callers in it.
+    expect(off.some((m) => m.includes('caller signature(s) attached'))).toBe(false);
+    expect(off.some((m) => m.includes('Repo intel disabled for this agent'))).toBe(true);
+  });
+
+  /** The shared pre-work that really was shared still fans out — diff and intent. */
+  it('still fans the batch pre-work out to both runs', async () => {
+    const spy = repoIntelSpy();
+    await run(harness(spy), [
+      { agent: agent('a', true), runId: 'fan-a' },
+      { agent: agent('b', false), runId: 'fan-b' },
+    ]);
+
+    for (const runId of ['fan-a', 'fan-b']) {
+      expect(linesFor(runId).some((m) => m.startsWith('Diff ready'))).toBe(true);
+    }
   });
 });

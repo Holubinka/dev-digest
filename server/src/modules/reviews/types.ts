@@ -26,6 +26,8 @@ export interface ReviewPull {
   author: string;
   /** The PR description. Untrusted on a public repo; the engine wraps and truncates it. */
   body: string | null;
+  /** The two refs `loadDiff` asks git for: `git diff base...headSha`. */
+  base: string;
   headSha: string;
 }
 
@@ -64,10 +66,22 @@ export interface ReviewAgent {
  * nothing, rather than deciding whether to query.
  */
 export interface RepoIntelContext {
-  callers: string | undefined;
-  repoMap: string | undefined;
+  readonly callers: string | undefined;
+  readonly repoMap: string | undefined;
   /** Appended to the task line, so `''` rather than `undefined` — it concatenates. */
-  rankNote: string;
+  readonly rankNote: string;
+  /**
+   * What was resolved, one line per part, for the run log.
+   *
+   * Carried rather than logged where it is produced: these lines assert what
+   * went into A PROMPT, and the batch logger fans out to every queued run — so
+   * emitting them at resolution time told an agent with `repoIntel: false` that
+   * enrichment it never received had been attached. The caller emits them, per
+   * run, only when that agent actually uses this context. Failures are the
+   * other way round and stay at the batch: they describe an attempt, and the
+   * attempt really was shared.
+   */
+  readonly summary: readonly string[];
 }
 
 /**
@@ -86,7 +100,13 @@ export interface AgentRun {
   diff: UnifiedDiff;
   /** The rendered `## Intent` section, or undefined when derivation failed. */
   intentSection: string | undefined;
-  repoIntel: RepoIntelContext;
+  /**
+   * Shared BY REFERENCE with every sibling `AgentRun` in the batch, and with the
+   * process-wide `NO_REPO_INTEL` when an agent opts out — hence `readonly` on it
+   * and on every field of `RepoIntelContext`. One write here would reach every
+   * other run in the batch, and every later batch that skipped enrichment.
+   */
+  readonly repoIntel: RepoIntelContext;
   agent: ReviewAgent;
   runId: string;
 }

@@ -6,13 +6,17 @@ import {
   type ReviewOutcome as EngineOutcome,
 } from '@devdigest/reviewer-core';
 import { RunLogger } from '../../platform/run-logger.js';
-import * as schema from '../../db/schema.js';
-import type { AgentRow } from '../../db/rows.js';
 import type { ReviewRepository, FindingRow, PullRow, ReviewRow } from './repository.js';
 import { attachedSkills, skillBodiesFor, taskLine } from './helpers.js';
 import { buildPromptAssemblyLog, promptLogDetail } from './prompt-log.js';
 import { loadDiff } from './diff-loader.js';
-import type { AgentRun, RepoIntelContext, ReviewAgent, ReviewPull } from './types.js';
+import type {
+  AgentRun,
+  RepoIntelContext,
+  ReviewAgent,
+  ReviewPull,
+  ReviewRepo,
+} from './types.js';
 
 /** Thrown by a run when the user cancels it mid-flight (between map files). */
 export class RunCancelledError extends Error {
@@ -54,7 +58,12 @@ interface PromptContext {
 }
 
 /** What an agent that opted out of repo-intel gets, and what a failed batch resolves to. */
-const NO_REPO_INTEL: RepoIntelContext = { callers: undefined, repoMap: undefined, rankNote: '' };
+const NO_REPO_INTEL: RepoIntelContext = Object.freeze({
+  callers: undefined,
+  repoMap: undefined,
+  rankNote: '',
+  summary: Object.freeze([]),
+});
 
 /**
  * Owns the background execution of queued agent runs (extracted from
@@ -78,9 +87,9 @@ export class ReviewRunExecutor {
    */
   async executeRuns(
     workspaceId: string,
-    pull: PullRow,
-    repo: typeof schema.repos.$inferSelect,
-    jobs: { agent: AgentRow; runId: string }[],
+    pull: ReviewPull,
+    repo: ReviewRepo,
+    jobs: { agent: ReviewAgent; runId: string }[],
     logger?: Logger,
   ): Promise<void> {
     // ONE logger fanned out over every queued run: shared pre-work (diff +
@@ -251,8 +260,15 @@ export class ReviewRunExecutor {
     // for the batch — so this agent's prompt is identical to the repo-intel-off
     // baseline, independent of the global REPO_INTEL_ENABLED flag, which still
     // gates the facade internally.
-    const { callers, repoMap, rankNote } = agent.repoIntel ? run.repoIntel : NO_REPO_INTEL;
-    if (!agent.repoIntel) {
+    const { callers, repoMap, rankNote, summary } = agent.repoIntel
+      ? run.repoIntel
+      : NO_REPO_INTEL;
+    // Reported here, per run, rather than where it was resolved: the batch
+    // logger reaches every queued run, so an agent that opted out would be told
+    // that enrichment it never received had been attached.
+    if (agent.repoIntel) {
+      for (const line of summary) runLog.info(line);
+    } else {
       runLog.info('Repo intel disabled for this agent — skipping context enrichment');
     }
 
@@ -276,12 +292,15 @@ export class ReviewRunExecutor {
     diff: UnifiedDiff,
     runLog: RunLogger,
   ): Promise<RepoIntelContext> {
+    // Collected, not emitted: `gatherPromptContext` decides which runs hear it.
+    const summary: string[] = [];
     return {
       // T1.3 — callers-in-prompt.
-      callers: await this.buildCallersDigest(repoId, diff, runLog),
+      callers: await this.buildCallersDigest(repoId, diff, runLog, summary),
       // T3 — repo skeleton, and the "changed files are top-5%" task framing.
-      repoMap: await this.buildRepoMapDigest(repoId, runLog),
-      rankNote: await this.buildRankNote(repoId, diff, runLog),
+      repoMap: await this.buildRepoMapDigest(repoId, runLog, summary),
+      rankNote: await this.buildRankNote(repoId, diff, summary),
+      summary,
     };
   }
 
@@ -530,6 +549,7 @@ export class ReviewRunExecutor {
     repoId: string,
     diff: UnifiedDiff,
     runLog: RunLogger,
+    summary: string[],
   ): Promise<string | undefined> {
     const changedFiles = diff.files.map((f) => f.path);
     if (changedFiles.length === 0) return undefined;
@@ -554,7 +574,7 @@ export class ReviewRunExecutor {
       out.push(`### ${file}`);
       out.push(...lines);
     }
-    runLog.info(`callers digest: ${rows.length} caller signature(s) attached`);
+    summary.push(`callers digest: ${rows.length} caller signature(s) attached`);
     return out.join('\n');
   }
 
@@ -597,11 +617,12 @@ export class ReviewRunExecutor {
   private async buildRepoMapDigest(
     repoId: string,
     runLog: RunLogger,
+    summary: string[],
   ): Promise<string | undefined> {
     try {
       const map = await this.container.repoIntel.getRepoMap(repoId);
       if (map.degraded || map.text.trim().length === 0) return undefined;
-      runLog.info(`repo map: ${map.tokens} token(s) attached (cached=${map.cached})`);
+      summary.push(`repo map: ${map.tokens} token(s) attached (cached=${map.cached})`);
       return map.text;
     } catch (err) {
       runLog.info(`repo map: repoIntel failed — ${(err as Error).message}`);
@@ -617,7 +638,7 @@ export class ReviewRunExecutor {
   private async buildRankNote(
     repoId: string,
     diff: UnifiedDiff,
-    runLog: RunLogger,
+    summary: string[],
   ): Promise<string> {
     const changedFiles = diff.files.map((f) => f.path);
     if (changedFiles.length === 0) return '';
@@ -626,7 +647,7 @@ export class ReviewRunExecutor {
       if (ranks.length === 0) return '';
       const hot = ranks.filter((r) => r.percentile >= 95);
       if (hot.length === 0) return '';
-      runLog.info(`file rank: ${hot.length}/${changedFiles.length} changed file(s) in top 5%`);
+      summary.push(`file rank: ${hot.length}/${changedFiles.length} changed file(s) in top 5%`);
       return `\n\n${hot.length} of ${changedFiles.length} changed file(s) are in the top 5% most-depended-on (high blast risk) — prioritise their correctness.`;
     } catch {
       return '';

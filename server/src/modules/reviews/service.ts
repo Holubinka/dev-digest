@@ -6,7 +6,8 @@ import { ReviewRepository } from './repository.js';
 import { type ReviewDto, type ReviewDtoFinding } from './helpers.js';
 import { ReviewRunExecutor, type Logger } from './run-executor.js';
 import { actOnFinding as actOnFindingImpl } from './findings.js';
-import { reviewToDto } from './helpers.js';
+import { reviewToDto, toReviewAgent, toReviewPull, toReviewRepo } from './helpers.js';
+import type { ReviewAgent } from './types.js';
 
 // Re-export DTO types + converters for backward-compatible imports from
 // './service.js' (these previously lived here; logic now in ./helpers.ts).
@@ -115,7 +116,7 @@ export class ReviewService {
     // the client persists these in global state and subscribes to the SSE
     // stream. The actual (slow) review runs in the background below.
     const runs: { run_id: string; agent_id: string; agent_name: string }[] = [];
-    const jobs: { agent: AgentRow; runId: string }[] = [];
+    const jobs: { agent: ReviewAgent; runId: string }[] = [];
     for (const agent of targets) {
       const runId = await this.repo.createAgentRun({
         workspaceId,
@@ -125,14 +126,18 @@ export class ReviewService {
         model: agent.model,
       });
       runs.push({ run_id: runId, agent_id: agent.id, agent_name: agent.name });
-      jobs.push({ agent, runId });
+      // Mapped, not passed: a shorthand `{ agent }` would satisfy the narrow
+      // parameter type and still hand the whole row to the executor.
+      jobs.push({ agent: toReviewAgent(agent), runId });
     }
 
     // Fire-and-forget: the HTTP response returns now with the runIds; reviews
     // are persisted as each agent finishes and the client refetches on SSE done.
-    void this.executor.executeRuns(workspaceId, pull, repo, jobs, logger).catch((err) => {
-      logger?.error({ prId, err: (err as Error).message }, 'review: background execution crashed');
-    });
+    void this.executor
+      .executeRuns(workspaceId, toReviewPull(pull), toReviewRepo(repo), jobs, logger)
+      .catch((err) => {
+        logger?.error({ prId, err: (err as Error).message }, 'review: background execution crashed');
+      });
 
     return { runs, reviews: [] };
   }
