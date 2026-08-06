@@ -16,6 +16,12 @@ in the DB). The canonical, reviewable copies live next to this file:
 > originals — when you change a prompt, edit the file here **and** push it to the
 > agent (`PUT /agents/:id`, which versions the change into `agent_versions`).
 
+**A prompt lives in three places, not two.** `server/src/db/seed-prompts.ts` carries
+each one again as a template literal, and `pnpm db:seed` upserts from there — so a
+change made only in this folder and in the DB is reverted the next time anyone seeds
+a database. Update the seed constant in the same commit, escaping backticks and
+`${` for the literal. Nothing compares the three; the drift is silent.
+
 ## How a prompt is assembled
 
 Assembly happens in `reviewer-core/src/prompt.ts` (`assemblePrompt`). The model
@@ -163,4 +169,5 @@ model's `verdict`. Keep your severities honest and the gate behaves.
 - [ ] Findings discipline: distinct only, no count target.
 - [ ] No JSON shape / markdown layout / alternate severity scale described in prose.
 - [ ] No "return at most N findings" quota.
-- [ ] File updated here **and** pushed to the agent (versioned).
+- [ ] File updated here, **the seed constant in `server/src/db/seed-prompts.ts`
+      updated to match**, and the prompt pushed to the agent (versioned).
