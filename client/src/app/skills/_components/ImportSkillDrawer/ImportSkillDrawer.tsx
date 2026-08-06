@@ -63,19 +63,29 @@ export function ImportSkillDrawer({
     if (file) importFile.mutate(file, { onSuccess: accept });
   };
 
+  /** Catch without reporting: the `MutationCache` in `lib/providers.tsx` already
+   *  toasts a failed mutation, so a second message here would be the same
+   *  sentence twice. The catch exists because `onClick` cannot await this. The
+   *  early return matters more here than elsewhere — the preview is persisted
+   *  nowhere, so closing on a failure would lose the import and every edit. */
   const save = async () => {
     if (!draft) return;
-    const skill = await create.mutateAsync({
-      name,
-      description,
-      type,
-      body,
-      // The server pins `enabled` false for any non-manual source; sending it
-      // here states the intent rather than relying on that alone.
-      source: draft.source,
-      enabled: false,
-      evidence_files: draft.evidence_files,
-    });
+    let skill: Skill;
+    try {
+      skill = await create.mutateAsync({
+        name,
+        description,
+        type,
+        body,
+        // The server pins `enabled` false for any non-manual source; sending it
+        // here states the intent rather than relying on that alone.
+        source: draft.source,
+        enabled: false,
+        evidence_files: draft.evidence_files,
+      });
+    } catch {
+      return;
+    }
     toast.success(t("import.savedToast", { name: skill.name }));
     onClose();
     router.push(`/skills/${skill.id}?tab=config`);

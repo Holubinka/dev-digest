@@ -152,4 +152,35 @@ describe("ImportSkillDrawer", () => {
     const sent = JSON.parse(String((fetchMock.mock.calls[0]![1] as RequestInit).body));
     expect(sent).toEqual({ url: "https://example.com/s.md" });
   });
+
+  /**
+   * The message is not this drawer's job — `lib/providers.tsx` gives the
+   * `QueryClient` a `MutationCache.onError` that toasts every failed mutation,
+   * and a second `toast.error` here would print the same sentence twice. What it
+   * owes is to catch at all — `onClick` cannot await `save`, so a failure used
+   * to be an unhandled rejection — and to stay open, which matters more here
+   * than anywhere: the preview is persisted nowhere, so closing would lose the
+   * whole import.
+   */
+  it("keeps the preview when the save fails, because nothing else holds it", async () => {
+    await uploadSkillZip();
+    fireEvent.change(screen.getByDisplayValue("Flakiness patterns"), {
+      target: { value: "Renamed before the failure" },
+    });
+    // Only the save fails; the preview already succeeded.
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 409,
+      statusText: "Conflict",
+      json: async () => ({ error: { message: "a skill with that name exists" } }),
+    });
+
+    fireEvent.click(screen.getByText("Save as disabled"));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(nav.push).not.toHaveBeenCalled();
+    expect(screen.getByDisplayValue("Renamed before the failure")).toBeInTheDocument();
+    expect(screen.getByText("Save as disabled")).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 0));
+  });
 });

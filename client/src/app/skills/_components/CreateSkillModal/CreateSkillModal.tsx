@@ -27,14 +27,23 @@ export function CreateSkillModal({ onClose }: { onClose: () => void }) {
 
   const ready = name.trim() !== "" && body.trim() !== "";
 
+  /** Catch without reporting: the `MutationCache` in `lib/providers.tsx` already
+   *  toasts a failed mutation, so a second message here would be the same
+   *  sentence twice. The catch exists because `onClick` cannot await this, and
+   *  the early return keeps the modal open on the body nobody has saved yet. */
   const submit = async () => {
     if (!ready) return;
-    const skill = await create.mutateAsync({
-      name: name.trim(),
-      description: description.trim(),
-      type,
-      body,
-    });
+    let skill: Skill;
+    try {
+      skill = await create.mutateAsync({
+        name: name.trim(),
+        description: description.trim(),
+        type,
+        body,
+      });
+    } catch {
+      return;
+    }
     toast.success(t("create.createdToast", { name: skill.name }));
     onClose();
     router.push(`/skills/${skill.id}?tab=config`);

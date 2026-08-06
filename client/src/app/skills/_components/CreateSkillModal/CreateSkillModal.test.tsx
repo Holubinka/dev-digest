@@ -91,4 +91,36 @@ describe("CreateSkillModal", () => {
     });
     await waitFor(() => expect(nav.push).toHaveBeenCalledWith("/skills/sk-new?tab=config"));
   });
+
+  /**
+   * The message is not this modal's job — `lib/providers.tsx` gives the
+   * `QueryClient` a `MutationCache.onError` that toasts every failed mutation,
+   * and a second `toast.error` here would print the same sentence twice. What
+   * the modal owes is to catch the rejection at all: `onClick` cannot await
+   * `submit`, so before the catch existed a failed save was an unhandled
+   * rejection, which vitest reports as an error for the whole file.
+   */
+  it("survives a failed create without navigating away from the body", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 409,
+      statusText: "Conflict",
+      json: async () => ({ error: { message: "a skill with that name exists" } }),
+    });
+    renderModal();
+    fireEvent.change(screen.getByPlaceholderText("uncovered-branch-rubric"), {
+      target: { value: "my-rule" },
+    });
+    const typed = (screen.getByLabelText("Skill body (Markdown)") as HTMLTextAreaElement).value;
+
+    fireEvent.click(screen.getByText("Create skill"));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(nav.push).not.toHaveBeenCalled();
+    expect(screen.queryByText(/^Created /)).not.toBeInTheDocument();
+    expect((screen.getByLabelText("Skill body (Markdown)") as HTMLTextAreaElement).value).toBe(
+      typed,
+    );
+    await new Promise((r) => setTimeout(r, 0));
+  });
 });

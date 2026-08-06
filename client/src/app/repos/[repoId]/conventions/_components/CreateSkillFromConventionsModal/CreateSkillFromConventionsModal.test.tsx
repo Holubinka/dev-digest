@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
-import { screen, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
+import { screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import type { Skill } from "@devdigest/shared";
 import messages from "@/../messages/en/conventions.json";
 import skillsMessages from "@/../messages/en/skills.json";
@@ -138,35 +138,32 @@ describe("CreateSkillFromConventionsModal", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
-  it("keeps the user in the modal and says why when the save fails", async () => {
+  /**
+   * What the modal owes on a failure is to survive it — the message is not its
+   * job. `lib/providers.tsx` gives the `QueryClient` a `MutationCache.onError`
+   * that toasts every failed mutation, so a `toast.error` here would show the
+   * same sentence twice (measured: two toasts for one 409).
+   */
+  it("survives a failed save without navigating away from the unsaved body", async () => {
     hooks.create.mockRejectedValue(new ApiError("a skill with that name exists", 409));
     const { onClose } = renderModal();
+    const typed = bodyEditor().value;
 
     fireEvent.click(screen.getByRole("button", { name: "Create skill" }));
+    await waitFor(() => expect(hooks.create).toHaveBeenCalledTimes(1));
 
-    // The server's own 409 is what the user can act on, so it is what is shown.
-    await waitFor(() =>
-      expect(
-        within(screen.getByRole("status")).getByText("a skill with that name exists"),
-      ).toBeInTheDocument(),
-    );
-    // A failed save is not a completed one: the edits stay on screen.
+    // A failed save is not a completed one. If any of these three fired, the
+    // only copy of the merged body would be gone.
     expect(onClose).not.toHaveBeenCalled();
     expect(nav.push).not.toHaveBeenCalled();
+    expect(screen.queryByText(/^Created /)).not.toBeInTheDocument();
+
     expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(bodyEditor().value).toBe(typed);
 
-    // A transport failure carries no message worth showing, so the generic line
-    // stands in rather than leaking `socket hang up` at somebody.
-    cleanup();
-    hooks.create.mockRejectedValue(new Error("socket hang up"));
-    renderModal();
-    fireEvent.click(screen.getByRole("button", { name: "Create skill" }));
-
-    await waitFor(() => {
-      const toasts = screen.getByRole("status");
-      expect(within(toasts).getByText("Could not create the skill.")).toBeInTheDocument();
-      expect(within(toasts).queryByText("socket hang up")).not.toBeInTheDocument();
-    });
+    // And the rejection is caught: an uncaught one fails this file as an
+    // unhandled error even when every assertion above passes.
+    await new Promise((r) => setTimeout(r, 0));
   });
 
 });

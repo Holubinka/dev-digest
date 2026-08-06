@@ -12,7 +12,6 @@ import { useTranslations } from "next-intl";
 import { Button, FormField, Icon, Modal, SelectInput, TextInput, Toggle } from "@devdigest/ui";
 import type { ConventionCandidate, Skill } from "@devdigest/shared";
 import { SkillBodyEditor } from "@/components/skill-body-editor";
-import { ApiError } from "@/lib/api";
 import { useCreateSkill } from "@/lib/hooks/skills";
 import { useToast } from "@/lib/toast";
 import { TYPE_VALUES } from "@/components/skill-type";
@@ -45,11 +44,14 @@ export function CreateSkillFromConventionsModal({
   const ready = name.trim() !== "" && body.trim() !== "";
 
   /**
-   * The catch is narrow on purpose — it covers the request and nothing after it.
-   * `onClick` cannot await this, so a rejection with no handler would surface as
-   * an unhandled rejection and tell the user nothing at all; and a failure here
-   * must leave the modal open, because the body in it is the only copy of an
-   * edit nobody has saved yet.
+   * The catch reports nothing and that is deliberate: the `MutationCache` in
+   * `lib/providers.tsx` already toasts every failed mutation with the server's
+   * own message, so a second `toast.error` here shows the user the same sentence
+   * twice. What was missing is only the catch — `onClick` cannot await this, so
+   * a rejection had nobody to land on and surfaced as an unhandled rejection.
+   *
+   * The early return is the other half: a failed save must leave the modal open,
+   * because the merged body in it is the only copy of an edit nobody has stored.
    */
   const submit = async () => {
     if (!ready) return;
@@ -64,8 +66,7 @@ export function CreateSkillFromConventionsModal({
         enabled,
         evidence_files: evidenceFiles(candidates),
       });
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : t("skill.createFailed"));
+    } catch {
       return;
     }
     toast.success(t("skill.createdToast", { name: skill.name }));
