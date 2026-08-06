@@ -1,6 +1,6 @@
 import { simpleGit, type SimpleGit } from 'simple-git';
 import { join, relative, sep } from 'node:path';
-import { mkdir, readFile, access, rm, realpath } from 'node:fs/promises';
+import { mkdir, open, access, rm, realpath } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import type {
   GitClient,
@@ -157,8 +157,15 @@ export class SimpleGitClient implements GitClient {
    * after resolution, which is the only place a symlink is visible. The segment
    * comparison is exact, so `.github/` — a directory somebody may legitimately
    * want to read — is unaffected.
+   *
+   * Size is the third thing the path cannot tell you. `fs.readFile` allocates
+   * the whole file before anyone can measure it, so a caller's character cap
+   * runs one step too late; `open` + a fixed buffer is what makes the bound
+   * real. A cut can land mid-sequence and leave one U+FFFD at the end — that is
+   * the decoder behaving correctly on a truncated read, not a defect, and the
+   * caller's own truncation removes it in every case but an all-4-byte file.
    */
-  async readFile(repo: RepoRef, path: string): Promise<string> {
+  async readFile(repo: RepoRef, path: string, maxBytes: number): Promise<string> {
     const root = await realpath(this.clonePathFor(repo));
     const target = await realpath(join(root, path));
     if (target !== root && !target.startsWith(root + sep)) {
@@ -167,7 +174,14 @@ export class SimpleGitClient implements GitClient {
     if (relative(root, target).split(sep)[0] === '.git') {
       throw new Error(`refusing to read the clone's git directory: ${path}`);
     }
-    return readFile(target, 'utf8');
+    const handle = await open(target, 'r');
+    try {
+      const buf = Buffer.alloc(maxBytes);
+      const { bytesRead } = await handle.read(buf, 0, maxBytes, 0);
+      return buf.subarray(0, bytesRead).toString('utf8');
+    } finally {
+      await handle.close();
+    }
   }
 }
 

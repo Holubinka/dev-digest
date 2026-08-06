@@ -16,6 +16,7 @@ import {
   INTENT_TIMEOUT_MS,
   MAX_COMMIT_MESSAGES,
   MAX_FILE_PATHS,
+  MAX_PLAN_FILE_BYTES,
   MAX_PLAN_FILE_CHARS,
 } from './constants.js';
 import {
@@ -169,7 +170,11 @@ export class IntentService implements IntentDeriver {
     const out: { path: string; text: string }[] = [];
     for (const path of refs) {
       try {
-        const text = await this.container.git.readFile({ owner: repo.owner, name: repo.name }, path);
+        const text = await this.container.git.readFile(
+          { owner: repo.owner, name: repo.name },
+          path,
+          MAX_PLAN_FILE_BYTES,
+        );
         // A blank read is no evidence, and a GitClient may answer '' for a file
         // that is not in the clone rather than throwing.
         if (text.trim().length === 0) {

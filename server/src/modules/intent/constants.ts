@@ -13,6 +13,16 @@ export const MAX_PLAN_FILES = 3;
 /** Code points kept from each plan/spec file (NOT UTF-16 units — see helpers). */
 export const MAX_PLAN_FILE_CHARS = 6000;
 
+/**
+ * Bytes the clone read itself is allowed to pull for one plan/spec file.
+ *
+ * `MAX_PLAN_FILE_CHARS` bounds the string the classifier sees; this bounds the
+ * allocation that produces it, which is the half an attacker can move. Four
+ * bytes per code point is UTF-8's maximum, so this can only ever cut a file
+ * that was already going to be truncated by the character cap above.
+ */
+export const MAX_PLAN_FILE_BYTES = MAX_PLAN_FILE_CHARS * 4;
+
 /** Longest repo-relative path `sanitizeRepoPath` accepts. */
 export const MAX_PATH_LENGTH = 200;
 

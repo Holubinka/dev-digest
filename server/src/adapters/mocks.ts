@@ -292,8 +292,12 @@ export class MockGitClient implements GitClient {
   async log(): Promise<GitCommit[]> {
     return [{ sha: 'a1b2c3d4', message: 'init', author: 'marisa.koch', date: '2026-06-01' }];
   }
-  async readFile(_repo: RepoRef, path: string): Promise<string> {
-    return this.opts.files?.[path] ?? '';
+  async readFile(_repo: RepoRef, path: string, maxBytes: number): Promise<string> {
+    // Honour the cap. A mock that hands back more than the real adapter would is
+    // how an unbounded read passes every test and still allocates in production.
+    return Buffer.from(this.opts.files?.[path] ?? '', 'utf8')
+      .subarray(0, maxBytes)
+      .toString('utf8');
   }
 }
 

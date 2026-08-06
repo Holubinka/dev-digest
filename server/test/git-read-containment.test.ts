@@ -25,6 +25,8 @@ import { SimpleGitClient } from '../src/adapters/git/simple-git.js';
 
 const REPO = { owner: 'acme', name: 'payments-api' };
 const TOKEN_URL = 'https://x-access-token:ghp_notarealtoken@github.com/acme/payments-api';
+/** Roomy enough that no containment case below is truncated by accident. */
+const CAP = 4096;
 
 let cloneDir: string;
 let outside: string;
@@ -61,6 +63,8 @@ beforeEach(async () => {
   // `.github` is not `.git`, and the segment test is exact — this must be readable.
   await mkdir(join(root, '.github'), { recursive: true });
   await writeFile(join(root, '.github', 'notes.md'), 'a workflow note');
+  // Comfortably past any cap the size tests below pass in.
+  await writeFile(join(root, 'docs', 'big.md'), 'x'.repeat(50_000));
 
   client = new SimpleGitClient(cloneDir);
 });
@@ -72,27 +76,27 @@ afterEach(async () => {
 
 describe('SimpleGitClient.readFile — stays inside the clone', () => {
   it('reads an ordinary file', async () => {
-    await expect(client.readFile(REPO, 'docs/real.md')).resolves.toBe('a genuine plan');
+    await expect(client.readFile(REPO, 'docs/real.md', CAP)).resolves.toBe('a genuine plan');
   });
 
   it('follows a symlink that stays inside the clone', async () => {
-    await expect(client.readFile(REPO, 'docs/alias.md')).resolves.toBe('inside the clone');
+    await expect(client.readFile(REPO, 'docs/alias.md', CAP)).resolves.toBe('inside the clone');
   });
 
   it('refuses a symlink that resolves outside the clone', async () => {
-    await expect(client.readFile(REPO, 'docs/plan.md')).rejects.toThrow(
+    await expect(client.readFile(REPO, 'docs/plan.md', CAP)).rejects.toThrow(
       /refusing to read outside the clone/,
     );
   });
 
   it('refuses a sibling directory that merely shares the clone path prefix', async () => {
-    await expect(client.readFile(REPO, `../${REPO.name}-evil/x.md`)).rejects.toThrow(
+    await expect(client.readFile(REPO, `../${REPO.name}-evil/x.md`, CAP)).rejects.toThrow(
       /refusing to read outside the clone/,
     );
   });
 
   it('still fails for a file that is simply absent', async () => {
-    await expect(client.readFile(REPO, 'docs/missing.md')).rejects.toThrow();
+    await expect(client.readFile(REPO, 'docs/missing.md', CAP)).rejects.toThrow();
   });
 });
 
@@ -102,18 +106,34 @@ describe('SimpleGitClient.readFile — stays inside the clone', () => {
  */
 describe('SimpleGitClient.readFile — stays out of the git directory', () => {
   it("refuses a symlink that resolves into the clone's own .git", async () => {
-    await expect(client.readFile(REPO, 'docs/creds.md')).rejects.toThrow(
+    await expect(client.readFile(REPO, 'docs/creds.md', CAP)).rejects.toThrow(
       /refusing to read the clone's git directory/,
     );
   });
 
   it('refuses a direct path into .git', async () => {
-    await expect(client.readFile(REPO, '.git/config')).rejects.toThrow(
+    await expect(client.readFile(REPO, '.git/config', CAP)).rejects.toThrow(
       /refusing to read the clone's git directory/,
     );
   });
 
   it('reads under .github, which is a different directory', async () => {
-    await expect(client.readFile(REPO, '.github/notes.md')).resolves.toBe('a workflow note');
+    await expect(client.readFile(REPO, '.github/notes.md', CAP)).resolves.toBe('a workflow note');
+  });
+});
+
+/**
+ * The third thing a path cannot tell you. `fs.readFile` allocates the whole file
+ * before any caller can measure it, so a character cap applied to the returned
+ * string is one step too late for a repo that committed a 400 MB `plan.md`.
+ */
+describe('SimpleGitClient.readFile — bounded by the read itself', () => {
+  it('returns at most maxBytes, whatever the file weighs', async () => {
+    await expect(client.readFile(REPO, 'docs/big.md', 100)).resolves.toHaveLength(100);
+  });
+
+  /** The buffer is zero-filled, so returning it whole pads a short file with NULs. */
+  it('returns a short file whole, with no padding up to maxBytes', async () => {
+    await expect(client.readFile(REPO, 'docs/real.md', CAP)).resolves.toBe('a genuine plan');
   });
 });

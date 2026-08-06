@@ -234,7 +234,18 @@ export interface GitClient {
   diffNameOnly(repo: RepoRef, base: string, head: string): Promise<string[]>;
   blame(repo: RepoRef, path: string): Promise<BlameLine[]>;
   log(repo: RepoRef, path?: string): Promise<GitCommit[]>;
-  readFile(repo: RepoRef, path: string): Promise<string>;
+  /**
+   * Read one file out of the clone, bounded at `maxBytes` by the read itself.
+   *
+   * The bound is a required argument, not an option with a default. Every path
+   * this port is handed names repo content, which is attacker-controlled for an
+   * imported public repo, and a cap the caller applies to the returned string
+   * runs only once the whole file is already in memory — too late for a repo
+   * that committed a 400 MB `plan.md`. Bytes rather than characters because
+   * bytes are what a read can bound; callers still truncate to their own
+   * character budget afterwards.
+   */
+  readFile(repo: RepoRef, path: string, maxBytes: number): Promise<string>;
   clonePathFor(repo: RepoRef): string;
 }
 
