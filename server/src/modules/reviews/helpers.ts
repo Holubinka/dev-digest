@@ -2,6 +2,7 @@
  * Pure helpers for the review service (side-effect free; operate purely on
  * their arguments — no DB / network / `this`).
  */
+
 import type { Finding } from '@devdigest/shared';
 import { hasInjection } from '../../platform/skill-injection.js';
 import type { FindingRow, ReviewRow } from './repository.js';

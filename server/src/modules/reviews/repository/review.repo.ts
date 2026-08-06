@@ -3,6 +3,7 @@ import type { Db } from '../../../db/client.js';
 import * as t from '../../../db/schema.js';
 import type { Finding } from '@devdigest/shared';
 import type { FindingRow, PullRow } from '../../../db/rows.js';
+import { stripNul } from '../../../db/text.js';
 
 export type ReviewRow = typeof t.reviews.$inferSelect;
 
@@ -22,7 +23,14 @@ export async function insertReview(
     model: string | null;
   },
 ): Promise<ReviewRow> {
-  const [row] = await db.insert(t.reviews).values(values).returning();
+  // `summary` is model output and can carry a NUL, which Postgres refuses.
+  // `verdict` and `model` cannot: the first is a zod enum, the second a config
+  // string. Stripped here, at the boundary that owns the constraint, so a
+  // future caller cannot forget it.
+  const [row] = await db
+    .insert(t.reviews)
+    .values({ ...values, summary: values.summary === null ? null : stripNul(values.summary) })
+    .returning();
   return row!;
 }
 
@@ -37,14 +45,17 @@ export async function insertFindings(
     .values(
       findings.map((f) => ({
         reviewId,
-        file: f.file,
+        // The four free-text fields. `severity`, `category` and `kind` are zod
+        // enums, so a NUL cannot reach them — the value would have failed to
+        // parse long before this.
+        file: stripNul(f.file),
         startLine: f.start_line,
         endLine: f.end_line,
         severity: f.severity,
         category: f.category,
-        title: f.title,
-        rationale: f.rationale,
-        suggestion: f.suggestion ?? null,
+        title: stripNul(f.title),
+        rationale: stripNul(f.rationale),
+        suggestion: f.suggestion == null ? null : stripNul(f.suggestion),
         confidence: f.confidence,
         kind: f.kind ?? 'finding',
         trifectaComponents: f.trifecta_components ?? null,
