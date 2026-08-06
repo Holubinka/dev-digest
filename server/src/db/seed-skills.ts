@@ -179,6 +179,162 @@ For every route the diff touches, check each of these:
 - **Is the workspace scope still applied?** A route that stopped filtering by
   workspace is a tenancy break, not a contract nicety.`;
 
+/** Mirrors docs/skills/response-schema-contract.md. */
+export const RESPONSE_SCHEMA_CONTRACT = `# Response schema contract
+
+A caller of this API gets no runtime protection: \`client/src/lib/api.ts\` types a
+response with a generic and never parses it. Whatever the handler returns is what
+the caller believes. So the shape of the reply is a contract, and this rubric is
+about the shape alone — not about who is allowed to call the route, and not about
+how severe the change is.
+
+For every route whose reply the diff changes, answer all five in order and report
+the ones that come back wrong.
+
+## 1. Which fields does a caller receive before and after?
+
+Read the DTO mapper in \`modules/<name>/helpers.ts\`, not the SQL. A field that
+disappears from the mapper disappears from the reply even when the column is still
+there.
+
+- A field removed → CRITICAL. Name the component that reads it.
+- A field renamed → CRITICAL, and say what the old name was.
+- A field added → SUGGESTION.
+
+## 2. Did an optional field become required, or a required one optional?
+
+Both directions matter, and they break different sides.
+
+**Bad** — the field is now absent for rows that used to carry it:
+
+\`\`\`ts
+// helpers.ts
+- evidence_files: row.evidenceFiles ?? [],
++ ...(row.evidenceFiles ? { evidence_files: row.evidenceFiles } : {}),
+\`\`\`
+
+A caller doing \`skill.evidence_files.length\` now throws on exactly the rows it
+used to handle. Report it against the changed line in the mapper.
+
+**Good** — the key is always present, and its emptiness is expressed in its value:
+
+\`\`\`ts
+evidence_files: row.evidenceFiles ?? [],
+\`\`\`
+
+## 3. Did a type narrow?
+
+\`string\` → an enum, a union losing a member, \`number | null\` → \`number\`. Every one
+of these is a value a caller handled yesterday and cannot receive today. Narrowing
+in the *response* is the break; narrowing in the *request* belongs to the
+breaking-change taxonomy.
+
+## 4. Did nullability move?
+
+\`null\` and a missing key are different values to a caller written in TypeScript,
+and \`?? fallback\` catches only one of them. Say which one the caller now gets.
+
+## 5. Did the contract move in both copies?
+
+\`@devdigest/shared\` is vendored twice — \`server/src/vendor/shared\` and
+\`client/src/vendor/shared\`. Each package type-checks against its own copy, so a
+one-sided edit compiles cleanly on both sides and is wrong on one. If the diff
+touches one copy and not the other, that is a WARNING with the unmirrored path
+named.
+
+Cite the changed line that alters the shape. A finding about a caller that was
+left unupdated must still be anchored to the line in this diff that created the
+obligation.`;
+
+/** Mirrors docs/skills/semver-discipline.md. */
+export const SEMVER_DISCIPLINE = `# Semver discipline
+
+A breaking change is allowed. A breaking change that arrives without a version
+marker is not: the consumer has no way to notice, and no way to pin.
+
+This repository has four versioned surfaces. For each one the diff touches, check
+that a break carries its marker.
+
+## The four surfaces, and what a break costs on each
+
+| Surface | Where the version lives | A break must |
+|---|---|---|
+| A published package | \`package.json\` \`version\` | bump MAJOR in the same diff |
+| A Claude Code plugin | \`.claude-plugin/plugin.json\` \`version\` | bump MAJOR, and say what broke |
+| An applied DB migration | \`src/db/migrations/*.sql\` | add a NEW migration, never edit an applied one |
+| A skill or agent body | the \`version\` column, bumped by the service | leave the bump to the service — a hand-set version in a payload is the finding |
+
+## What counts as a break, per surface
+
+- **Package**: a removed export, a renamed export, a narrowed parameter type, a
+  changed return shape. Adding an export is MINOR.
+- **Plugin**: a skill removed or renamed, or a rule rewritten to mean the opposite.
+  Adding a skill is MINOR.
+- **Migration**: any statement that changes a column an applied migration created.
+  Editing a file that has already run means the two databases disagree forever —
+  yours has the new definition, everyone else's has the old one, and
+  \`_journal.json\` says both are up to date. This is CRITICAL every time.
+- **Skill/agent body**: \`SkillsService.update\` bumps \`version\` when the body
+  changes. A diff that writes \`version\` itself is claiming a history that did not
+  happen.
+
+## Examples
+
+**Bad** — the export is gone and the version says nothing happened:
+
+\`\`\`jsonc
+// package.json — unchanged
+{ "name": "@devdigest/reviewer-core", "version": "1.4.0" }
+\`\`\`
+\`\`\`ts
+// index.ts
+- export { assemblePrompt, groundFindings } from './prompt.js';
++ export { assemblePrompt } from './prompt.js';
+\`\`\`
+
+Report: \`groundFindings\` was removed while the version stayed \`1.4.0\`; a consumer
+on \`^1.4.0\` gets the break on its next install.
+
+**Bad** — an applied migration edited in place:
+
+\`\`\`sql
+-- 0007_glorious_wolverine.sql, already in _journal.json
+- ALTER TABLE "skills" ADD COLUMN "source" text NOT NULL;
++ ALTER TABLE "skills" ADD COLUMN "source" text NOT NULL DEFAULT 'manual';
+\`\`\`
+
+**Good** — the break is announced, or it is not a break:
+
+\`\`\`jsonc
+{ "name": "@devdigest/reviewer-core", "version": "2.0.0" }
+\`\`\`
+
+or the old export stays as a re-export until the next major.
+
+## Quote the marker or it is not there
+
+A version bump counts only if you can quote the changed line that made it:
+
+\`\`\`diff
+- "version": "1.4.0",
++ "version": "2.0.0",
+\`\`\`
+
+If that line is not in the diff, the bump did not happen. Do not conclude "the
+change is properly versioned" from the absence of evidence — that sentence has
+been written about a diff that bumped nothing, and it turned a CRITICAL into an
+approval. No quotable marker means the break is unannounced, which is the
+finding.
+
+## Scope
+
+Only report a missing bump for a surface this diff actually breaks. A private,
+unpublished package (\`"private": true\`, \`version: 0.0.0\`) has no consumer to
+protect — say so and move on rather than inventing a bump for it. That exemption
+covers the version marker only; the change can still be a breaking change under
+the other rules, and an HTTP contract has consumers whatever the package version
+says.`;
+
 export interface SeedSkill {
   name: string;
   description: string;
@@ -189,9 +345,10 @@ export interface SeedSkill {
 /**
  * The skills a fresh workspace starts with, in binding order.
  *
- * "Flakiness patterns" is deliberately absent: it ships as an archive under
- * docs/skills/flakiness-patterns/ and is imported by hand, so the import path is
- * exercised by a person rather than asserted by a fixture.
+ * Two are deliberately absent, one per import path: "Flakiness patterns" ships
+ * as an archive under docs/skills/flakiness-patterns/, and "Deprecation policy"
+ * as a single markdown file imported from its raw URL. Both are walked by a
+ * person rather than asserted by a fixture.
  */
 export const SEED_SKILLS: SeedSkill[] = [
   {
@@ -229,5 +386,17 @@ export const SEED_SKILLS: SeedSkill[] = [
     description: "Check that a route's schema, its DTO mapping and both copies of its shared contract moved together.",
     type: "convention",
     body: ROUTE_SIGNATURE_CHECKLIST,
+  },
+  {
+    name: "Response schema contract",
+    description: "Say what a caller receives before and after the diff: fields, optionality, nullability, narrowed types.",
+    type: "rubric",
+    body: RESPONSE_SCHEMA_CONTRACT,
+  },
+  {
+    name: "Semver discipline",
+    description: "For each versioned surface the diff breaks, check that the version marker moved with it.",
+    type: "convention",
+    body: SEMVER_DISCIPLINE,
   },
 ];

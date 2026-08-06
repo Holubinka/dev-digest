@@ -88,3 +88,10 @@ Adding a repository triggers a clone into `server/clones/` (git-ignored runtime 
 then `server/src/modules/repo-intel` indexes symbols and the import graph into
 `file_edges`, `file_facts`, `file_rank` and `repo_map_cache`. That index is the "repo
 map" the prompt is built from, and it is what the **Indexed** badge in the UI reflects.
+
+The same index feeds `modules/conventions`, which reads the repo's configs and its
+highest-ranked files, asks one cheap model for the house rules they follow, and then
+verifies every quote against the clone before storing it. Accepted candidates are
+merged into a skill on the Conventions screen and saved through `POST /skills`, so
+what starts as an observation about the codebase ends up in the review prompt through
+the same slot every other skill uses.

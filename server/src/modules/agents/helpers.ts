@@ -1,4 +1,11 @@
-import type { Agent, AgentVersion, CiFailOn, Provider, ReviewStrategy } from '@devdigest/shared';
+import type {
+  Agent,
+  AgentListItem,
+  AgentVersion,
+  CiFailOn,
+  Provider,
+  ReviewStrategy,
+} from '@devdigest/shared';
 import { AgentVersionConfig } from '@devdigest/shared';
 import type { AgentRow, AgentVersionRow } from './repository.js';
 
@@ -24,6 +31,24 @@ export function toAgentDto(row: AgentRow): Agent {
     ci_fail_on: row.ciFailOn as CiFailOn,
     repo_intel: row.repoIntel,
   };
+}
+
+/**
+ * An agent row plus how many skills it binds. Declared here rather than in the
+ * repository so the mapper below does not have to import the data layer.
+ */
+export interface AgentWithSkillCount {
+  agent: AgentRow;
+  skillCount: number;
+}
+
+/**
+ * Map a counted agent row to the `AgentListItem` the Agents list returns. The
+ * count is always present, including 0 — the card renders the badge from it
+ * unconditionally, so an absent key would read as "undefined skills".
+ */
+export function toAgentListItemDto(row: AgentWithSkillCount): AgentListItem {
+  return { ...toAgentDto(row.agent), skill_count: row.skillCount };
 }
 
 /**

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import { startPg, dockerAvailable, type PgFixture } from './helpers/pg.js';
 import { seed } from '../src/db/seed.js';
+import { SEED_SKILLS } from '../src/db/seed-skills.js';
 import * as t from '../src/db/schema.js';
 import { ReviewRepository } from '../src/modules/reviews/repository.js';
 import { diffFromPrFiles } from '../src/modules/reviews/diff-loader.js';
@@ -76,7 +77,12 @@ d('skills-lab seed fixtures', () => {
         'Assertion strength rubric',
         'Test smell catalogue',
       ],
-      'API Contract Reviewer': ['Breaking change taxonomy', 'Route signature checklist'],
+      'API Contract Reviewer': [
+        'Breaking change taxonomy',
+        'Response schema contract',
+        'Route signature checklist',
+        'Semver discipline',
+      ],
     };
     for (const [agentName, skillNames] of Object.entries(expected)) {
       const agent = await agentNamed(agentName);
@@ -114,7 +120,7 @@ d('skills-lab seed fixtures', () => {
       .select()
       .from(t.skills)
       .where(eq(t.skills.workspaceId, workspaceId));
-    expect(skills).toHaveLength(6);
+    expect(skills).toHaveLength(SEED_SKILLS.length);
     for (const skill of skills) {
       const versions = await pg.handle.db
         .select()

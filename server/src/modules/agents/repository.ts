@@ -1,9 +1,9 @@
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, countDistinct, desc, eq, inArray } from 'drizzle-orm';
 import type { Db } from '../../db/client.js';
 import * as t from '../../db/schema.js';
 import type { CiFailOn, Provider, ReviewStrategy } from '@devdigest/shared';
 import { DEFAULT_AGENT_DESCRIPTION, INITIAL_AGENT_VERSION } from './constants.js';
-import { isConfigChange } from './helpers.js';
+import { isConfigChange, type AgentWithSkillCount } from './helpers.js';
 
 /**
  * A2 — agents data-access. Owns `agents`, `agent_versions`, and the
@@ -51,8 +51,34 @@ export interface LinkedSkillRow {
 export class AgentsRepository {
   constructor(private db: Db) {}
 
-  async list(workspaceId: string): Promise<AgentRow[]> {
-    return this.db.select().from(t.agents).where(eq(t.agents.workspaceId, workspaceId));
+  /**
+   * Agents in the workspace, each with the number of skills it binds.
+   *
+   * The left joins keep an agent that binds nothing, and the `skills` workspace
+   * test sits in the JOIN rather than the WHERE for the same reason — in the
+   * WHERE it would drop every such agent. Counting `skills.id` and not
+   * `agent_skills.skill_id` is what makes a link to a skill this workspace
+   * cannot see count as nothing, which is the rule `linkedSkills` already
+   * applies before a body becomes a prompt block. Mirror of
+   * `SkillsRepository.list`, which counts the other direction.
+   *
+   * The GROUP BY is why the order is stated: without it Postgres was free to
+   * return the aggregate in whatever order the plan produced, and the list was
+   * relying on physical row order to look stable.
+   */
+  async list(workspaceId: string): Promise<AgentWithSkillCount[]> {
+    const rows = await this.db
+      .select({ agent: t.agents, skillCount: countDistinct(t.skills.id) })
+      .from(t.agents)
+      .leftJoin(t.agentSkills, eq(t.agentSkills.agentId, t.agents.id))
+      .leftJoin(
+        t.skills,
+        and(eq(t.skills.id, t.agentSkills.skillId), eq(t.skills.workspaceId, workspaceId)),
+      )
+      .where(eq(t.agents.workspaceId, workspaceId))
+      .groupBy(t.agents.id)
+      .orderBy(asc(t.agents.createdAt), asc(t.agents.name));
+    return rows.map((r) => ({ agent: r.agent, skillCount: Number(r.skillCount) }));
   }
 
   async listEnabled(workspaceId: string): Promise<AgentRow[]> {

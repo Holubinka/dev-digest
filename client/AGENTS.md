@@ -20,6 +20,13 @@ file only covers what is specific to this package.
 - **Styling is a hybrid.** Tailwind 4 supplies the theme tokens and CSS variables;
   individual components use typed `CSSProperties` objects in a colocated `styles.ts`
   rather than utility classes. Follow whichever the surrounding component already uses.
+- **Responsive rules live in `app/globals.css`, never in `styles.ts`.** An inline style
+  beats a stylesheet rule whatever the selector, so a property a breakpoint changes —
+  `flexDirection`, `width`, `padding`, `gap` — must be declared ONLY in the media-query
+  block, keyed on a `dd-` class the component sets alongside its inline `style`. Leave it
+  inline as well and the layout silently stops responding. Breakpoints in use: 900px (the
+  sidebar becomes an overlay drawer), 1024px (a convention card stacks), 680px (page
+  header and toolbar stop being single rows).
 - **`src/vendor/shared` and `src/vendor/ui` are vendored copies**, not packages. The
   server's copy of `shared` is the source of truth; mirror any contract change there and
   verify with `diff -rq ../server/src/vendor/shared src/vendor/shared`.

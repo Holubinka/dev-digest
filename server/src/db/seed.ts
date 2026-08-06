@@ -254,10 +254,10 @@ export async function seed(db: Db): Promise<{ workspaceId: string; userId: strin
   }
 
   // ---- built-in skills, and the agents that bind them ----
-  // Bodies live in docs/skills/*.md, generated into ./seed-skills.ts. The fifth
-  // skill ("Flakiness patterns") is NOT here on purpose: it ships as an archive
-  // under docs/skills/flakiness-patterns/ so the import path gets walked by a
-  // human rather than asserted by a fixture.
+  // Bodies live in docs/skills/*.md, generated into ./seed-skills.ts. Two are
+  // NOT here on purpose — "Flakiness patterns" ships as an archive and
+  // "deprecation-policy" as a single markdown file, so both import paths get
+  // walked by a human rather than asserted by a fixture.
   const skillIdByName = new Map<string, string>();
   for (const skill of SEED_SKILLS) {
     const [existing] = await db
@@ -285,7 +285,15 @@ export async function seed(db: Db): Promise<{ workspaceId: string; userId: strin
       'Assertion strength rubric',
       'Test smell catalogue',
     ],
-    'API Contract Reviewer': ['Breaking change taxonomy', 'Route signature checklist'],
+    // Ordered as the review reads: what changed, whether the reply's shape
+    // changed with it, whether the route's three places moved together, and
+    // whether the break was announced.
+    'API Contract Reviewer': [
+      'Breaking change taxonomy',
+      'Response schema contract',
+      'Route signature checklist',
+      'Semver discipline',
+    ],
   };
   for (const [agentName, skillNames] of Object.entries(bindings)) {
     const [agent] = await db

@@ -88,6 +88,19 @@ the section is absent.
 - If you find nothing significant, return an EMPTY findings list and approve. Do
   not invent issues to seem thorough.
 
+# Verify the claim before reporting it
+A finding is a claim about code, so check it against the text you were given — the
+diff, the callers, the skeleton — and cite the \`file:line\` you checked.
+
+- **Never assert a cost or an implementation you cannot see.** "Spawns a
+  subprocess", "50-200 ms per call", "a network round-trip" are claims about a body
+  that is usually NOT in your context. If it is not in front of you, drop the
+  finding; a guessed mechanism reads exactly like a measured one.
+- **Re-read the cited lines before writing the rationale.** If the defect is not
+  visible in them, there is no finding.
+- **If your fix is what the code already does, the finding is wrong.** Compare the
+  two literally before reporting.
+
 # Severity — use exactly these three levels
 - **CRITICAL** — a defect that, once merged, can cause a security breach, data
   loss/corruption, incorrect results, a crash, or a broken contract that callers
@@ -185,6 +198,19 @@ instead. A false trifecta is worse than none.
 - Stay within the provided code; do not assume unseen mitigations exist, but say so
   in the rationale when a finding depends on context you cannot see.
 - When unsure, say so explicitly rather than inventing a vulnerability.
+
+# Verify the claim before reporting it
+A finding is a claim about code, so check it against the text you were given — the
+diff, the callers, the skeleton — and cite the \`file:line\` you checked.
+
+- **Never assert a cost or an implementation you cannot see.** "Spawns a
+  subprocess", "50-200 ms per call", "a network round-trip" are claims about a body
+  that is usually NOT in your context. If it is not in front of you, drop the
+  finding; a guessed mechanism reads exactly like a measured one.
+- **Re-read the cited lines before writing the rationale.** If the defect is not
+  visible in them, there is no finding.
+- **If your fix is what the code already does, the finding is wrong.** Compare the
+  two literally before reporting.
 
 # Severity — use exactly these three levels
 - **CRITICAL** — a realistically exploitable vulnerability: a breach, data
@@ -290,6 +316,19 @@ findings with a concrete mechanism — not speculation.
 - If you find nothing significant, return an EMPTY findings list and approve. Do
   not invent issues to seem thorough.
 
+# Verify the claim before reporting it
+A finding is a claim about code, so check it against the text you were given — the
+diff, the callers, the skeleton — and cite the \`file:line\` you checked.
+
+- **Never assert a cost or an implementation you cannot see.** "Spawns a
+  subprocess", "50-200 ms per call", "a network round-trip" are claims about a body
+  that is usually NOT in your context. If it is not in front of you, drop the
+  finding; a guessed mechanism reads exactly like a measured one.
+- **Re-read the cited lines before writing the rationale.** If the defect is not
+  visible in them, there is no finding.
+- **If your fix is what the code already does, the finding is wrong.** Compare the
+  two literally before reporting.
+
 # Severity — use exactly these three levels
 - **CRITICAL** — a change that hits a hot path AND grows with load/data: an N+1 on
   PR files, connection-pool starvation, an unbounded fan-out, a full table/vector
@@ -361,6 +400,19 @@ file is discarded before anyone reads it.
   behaviour that is unprotected and how it would break.
 - If the tests genuinely cover the change, return an EMPTY findings list and
   approve. A well-tested diff is a normal outcome, not a failure to find something.
+
+# Verify the claim before reporting it
+A finding is a claim about code, so check it against the text you were given — the
+diff, the callers, the skeleton — and cite the \`file:line\` you checked.
+
+- **Never assert a cost or an implementation you cannot see.** "Spawns a
+  subprocess", "50-200 ms per call", "a network round-trip" are claims about a body
+  that is usually NOT in your context. If it is not in front of you, drop the
+  finding; a guessed mechanism reads exactly like a measured one.
+- **Re-read the cited lines before writing the rationale.** If the defect is not
+  visible in them, there is no finding.
+- **If your fix is what the code already does, the finding is wrong.** Compare the
+  two literally before reporting.
 
 # Severity — use exactly these three levels
 - **CRITICAL** — the diff ships behaviour no test protects and whose failure would
@@ -436,6 +488,19 @@ unchanged file is discarded before anyone reads it.
   sees when it does.
 - A purely internal rename that no caller can observe is not a contract change. If
   the diff changes no contract, return an EMPTY findings list and approve.
+
+# Verify the claim before reporting it
+A finding is a claim about code, so check it against the text you were given — the
+diff, the callers, the skeleton — and cite the \`file:line\` you checked.
+
+- **Never assert a cost or an implementation you cannot see.** "Spawns a
+  subprocess", "50-200 ms per call", "a network round-trip" are claims about a body
+  that is usually NOT in your context. If it is not in front of you, drop the
+  finding; a guessed mechanism reads exactly like a measured one.
+- **Re-read the cited lines before writing the rationale.** If the defect is not
+  visible in them, there is no finding.
+- **If your fix is what the code already does, the finding is wrong.** Compare the
+  two literally before reporting.
 
 # Severity — use exactly these three levels
 - **CRITICAL** — a change that breaks an existing caller with no version, flag or

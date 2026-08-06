@@ -5,16 +5,21 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import type {
   Agent,
+  AgentListItem,
   AgentSkillLink,
   ModelInfo,
   Provider,
   ReviewStrategy,
 } from "@devdigest/shared";
 
+/**
+ * The Agents list. Rows are `AgentListItem`, not `Agent`: the list route adds
+ * the skill count each card shows, which `GET /agents/:id` does not.
+ */
 export function useAgents() {
   return useQuery({
     queryKey: ["agents"],
-    queryFn: () => api.get<Agent[]>("/agents"),
+    queryFn: () => api.get<AgentListItem[]>("/agents"),
   });
 }
 
@@ -110,8 +115,10 @@ export function useSetAgentSkills() {
       api.post<AgentSkillLink[]>(`/agents/${agentId}/skills`, { skill_ids: skillIds }),
     onSuccess: (data, { agentId }) => {
       qc.setQueryData(["agent-skills", agentId], data);
-      // The Skills screen shows an "N agents" count per skill, which just moved.
+      // Both lists show a count of this binding, and both just moved: "N agents"
+      // per skill on the Skills screen, "N skills" per agent on the Agents card.
       qc.invalidateQueries({ queryKey: ["skills"] });
+      qc.invalidateQueries({ queryKey: ["agents"] });
     },
   });
 }

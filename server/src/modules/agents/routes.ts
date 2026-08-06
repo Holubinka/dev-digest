@@ -18,7 +18,7 @@ const VersionParams = z.object({
 
 /**
  * A2 — agents module (owner A2).
- *   GET    /agents                  → list (workspace-scoped)
+ *   GET    /agents                  → list (workspace-scoped), with skill_count
  *   GET    /agents/:id              → one agent
  *   POST   /agents                  → create
  *   PUT    /agents/:id              → update / toggle enabled (versions config)

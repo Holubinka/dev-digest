@@ -1,6 +1,7 @@
 import type { Container } from '../../platform/container.js';
 import type {
   Agent,
+  AgentListItem,
   AgentSkillLink,
   AgentVersion,
   CiFailOn,
@@ -10,7 +11,7 @@ import type {
 } from '@devdigest/shared';
 import { ValidationError } from '../../platform/errors.js';
 import { AgentsRepository } from './repository.js';
-import { toAgentDto, toAgentVersionDto } from './helpers.js';
+import { toAgentDto, toAgentListItemDto, toAgentVersionDto } from './helpers.js';
 
 /**
  * A2 — agents service. Business logic for the Agents tab + Agent Editor.
@@ -56,9 +57,10 @@ export class AgentsService {
     this.repo = new AgentsRepository(container.db);
   }
 
-  async list(workspaceId: string): Promise<Agent[]> {
+  /** The Agents list — each row carrying the skill count its card renders. */
+  async list(workspaceId: string): Promise<AgentListItem[]> {
     const rows = await this.repo.list(workspaceId);
-    return rows.map(toAgentDto);
+    return rows.map(toAgentListItemDto);
   }
 
   async get(workspaceId: string, id: string): Promise<Agent | undefined> {

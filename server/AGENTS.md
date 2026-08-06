@@ -27,10 +27,15 @@ frozen backlog: **the `onion-architecture` skill**.
 ## Schema
 
 `src/db/schema/*.ts`, one file per domain, aggregated by `src/db/schema.ts` for
-drizzle-kit. Tables under `eval`, `ci`, `skills`, `knowledge` and `context` are
+drizzle-kit. Tables under `eval`, `ci` and `context`, and `memory` in `knowledge`, are
 provisioned for later course lessons and are expected to be empty — do not "clean them
 up". pgvector is enabled by migration `0000`; the `vector` column type comes from
 `drizzle-orm/pg-core`, not from an npm package.
+
+`drizzle-kit generate` asks, on a TTY, whether each new column is a rename of a
+dropped one. It cannot be answered from a pipe, so a migration that both adds and
+drops columns has to be generated in two runs — add first, drop second (migrations
+`0012` and `0013` are that pair).
 
 ## Tests
 
