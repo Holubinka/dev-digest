@@ -12,7 +12,6 @@ import { RepoNotFound } from "@/components/repo-not-found";
 import { ApiError } from "@/lib/api";
 import { useConventions, useExtractConventions, useUpdateConvention } from "@/lib/hooks/conventions";
 import { useActiveRepo, useRepoNotFound } from "@/lib/repo-context";
-import { useToast } from "@/lib/toast";
 import { ConventionCard } from "../ConventionCard";
 import { CreateSkillFromConventionsModal } from "../CreateSkillFromConventionsModal";
 import { SKELETON_ROWS } from "./constants";
@@ -20,7 +19,6 @@ import { s } from "./styles";
 
 export function ConventionsView({ repoId }: { repoId: string }) {
   const t = useTranslations("conventions");
-  const toast = useToast();
   const { activeRepo } = useActiveRepo();
   const repoNotFound = useRepoNotFound(repoId);
 
@@ -33,11 +31,14 @@ export function ConventionsView({ repoId }: { repoId: string }) {
   const candidates = data?.candidates ?? [];
   const accepted = candidates.filter((c) => c.status === "accepted");
 
-  const runScan = () =>
-    extract.mutate(undefined, {
-      onError: (e) =>
-        toast.error(e instanceof ApiError ? e.message : t("page.extractionFailed")),
-    });
+  /**
+   * No `onError` on purpose. `lib/providers.tsx` gives the `QueryClient` a
+   * `MutationCache.onError` that toasts every failed mutation with the server's
+   * own message — "Mutations always toast (they are user actions)", as it says —
+   * so a local handler here is a second copy of the same sentence, not a
+   * fallback. Measured: one failed extraction, two identical toasts.
+   */
+  const runScan = () => extract.mutate();
 
   const setStatus = (id: string, status: ConventionCandidate["status"]) =>
     update.mutate({ id, patch: { status } });

@@ -9,7 +9,6 @@
     "scanning": "Scanning…",
     "rescan": "Re-scan",
     "runExtraction": "Run extraction",
-    "extractionFailed": "Extraction failed",
     "loadError": "Could not load conventions.",
     "deselectAll": "Deselect all",
     "acceptedCount": "{accepted} of {total} accepted",

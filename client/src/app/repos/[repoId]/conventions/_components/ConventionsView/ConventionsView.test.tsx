@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
-import { screen, cleanup, fireEvent, act, within } from "@testing-library/react";
+import { screen, cleanup, fireEvent, within } from "@testing-library/react";
 import type { ConventionsResponse } from "@devdigest/shared";
 import messages from "@/../messages/en/conventions.json";
 import skillsMessages from "@/../messages/en/skills.json";
@@ -73,13 +73,6 @@ function failed(error: unknown) {
     error,
     refetch: hooks.refetch,
   });
-}
-
-/** The `onError` the view handed `extract.mutate`, or a failure saying so. */
-function extractOnError(): (e: unknown) => void {
-  const handler = hooks.extract.mock.calls[0]?.[1]?.onError;
-  expect(typeof handler, "runScan must pass the mutation an onError").toBe("function");
-  return handler;
 }
 
 beforeEach(() => {
@@ -185,24 +178,20 @@ describe("ConventionsView", () => {
     expect(hooks.refetch).toHaveBeenCalled();
   });
 
-  it("reports a failed extraction in a toast, with the server's message when there is one", () => {
+  /**
+   * Reporting a failed extraction is not this view's job. `lib/providers.tsx`
+   * toasts every failed mutation from the `MutationCache`, so an `onError` here
+   * would be a second copy of the same sentence — measured at two toasts for one
+   * failure. `lib/providers.test.tsx` pins the handler that does the reporting;
+   * this pins that the view adds nothing of its own on top of it.
+   */
+  it("leaves the failure message to the global handler", () => {
     renderView();
     fireEvent.click(screen.getByRole("button", { name: "Re-scan" }));
-    act(() => extractOnError()(new ApiError("no clone to scan", 409)));
 
-    expect(within(screen.getByRole("status")).getByText("no clone to scan")).toBeInTheDocument();
-
-    // A transport failure carries nothing worth showing a user, so the generic
-    // line stands in for it rather than leaking `socket hang up` into the UI.
-    cleanup();
-    hooks.extract.mockReset();
-    renderView();
-    fireEvent.click(screen.getByRole("button", { name: "Re-scan" }));
-    act(() => extractOnError()(new Error("socket hang up")));
-
-    const toasts = screen.getByRole("status");
-    expect(within(toasts).getByText("Extraction failed")).toBeInTheDocument();
-    expect(within(toasts).queryByText("socket hang up")).not.toBeInTheDocument();
+    expect(hooks.extract).toHaveBeenCalledTimes(1);
+    const options = hooks.extract.mock.calls[0]?.[1];
+    expect(options?.onError).toBeUndefined();
   });
 
   it("says so when there is nothing to show", () => {
