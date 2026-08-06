@@ -24,6 +24,27 @@ export const MAX_PLAN_FILE_CHARS = 6000;
 export const MAX_PLAN_FILE_BYTES = MAX_PLAN_FILE_CHARS * 4;
 
 /**
+ * Code points kept from the PR title.
+ *
+ * `pull_requests.title` is `text` with no constraint, written verbatim from
+ * GitHub on every list sync. The only bound without this one is whatever GitHub
+ * enforces — a number nothing here names, and one this file already declined to
+ * trust for the analogous field, since the linked issue's title is capped below.
+ */
+export const MAX_PR_TITLE_CHARS = 300;
+
+/**
+ * Code points kept from each changed-file path.
+ *
+ * `MAX_FILE_PATHS` bounds how many arrive as a SQL `limit`, not how long one is;
+ * `pr_files.path` is `text` written straight from GitHub's `filename`. Sized
+ * above `MAX_PATH_LENGTH` on purpose — that cap gates a path we are about to
+ * *read*, this one only gates a path we print, and a real path truncated in a
+ * prompt is worse than a long one.
+ */
+export const MAX_FILE_PATH_CHARS = 400;
+
+/**
  * Code points kept from each commit subject.
  *
  * `MAX_COMMIT_MESSAGES` bounds how many subjects reach the classifier, not how

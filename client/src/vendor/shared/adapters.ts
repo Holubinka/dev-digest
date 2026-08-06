@@ -328,3 +328,19 @@ export interface SkillFetcher {
    */
   fetchMarkdown(url: string): Promise<FetchedMarkdown>;
 }
+
+// ---------- Prompt templates (instruction text kept out of the code) ----------
+export interface PromptTemplates {
+  /**
+   * Load the named instruction template and interpolate its `{{var}}`
+   * placeholders in one step.
+   *
+   * A port because the implementation reads the filesystem, which a service may
+   * not do. `no-fs-in-service` matches a direct `node:fs` edge only, so a
+   * service reaching a loader module that reads for it passes the rule and still
+   * breaks it — this port is the part the rule cannot see.
+   *
+   * `name` is a template filename, never user input.
+   */
+  render(name: string, vars: Record<string, string>): Promise<string>;
+}

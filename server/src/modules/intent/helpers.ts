@@ -8,11 +8,13 @@ import type { PrIntentRow } from '../../db/rows.js';
 import type { IntentSources } from './types.js';
 import {
   MAX_COMMIT_SUBJECT_CHARS,
+  MAX_FILE_PATH_CHARS,
   MAX_ISSUE_BODY_CHARS,
   MAX_ISSUE_TITLE_CHARS,
   MAX_PATH_LENGTH,
   MAX_PLAN_FILES,
   MAX_PR_BODY_CHARS,
+  MAX_PR_TITLE_CHARS,
 } from './constants.js';
 
 /**
@@ -167,15 +169,21 @@ export function collectEvidence(sources: IntentSources): IntentEvidenceSource[] 
  * `</untrusted>` planted in the text, so untrusted content cannot close its own
  * fence and speak as the prompt.
  *
- * The PR body and the linked issue are capped here, not left to the model's
- * context window: both are attacker-controlled on a public repo and both feed a
- * paid call. Every cap is applied BEFORE `wrapUntrusted`, so truncation can
- * never cut off a closing `</untrusted>` fence.
+ * Every input is capped here, not left to the model's context window: on a
+ * public repo all of them are attacker-controlled, and all of them feed a paid
+ * call. Every cap is applied BEFORE `wrapUntrusted`, so truncation can never cut
+ * off a closing `</untrusted>` fence.
+ *
+ * "Every" is the load-bearing word. Four rounds of review on this file each
+ * closed one input and left the next: the title, the body, the issue, the plan
+ * text, the commit subjects, the file paths. A cap missing from one branch of
+ * this function is indistinguishable from a cap nobody thought about.
  */
 export function renderClassifierInput(sources: IntentSources): string {
   const blocks: string[] = [];
   if (sources.title.trim().length > 0) {
-    blocks.push(`## Title\n${wrapUntrusted('pr-title', sources.title)}`);
+    const title = truncateCodePoints(sources.title, MAX_PR_TITLE_CHARS);
+    blocks.push(`## Title\n${wrapUntrusted('pr-title', title)}`);
   }
   if (sources.body && sources.body.trim().length > 0) {
     const body = truncateCodePoints(sources.body, MAX_PR_BODY_CHARS);
@@ -194,17 +202,20 @@ export function renderClassifierInput(sources: IntentSources): string {
   }
   if (sources.commitMessages.length > 0 || sources.filePaths.length > 0) {
     const parts: string[] = [];
+    // Both lists arrive count-capped (`MAX_COMMIT_MESSAGES`, `MAX_FILE_PATHS`)
+    // and neither is length-capped by the query that fetched it: a subject line
+    // has no limit in git, and `pr_files.path` is `text`.
     if (sources.commitMessages.length > 0) {
-      // `MAX_COMMIT_MESSAGES` bounds how many of these arrive, not how long any
-      // one is, and git puts no limit on a subject line.
       const subjects = sources.commitMessages
-        .map((m) => truncateCodePoints(m, MAX_COMMIT_SUBJECT_CHARS))
-        .map((m) => `- ${m}`)
+        .map((m) => `- ${truncateCodePoints(m, MAX_COMMIT_SUBJECT_CHARS)}`)
         .join('\n');
       parts.push(`Commits:\n${subjects}`);
     }
     if (sources.filePaths.length > 0) {
-      parts.push(`Changed files:\n${sources.filePaths.map((p) => `- ${p}`).join('\n')}`);
+      const paths = sources.filePaths
+        .map((p) => `- ${truncateCodePoints(p, MAX_FILE_PATH_CHARS)}`)
+        .join('\n');
+      parts.push(`Changed files:\n${paths}`);
     }
     blocks.push(`## Commits and changed files\n${wrapUntrusted('commits-files', parts.join('\n\n'))}`);
   }

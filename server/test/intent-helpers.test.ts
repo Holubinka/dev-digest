@@ -9,10 +9,17 @@ import {
   truncateCodePoints,
 } from '../src/modules/intent/helpers.js';
 import {
+  MAX_COMMIT_MESSAGES,
   MAX_COMMIT_SUBJECT_CHARS,
+  MAX_FILE_PATH_CHARS,
+  MAX_FILE_PATHS,
   MAX_ISSUE_BODY_CHARS,
   MAX_ISSUE_TITLE_CHARS,
+  MAX_PATH_LENGTH,
+  MAX_PLAN_FILE_CHARS,
+  MAX_PLAN_FILES,
   MAX_PR_BODY_CHARS,
+  MAX_PR_TITLE_CHARS,
 } from '../src/modules/intent/constants.js';
 import type { IntentSources } from '../src/modules/intent/types.js';
 
@@ -317,6 +324,79 @@ describe('renderClassifierInput — caps on attacker-controlled text', () => {
     expect(long).not.toContain('�');
     // The cap truncates; it does not rewrite everything to the same length.
     expect(short).toBe('- fix: a short one');
+  });
+
+  it('caps the PR title at MAX_PR_TITLE_CHARS code points', () => {
+    const text = renderClassifierInput(sources({ title: astral(MAX_PR_TITLE_CHARS + 200) }));
+    const title = block(text, 'pr-title');
+
+    expect([...title]).toHaveLength(MAX_PR_TITLE_CHARS);
+    expect(title).not.toContain('�');
+  });
+
+  /**
+   * `MAX_FILE_PATHS` caps the count as a SQL `limit`; `pr_files.path` is `text`
+   * written straight from GitHub's `filename`, so nothing caps the length.
+   * `server/INSIGHTS.md` recorded this gap alongside the commit subjects, and
+   * the subject half was closed one release before this one.
+   */
+  it('caps every changed-file path at MAX_FILE_PATH_CHARS code points', () => {
+    const text = renderClassifierInput(
+      sources({ filePaths: [astral(MAX_FILE_PATH_CHARS + 300), 'src/limiter.ts'] }),
+    );
+    const [long = '', short = ''] = block(text, 'commits-files')
+      .replace('Changed files:\n', '')
+      .split('\n');
+
+    expect([...long.replace('- ', '')]).toHaveLength(MAX_FILE_PATH_CHARS);
+    expect(long).not.toContain('�');
+    expect(short).toBe('- src/limiter.ts');
+  });
+
+  /**
+   * The enumeration, asserted as one. Four rounds of review each closed one
+   * input here and left the next, so this feeds every source oversized at once
+   * and holds each block to its own ceiling.
+   *
+   * The label-set equality is the half that catches the NEXT gap: a source
+   * added to `renderClassifierInput` emits a new `<untrusted>` label, which
+   * fails here until someone gives it a row — and a row cannot be written
+   * without naming a cap.
+   */
+  const CEILING: Record<string, number> = {
+    'pr-title': MAX_PR_TITLE_CHARS,
+    'pr-body': MAX_PR_BODY_CHARS,
+    // + the `#471 (open) ` prefix and the newline between title and body.
+    'linked-issue': MAX_ISSUE_TITLE_CHARS + MAX_ISSUE_BODY_CHARS + 40,
+    // + a `### <path>` heading and a blank line per file.
+    'plan-spec': MAX_PLAN_FILE_CHARS * MAX_PLAN_FILES + MAX_PATH_LENGTH * MAX_PLAN_FILES + 40,
+    // + a `- ` prefix and a newline per entry, and the two section headings.
+    'commits-files':
+      (MAX_COMMIT_SUBJECT_CHARS + 4) * MAX_COMMIT_MESSAGES +
+      (MAX_FILE_PATH_CHARS + 4) * MAX_FILE_PATHS +
+      40,
+  };
+
+  it('bounds every block when every source arrives oversized at once', () => {
+    const text = renderClassifierInput({
+      title: astral(MAX_PR_TITLE_CHARS + 100),
+      body: astral(MAX_PR_BODY_CHARS + 100),
+      linkedIssue: {
+        ...ISSUE,
+        title: astral(MAX_ISSUE_TITLE_CHARS + 100),
+        body: astral(MAX_ISSUE_BODY_CHARS + 100),
+      },
+      planFiles: [{ path: 'specs/05-intent-layer.md', text: 'a plan' }],
+      commitMessages: Array.from({ length: MAX_COMMIT_MESSAGES }, () =>
+        astral(MAX_COMMIT_SUBJECT_CHARS + 100),
+      ),
+      filePaths: Array.from({ length: MAX_FILE_PATHS }, () => astral(MAX_FILE_PATH_CHARS + 100)),
+    });
+
+    expect(labels(text).sort()).toEqual(Object.keys(CEILING).sort());
+    for (const label of labels(text)) {
+      expect([...block(text, label)].length).toBeLessThanOrEqual(CEILING[label]!);
+    }
   });
 });
 

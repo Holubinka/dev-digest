@@ -502,6 +502,20 @@ original omission survived review.
     `modules/intent/constants.ts` and applied in `renderClassifierInput`. Commit subjects and
     changed-file paths are still capped by COUNT only (20 / 40) and not by length — a
     thousand-character commit subject is possible and is nobody's cap today.
+  - **Fully closed 2026-08-06**, over three further `/pr-self-review` rounds, each of which found
+    exactly one of the remaining gaps: `MAX_COMMIT_SUBJECT_CHARS = 200`, then
+    `MAX_FILE_PATH_CHARS = 400` and `MAX_PR_TITLE_CHARS = 300`. The title was nobody's finding
+    until the fourth round — it was never on the list above, because the list was written from
+    what the plan named rather than from what the function reads.
+
+    **The lesson is the shape, not the numbers.** Writing "still capped by COUNT only" and
+    leaving it is what made the next two rounds necessary: a known gap recorded and not closed
+    reads, one release later, exactly like a gap nobody knew about. The countermeasure is in
+    `test/intent-helpers.test.ts` — one test feeds every source oversized at once and asserts the
+    **set of `<untrusted>` labels** equals a table of per-label ceilings, so a source added
+    without a cap fails there rather than in a fifth review round. The same instinct is now in
+    the `security` agent's brief (`.claude/skills/pr-self-review/routing.md` §1): enumerate the
+    inputs on a path and name each bound, rather than searching for one unbounded one.
 
 - **`test/helpers/runs.ts` has a race that `MockSecretsProvider` masked, not fixed.**
   `run-executor.ts` writes `completeAgentRun({ status: 'done' })` at `:294` and the

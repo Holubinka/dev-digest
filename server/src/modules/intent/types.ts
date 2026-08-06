@@ -3,6 +3,7 @@ import type {
   IntentRecord,
   IssueMeta,
   LLMProvider,
+  PromptTemplates,
   Provider,
 } from '@devdigest/shared';
 import type { SettingsReader } from '../_shared/feature-models.js';
@@ -37,6 +38,7 @@ import type { SettingsReader } from '../_shared/feature-models.js';
  */
 export interface IntentContainer extends SettingsReader {
   readonly git: GitClient;
+  readonly prompts: PromptTemplates;
   llm(id: Provider): Promise<LLMProvider>;
 }
 

@@ -33,6 +33,7 @@ import type {
   SecretKey,
   SkillFetcher,
   FetchedMarkdown,
+  PromptTemplates,
 } from '@devdigest/shared';
 import { parseUnifiedDiff } from './git/diff-parser.js';
 
@@ -346,5 +347,25 @@ export class MockSkillFetcher implements SkillFetcher {
     const text = this.documents[url];
     if (text === undefined) throw new Error(`MockSkillFetcher has no document for ${url}`);
     return { text, finalUrl: url, bytes: Buffer.byteLength(text) };
+  }
+}
+
+// ---------- Mock prompt templates ----------
+/**
+ * Serves canned instruction text by template name, and interpolates it the same
+ * way the real loader does — a test that asserts on a rendered prompt would
+ * otherwise be asserting on the mock's shortcut rather than on the contract.
+ *
+ * An unknown name yields a marker rather than throwing: unlike a fetched URL, a
+ * template name is a constant in the code under test, so a missing entry means
+ * the test did not care which instructions were used.
+ */
+export class MockPromptTemplates implements PromptTemplates {
+  constructor(private templates: Record<string, string> = {}) {}
+  async render(name: string, vars: Record<string, string>): Promise<string> {
+    const template = this.templates[name] ?? `[mock prompt: ${name}]`;
+    return template.replace(/\{\{(\w+)\}\}/g, (whole, key: string) =>
+      key in vars ? (vars[key] ?? '') : whole,
+    );
   }
 }

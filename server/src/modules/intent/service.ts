@@ -1,5 +1,4 @@
 import { Intent, type IntentRecord } from '@devdigest/shared';
-import { renderPrompt } from '../../platform/prompts.js';
 import { resolveFeatureModel } from '../_shared/feature-models.js';
 import type { PrIntentRow, PullRow, RepoRow } from '../../db/rows.js';
 import type { IntentRepository } from './repository.js';
@@ -89,7 +88,7 @@ export class IntentService implements IntentDeriver {
         schema: Intent,
         schemaName: 'Intent',
         messages: [
-          { role: 'system', content: await renderPrompt(INTENT_SYSTEM_PROMPT, {}) },
+          { role: 'system', content: await this.container.prompts.render(INTENT_SYSTEM_PROMPT, {}) },
           { role: 'user', content: renderClassifierInput(sources) },
         ],
         maxRetries: INTENT_MAX_RETRIES,

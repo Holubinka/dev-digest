@@ -7,6 +7,7 @@ import type {
   Embedder,
   LLMProvider,
   SkillFetcher,
+  PromptTemplates,
 } from '@devdigest/shared';
 import type { AppConfig } from './config.js';
 import type { Db } from '../db/client.js';
@@ -36,6 +37,7 @@ import { IntentRepository } from '../modules/intent/repository.js';
 import { type DepGraph, DepCruiseGraph } from '../adapters/depgraph/index.js';
 import { type Tokenizer, TiktokenTokenizer } from '../adapters/tokenizer/index.js';
 import { HttpSkillFetcher } from '../adapters/skill-fetch/index.js';
+import { FilePromptTemplates } from '../adapters/prompts/file-templates.js';
 
 /**
  * DI container. One per app instance. Holds config, db, the JobRunner,
@@ -82,6 +84,8 @@ export interface ContainerOverrides {
   tokenizer?: Tokenizer;
   /** Skill import by URL — tests inject a canned document instead of a network. */
   skillFetcher?: SkillFetcher;
+  /** Instruction templates — tests inject canned text instead of reading `src/prompts`. */
+  prompts?: PromptTemplates;
 }
 
 export class Container {
@@ -110,6 +114,7 @@ export class Container {
   private _depgraph?: DepGraph;
   private _tokenizer?: Tokenizer;
   private _skillFetcher?: SkillFetcher;
+  private _prompts?: PromptTemplates;
   private _priceBook?: PriceBook;
 
   constructor(config: AppConfig, db: Db, private overrides: ContainerOverrides = {}) {
@@ -131,6 +136,19 @@ export class Container {
     if (this.overrides.skillFetcher) return this.overrides.skillFetcher;
     this._skillFetcher ??= new HttpSkillFetcher();
     return this._skillFetcher;
+  }
+
+  /**
+   * Instruction templates. A port because the implementation reads
+   * `src/prompts/*.md`, and a service may not touch the filesystem — an
+   * indirection through a loader module satisfies `no-fs-in-service` while
+   * breaking what it stands for, so the rule cannot be the thing that enforces
+   * this.
+   */
+  get prompts(): PromptTemplates {
+    if (this.overrides.prompts) return this.overrides.prompts;
+    this._prompts ??= new FilePromptTemplates();
+    return this._prompts;
   }
 
   get agentsRepo(): AgentsRepository {
