@@ -35,10 +35,10 @@ Scope is the whole repo: every package, every file the branch touched, committed
 
 | File | Lines | Answers |
 |---|---|---|
-| `README.md` | 549 | This card: scope, boundaries, sources, decisions, how it was tested, the environment overrides |
-| `SKILL.md` | 392 | When does it run? What is the procedure? Which mode? What must never be reported? |
+| `README.md` | 571 | This card: scope, boundaries, sources, decisions, how it was tested, the environment overrides |
+| `SKILL.md` | 401 | When does it run? What is the procedure? Which mode? What must never be reported? |
 | `modes.md` | 170 | How do `--freeze` and `--only critical` differ from a normal run? |
-| `routing.md` | 136 | Which files reach Track B, what each of its two agents opens, what is left out on purpose |
+| `routing.md` | 169 | Which files reach Track B, what each of its two agents opens, what is left out on purpose |
 | `gates.md` | 187 | What is each Track A gate, what does its failure look like, what do I try first? |
 | `severity.md` | 179 | Which of the four levels is this, and what does it stop? |
 
@@ -131,6 +131,28 @@ authoritative in the abstract. That is why a Track A critical and a Track B crit
 different objects, and why an upstream skill's CRITICAL is not ours.
 
 ## 8. Version and changelog
+
+### 1.3.0 — 2026-08-06
+
+One addition to one brief, from the first branch to be reviewed four times.
+
+- **`security` enumerates before it searches** — `routing.md` §1. It must list every input on
+  each attacker-reachable path the diff touches, and name the bound on each, before it looks for
+  a vulnerability. An input with no nameable bound is a finding; *"all of them are bounded, here
+  they are"* is a result the next run can check, which silence is not.
+- **What prompted it.** Four consecutive `--full` runs on `feat/agent-layer` each returned
+  exactly one defect, all four on the classifier's input path and all four the same shape — an
+  attacker-controlled input with no stated bound. A clone read that escaped, one that resolved
+  back into `<clone>/.git`, an `fs.readFile` with no byte cap, and twenty commit subjects capped
+  by count but not by length. Every one was present and findable in run 1.
+- **Why the runs did not converge on their own.** A brief that says *search* gets sampling: the
+  agent returns what it happens to reach and stops, so one instance surfaces per pass and each
+  fix opens the next pass's surface. Two of the four runs were also steered — their briefs said
+  prior rounds had found defects in that file, which shortens the search but is not review.
+- **Unmeasured, and marked so.** 1.2.0 earned its cuts on §9's measurement; this earns nothing
+  yet. The failure it responds to is real and recorded above, but whether enumeration finds the
+  set in one pass — or merely produces longer reports — has not been run. Treat the next
+  four-round branch as the measurement.
 
 ### 1.2.0 — 2026-08-02
 
