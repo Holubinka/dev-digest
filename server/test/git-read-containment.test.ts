@@ -10,6 +10,12 @@
  * as a symlink to `../../../../etc/passwd`; git materialises that verbatim on
  * clone, and the `.md` rule constrains the link's name, never its target. Only
  * resolving the path catches it.
+ *
+ * There are two escapes, and only the first one leaves. The second stays put:
+ * `docs/plan.md` → `../.git/config` satisfies every containment test there is
+ * and still reaches the GitHub PAT that `withGitHubToken` embedded in the
+ * remote URL. Both are exercised below, because a check that stops one and
+ * waves the other through is the state this file was written in.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, mkdir, writeFile, symlink, rm, realpath } from 'node:fs/promises';
@@ -18,6 +24,7 @@ import { join } from 'node:path';
 import { SimpleGitClient } from '../src/adapters/git/simple-git.js';
 
 const REPO = { owner: 'acme', name: 'payments-api' };
+const TOKEN_URL = 'https://x-access-token:ghp_notarealtoken@github.com/acme/payments-api';
 
 let cloneDir: string;
 let outside: string;
@@ -44,6 +51,16 @@ beforeEach(async () => {
   // satisfies a naive startsWith(`…/payments-api`) test.
   await mkdir(join(cloneDir, REPO.owner, `${REPO.name}-evil`), { recursive: true });
   await writeFile(join(cloneDir, REPO.owner, `${REPO.name}-evil`, 'x.md'), 'not yours');
+
+  // The git directory in the shape `clone()` leaves it: the remote URL carries
+  // the PAT, because `withGitHubToken` builds the URL git is handed.
+  await mkdir(join(root, '.git'), { recursive: true });
+  await writeFile(join(root, '.git', 'config'), `[remote "origin"]\n\turl = ${TOKEN_URL}\n`);
+  // The attack that never leaves the clone, and so passes containment.
+  await symlink(join(root, '.git', 'config'), join(root, 'docs', 'creds.md'));
+  // `.github` is not `.git`, and the segment test is exact — this must be readable.
+  await mkdir(join(root, '.github'), { recursive: true });
+  await writeFile(join(root, '.github', 'notes.md'), 'a workflow note');
 
   client = new SimpleGitClient(cloneDir);
 });
@@ -76,5 +93,27 @@ describe('SimpleGitClient.readFile — stays inside the clone', () => {
 
   it('still fails for a file that is simply absent', async () => {
     await expect(client.readFile(REPO, 'docs/missing.md')).rejects.toThrow();
+  });
+});
+
+/**
+ * The half containment cannot see. Every path here resolves *inside* the clone,
+ * so `startsWith(root + sep)` is satisfied by all of them and stops none.
+ */
+describe('SimpleGitClient.readFile — stays out of the git directory', () => {
+  it("refuses a symlink that resolves into the clone's own .git", async () => {
+    await expect(client.readFile(REPO, 'docs/creds.md')).rejects.toThrow(
+      /refusing to read the clone's git directory/,
+    );
+  });
+
+  it('refuses a direct path into .git', async () => {
+    await expect(client.readFile(REPO, '.git/config')).rejects.toThrow(
+      /refusing to read the clone's git directory/,
+    );
+  });
+
+  it('reads under .github, which is a different directory', async () => {
+    await expect(client.readFile(REPO, '.github/notes.md')).resolves.toBe('a workflow note');
   });
 });

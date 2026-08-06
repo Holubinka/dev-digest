@@ -1,5 +1,5 @@
 import { simpleGit, type SimpleGit } from 'simple-git';
-import { join, sep } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { mkdir, readFile, access, rm, realpath } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import type {
@@ -127,7 +127,8 @@ export class SimpleGitClient implements GitClient {
   }
 
   /**
-   * Read one file out of the clone, refusing anything that resolves outside it.
+   * Read one file out of the clone, refusing anything that resolves outside it
+   * or into its git directory.
    *
    * `path` reaches here from a PR body (`modules/intent`), so on a public repo
    * it is attacker-controlled. The caller sanitises it as a *string* — no `..`
@@ -145,12 +146,26 @@ export class SimpleGitClient implements GitClient {
    *
    * `repo-intel/pipeline/walk.ts` already skips every symlink it walks. This is
    * that same stance for the one reader that takes a path from outside.
+   *
+   * Containment alone is not enough, and the second check is not redundant with
+   * the first. `.git/config` carries the URL `clone()` was given, and that URL
+   * has the stored GitHub PAT embedded in it (`modules/repos/helpers.ts`
+   * `withGitHubToken`) — nothing rewrites the remote afterwards. So a symlink
+   * aimed *back inside* at `../.git/config` satisfies every containment test
+   * there is and still hands the token to the caller. `sanitizeRepoPath`
+   * refuses a `.git/` prefix on the string; this is that same rule applied
+   * after resolution, which is the only place a symlink is visible. The segment
+   * comparison is exact, so `.github/` — a directory somebody may legitimately
+   * want to read — is unaffected.
    */
   async readFile(repo: RepoRef, path: string): Promise<string> {
     const root = await realpath(this.clonePathFor(repo));
     const target = await realpath(join(root, path));
     if (target !== root && !target.startsWith(root + sep)) {
       throw new Error(`refusing to read outside the clone: ${path}`);
+    }
+    if (relative(root, target).split(sep)[0] === '.git') {
+      throw new Error(`refusing to read the clone's git directory: ${path}`);
     }
     return readFile(target, 'utf8');
   }
