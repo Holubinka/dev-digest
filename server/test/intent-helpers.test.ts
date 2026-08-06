@@ -9,6 +9,7 @@ import {
   truncateCodePoints,
 } from '../src/modules/intent/helpers.js';
 import {
+  MAX_COMMIT_SUBJECT_CHARS,
   MAX_ISSUE_BODY_CHARS,
   MAX_ISSUE_TITLE_CHARS,
   MAX_PR_BODY_CHARS,
@@ -295,6 +296,27 @@ describe('renderClassifierInput — caps on attacker-controlled text', () => {
   it('leaves text under the cap untouched', () => {
     const text = renderClassifierInput(sources({ body: 'Rate-limit the public API.' }));
     expect(block(text, 'pr-body')).toBe('Rate-limit the public API.');
+  });
+
+  /**
+   * `MAX_COMMIT_MESSAGES` bounds how many subjects arrive; nothing bounded how
+   * long one could be. Git puts no limit on a subject line and `pr_commits`
+   * stores it verbatim, so twenty of them is twenty unbounded strings.
+   */
+  it('caps every commit subject at MAX_COMMIT_SUBJECT_CHARS code points', () => {
+    const text = renderClassifierInput(
+      sources({
+        commitMessages: [astral(MAX_COMMIT_SUBJECT_CHARS + 400), 'fix: a short one'],
+      }),
+    );
+    const [long = '', short = ''] = block(text, 'commits-files')
+      .replace('Commits:\n', '')
+      .split('\n');
+
+    expect([...long.replace('- ', '')]).toHaveLength(MAX_COMMIT_SUBJECT_CHARS);
+    expect(long).not.toContain('�');
+    // The cap truncates; it does not rewrite everything to the same length.
+    expect(short).toBe('- fix: a short one');
   });
 });
 

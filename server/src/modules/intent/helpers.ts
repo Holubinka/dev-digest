@@ -7,6 +7,7 @@ import { wrapUntrusted } from '../../platform/prompt.js';
 import type { PrIntentRow } from '../../db/rows.js';
 import type { IntentSources } from './types.js';
 import {
+  MAX_COMMIT_SUBJECT_CHARS,
   MAX_ISSUE_BODY_CHARS,
   MAX_ISSUE_TITLE_CHARS,
   MAX_PATH_LENGTH,
@@ -194,7 +195,13 @@ export function renderClassifierInput(sources: IntentSources): string {
   if (sources.commitMessages.length > 0 || sources.filePaths.length > 0) {
     const parts: string[] = [];
     if (sources.commitMessages.length > 0) {
-      parts.push(`Commits:\n${sources.commitMessages.map((m) => `- ${m}`).join('\n')}`);
+      // `MAX_COMMIT_MESSAGES` bounds how many of these arrive, not how long any
+      // one is, and git puts no limit on a subject line.
+      const subjects = sources.commitMessages
+        .map((m) => truncateCodePoints(m, MAX_COMMIT_SUBJECT_CHARS))
+        .map((m) => `- ${m}`)
+        .join('\n');
+      parts.push(`Commits:\n${subjects}`);
     }
     if (sources.filePaths.length > 0) {
       parts.push(`Changed files:\n${sources.filePaths.map((p) => `- ${p}`).join('\n')}`);

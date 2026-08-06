@@ -23,6 +23,16 @@ export const MAX_PLAN_FILE_CHARS = 6000;
  */
 export const MAX_PLAN_FILE_BYTES = MAX_PLAN_FILE_CHARS * 4;
 
+/**
+ * Code points kept from each commit subject.
+ *
+ * `MAX_COMMIT_MESSAGES` bounds how many subjects reach the classifier, not how
+ * long any one of them is — and git imposes no limit on a subject line, which
+ * `pr_commits.message` then stores verbatim. Counting without measuring is the
+ * gap: twenty subjects is a small number of arbitrarily large strings.
+ */
+export const MAX_COMMIT_SUBJECT_CHARS = 200;
+
 /** Longest repo-relative path `sanitizeRepoPath` accepts. */
 export const MAX_PATH_LENGTH = 200;
 
