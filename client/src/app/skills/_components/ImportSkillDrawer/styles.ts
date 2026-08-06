@@ -26,6 +26,21 @@ export const s = {
   hint: { fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5, maxWidth: 420 } satisfies CSSProperties,
   urlPane: { display: "flex", flexDirection: "column", gap: 12 } satisfies CSSProperties,
   urlActions: { display: "flex", justifyContent: "flex-end" } satisfies CSSProperties,
+  /** A refused parse or fetch, said beside the control that caused it. Same
+   *  shape as the one in onboarding's AddRepoView — there is no shared
+   *  primitive for it yet. */
+  failure: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    padding: "10px 12px",
+    borderRadius: 8,
+    border: "1px solid var(--crit)",
+    background: "var(--crit-bg)",
+    textAlign: "left",
+  } satisfies CSSProperties,
+  failureIcon: { color: "var(--crit)", flexShrink: 0 } satisfies CSSProperties,
+  failureText: { fontSize: 13, lineHeight: 1.45, color: "var(--text-secondary)" } satisfies CSSProperties,
   trust: {
     display: "flex",
     flexDirection: "column",

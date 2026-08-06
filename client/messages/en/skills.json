@@ -137,7 +137,8 @@
     "saving": "Saving…",
     "savedToast": "Imported “{name}”. It is disabled until you turn it on.",
     "cancel": "Cancel",
-    "startOver": "Choose another file"
+    "startOver": "Choose another file",
+    "readFailed": "Could not read that skill."
   },
   "community": {
     "searchPlaceholder": "Search community skills (e.g. security)…",

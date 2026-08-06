@@ -63,6 +63,27 @@ export function ImportSkillDrawer({
     if (file) importFile.mutate(file, { onSuccess: accept });
   };
 
+  /**
+   * A refused import needs saying HERE, not only in a toast.
+   *
+   * The `MutationCache` in `lib/providers.tsx` already toasts the server's
+   * message, so no `onError` belongs on the mutations — a second one would be
+   * the same sentence twice. But that toast is gone in four seconds and leaves
+   * the drawer showing an upload box with no clue why nothing happened, and the
+   * reasons here are ones the user has to act on: an oversized archive, a
+   * non-Markdown body, a URL the SSRF guard refused. So the message is rendered
+   * from the mutation's own error state, beside the control that caused it,
+   * where it stays until the next attempt.
+   */
+  const failure = (error: unknown) => (
+    <div style={s.failure} role="alert">
+      <Icon.XCircle size={16} style={s.failureIcon} />
+      <span style={s.failureText}>
+        {error instanceof Error ? error.message : t("import.readFailed")}
+      </span>
+    </div>
+  );
+
   /** Catch without reporting: the `MutationCache` in `lib/providers.tsx` already
    *  toasts a failed mutation, so a second message here would be the same
    *  sentence twice. The catch exists because `onClick` cannot await this. The
@@ -164,6 +185,7 @@ export function ImportSkillDrawer({
                   onChange={(e) => readFile(e.target.files?.[0])}
                 />
                 <p style={s.hint}>{t("file.hint")}</p>
+                {importFile.isError && failure(importFile.error)}
               </div>
             ) : (
               <div style={s.urlPane}>
@@ -186,6 +208,7 @@ export function ImportSkillDrawer({
                     {importUrl.isPending ? t("url.fetching") : t("url.fetch")}
                   </Button>
                 </div>
+                {importUrl.isError && failure(importUrl.error)}
               </div>
             )}
           </>

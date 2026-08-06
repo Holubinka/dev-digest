@@ -154,6 +154,47 @@ describe("ImportSkillDrawer", () => {
   });
 
   /**
+   * A refused import has to say so beside the control, not only in a toast the
+   * `MutationCache` shows for four seconds — the reasons are ones the user acts
+   * on, and the drawer otherwise sits there looking untouched.
+   */
+  it("says why a file was refused, and stays on the upload box", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 413,
+      statusText: "Payload Too Large",
+      json: async () => ({ error: { message: "archive is larger than 2 MB" } }),
+    });
+    renderDrawer();
+    fireEvent.change(screen.getByLabelText("Choose a file"), {
+      target: { files: [new File(["zip bytes"], "pack.zip", { type: "application/zip" })] },
+    });
+
+    expect(await screen.findByText("archive is larger than 2 MB")).toBeInTheDocument();
+    // No preview means no save button — the drawer did not half-open.
+    expect(screen.queryByText("Save as disabled")).not.toBeInTheDocument();
+    expect(screen.getByText("Choose a file")).toBeInTheDocument();
+  });
+
+  it("says why a URL was refused, on the tab that asked for it", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 400,
+      statusText: "Bad Request",
+      json: async () => ({ error: { message: "refusing to fetch a private address" } }),
+    });
+    renderDrawer();
+    fireEvent.click(screen.getByText("From URL"));
+    fireEvent.change(screen.getByPlaceholderText("https://example.com/skills/flakiness.md"), {
+      target: { value: "http://169.254.169.254/latest/meta-data" },
+    });
+    fireEvent.click(screen.getByText("Fetch"));
+
+    expect(await screen.findByText("refusing to fetch a private address")).toBeInTheDocument();
+    expect(screen.queryByText("Save as disabled")).not.toBeInTheDocument();
+  });
+
+  /**
    * The message is not this drawer's job — `lib/providers.tsx` gives the
    * `QueryClient` a `MutationCache.onError` that toasts every failed mutation,
    * and a second `toast.error` here would print the same sentence twice. What it
