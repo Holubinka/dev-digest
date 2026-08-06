@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../../../../../../../../messages/en/brief.json";
 import type { IntentRecord } from "@/lib/types";
 import { IntentCard } from "./IntentCard";
-import { riskIcon, RISK_ICON_FALLBACK } from "./constants";
+import { riskChip, RISK_ICON_FALLBACK } from "./constants";
 
 afterEach(cleanup);
 
@@ -152,7 +152,7 @@ describe("IntentCard — degrading rather than crashing", () => {
     expect(badge).toBeInTheDocument();
     // An icon was resolved: the fallback, since nothing maps this string.
     expect(badge.querySelector("svg")).not.toBeNull();
-    expect(riskIcon("quantum flux")).toBe(RISK_ICON_FALLBACK);
+    expect(riskChip("quantum flux").icon).toBe(RISK_ICON_FALLBACK);
   });
 
   /**
@@ -163,13 +163,13 @@ describe("IntentCard — degrading rather than crashing", () => {
   it.each(["constructor", "toString", "valueOf", "hasOwnProperty", "__proto__"])(
     "resolves the inherited key %s to the fallback icon",
     (key) => {
-      expect(riskIcon(key)).toBe(RISK_ICON_FALLBACK);
+      expect(riskChip(key).icon).toBe(RISK_ICON_FALLBACK);
     },
   );
 
   it("still maps a known risk area, case- and space-insensitively", () => {
-    expect(riskIcon("  Security ")).toBe("Shield");
-    expect(riskIcon("security")).not.toBe(RISK_ICON_FALLBACK);
+    expect(riskChip("  Security ").icon).toBe("Shield");
+    expect(riskChip("security").icon).not.toBe(RISK_ICON_FALLBACK);
   });
 
   /**
@@ -189,16 +189,49 @@ describe("IntentCard — degrading rather than crashing", () => {
     ["Conventions extraction pipeline (model hallucination, quote verification gates)", "Workflow"],
     ["Feature models configuration", "Wrench"],
   ])("maps the real phrase %j to %s", (phrase, icon) => {
-    expect(riskIcon(phrase)).toBe(icon);
+    expect(riskChip(phrase).icon).toBe(icon);
   });
 
   it("lets an earlier rule win: a security phrase that also mentions the API", () => {
-    expect(riskIcon("auth bypass on the public API")).toBe("Shield");
+    expect(riskChip("auth bypass on the public API").icon).toBe("Shield");
   });
 
   it("does not match a keyword buried inside a longer word", () => {
     // \b is what keeps `ui` out of "building" and `job` out of "jobless".
-    expect(riskIcon("building the sidebar")).toBe(RISK_ICON_FALLBACK);
+    expect(riskChip("building the sidebar").icon).toBe(RISK_ICON_FALLBACK);
+  });
+});
+
+/**
+ * Tint is a signal, and a signal every chip carries is not one. These assertions
+ * pin the restraint as much as the colours: only the irreversible families are
+ * tinted, and the tokens are the theme's own — a literal hex here would mean a
+ * second copy of `SEV` (`client/INSIGHTS.md:307-338`).
+ */
+describe("IntentCard — risk tone", () => {
+  it.each([
+    ["auth surface touched", "var(--crit)", "var(--crit-bg)"],
+    ["secret rotation", "var(--crit)", "var(--crit-bg)"],
+    ["migration drops a column", "var(--warn)", "var(--warn-bg)"],
+  ])("tints %j as an irreversible risk", (phrase, color, bg) => {
+    expect(riskChip(phrase)).toMatchObject({ color, bg });
+  });
+
+  it.each(["performance", "public API", "tests", "quantum flux"])(
+    "leaves %j on the neutral default",
+    (phrase) => {
+      expect(riskChip(phrase)).toMatchObject({
+        color: "var(--text-secondary)",
+        bg: "var(--bg-hover)",
+      });
+    },
+  );
+
+  it("carries the tone through to the rendered badge", () => {
+    renderCard({ intent: { ...RECORD, risk_areas: ["auth surface touched"] } });
+
+    const badge = screen.getByText("auth surface touched");
+    expect(badge.getAttribute("style")).toContain("var(--crit)");
   });
 });
 

@@ -4,7 +4,7 @@ import React from "react";
 import { useTranslations } from "next-intl";
 import { Badge, Button, Icon, SectionLabel, Skeleton, type IconName } from "@devdigest/ui";
 import type { IntentRecord } from "@/lib/types";
-import { confidenceColor, riskIcon } from "./constants";
+import { confidenceColor, riskChip } from "./constants";
 import { s } from "./styles";
 
 interface IntentCardProps {
@@ -116,13 +116,16 @@ export function IntentCard({
         <div style={s.risks}>
           <div style={s.colLabel}>{t("intent.riskAreas")}</div>
           <div style={s.riskRow}>
-            {intent.risk_areas.map((area, i) => (
+            {intent.risk_areas.map((area, i) => {
+              const chip = riskChip(area);
               // `Badge` is a <span>. `Chip` renders a <button>, and a button
               // with no action is an accessibility defect.
-              <Badge key={`${area}-${i}`} icon={riskIcon(area)}>
-                {area}
-              </Badge>
-            ))}
+              return (
+                <Badge key={`${area}-${i}`} icon={chip.icon} color={chip.color} bg={chip.bg}>
+                  {area}
+                </Badge>
+              );
+            })}
           </div>
         </div>
       )}
