@@ -18,6 +18,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { startPg, dockerAvailable, type PgFixture } from './helpers/pg.js';
 import { ReviewRepository } from '../src/modules/reviews/repository.js';
+import type { RunTrace } from '@devdigest/shared';
 import { seed } from '../src/db/seed.js';
 import * as t from '../src/db/schema.js';
 import type { Finding } from '@devdigest/shared';
@@ -106,6 +107,74 @@ d('a NUL in model output does not lose the review', () => {
       rationale: 'Allocation precedes the cap.',
       suggestion: 'Cap it first.',
     });
+  });
+
+
+  /**
+   * `model` is not server-controlled: `agents.model` is `z.string().min(1)`
+   * from POST/PUT /agents. The comment at this insert used to claim otherwise.
+   */
+  it('stores a model slug that arrived with a NUL in it', async () => {
+    const review = await repo.insertReview({
+      workspaceId,
+      prId,
+      agentId: null,
+      runId: null,
+      kind: 'review',
+      verdict: 'comment',
+      summary: 'ok',
+      score: 60,
+      model: `deepseek${NUL}/v4`,
+    });
+
+    expect(review.model).toBe('deepseek/v4');
+  });
+
+  /**
+   * `jsonb` refuses U+0000 too, so the trace is the second place the same byte
+   * lands — and it gets there through `log[].msg`, which no one would think of
+   * as a model field.
+   */
+  it('stores a run trace whose log line carries a NUL', async () => {
+    // The seed creates no runs, and run_traces has a FK to agent_runs.
+    const [run] = await pg.handle.db
+      .insert(t.agentRuns)
+      .values({ workspaceId, prId, status: 'running' })
+      .returning();
+    const trace = {
+      config: { agent: 'a', version: '1', provider: 'openrouter', model: 'm', pr: 1, source: 'local' },
+      stats: { duration_ms: 1, tokens_in: 1, tokens_out: 1, cost_usd: null, findings: 0, grounding: '0/0 passed' },
+      prompt_assembly: { system: 's', skills: null, memory: null, specs: null, user: 'u' },
+      tool_calls: [],
+      raw_output: '',
+      memory_pulled: [],
+      specs_read: [],
+      log: [{ t: 0, kind: 'result', msg: `grounding dropped "x${NUL}y": not in diff` }],
+    } as unknown as RunTrace;
+
+    await repo.saveRunTrace(run!.id, trace);
+    const stored = await repo.getRunTrace(run!.id);
+
+    expect(stored?.log?.[0]?.msg).toBe('grounding dropped "xy": not in diff');
+  });
+
+  /**
+   * A line number is an int4 column bounded only by `z.number().int()`, and
+   * grounding skips the line check entirely for four `kind` values the model
+   * itself chooses — so an absurd number reaches the insert.
+   */
+  it('stores a finding whose line number does not fit an int4', async () => {
+    const review = await repo.insertReview({
+      workspaceId, prId, agentId: null, runId: null, kind: 'review',
+      verdict: 'comment', summary: 'ok', score: 60, model: 'm',
+    });
+
+    const rows = await repo.insertFindings(review.id, [
+      finding({ start_line: 9_999_999_999, end_line: 9_999_999_999 }),
+    ]);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.startLine).toBe(2_147_483_647);
   });
 
   /**

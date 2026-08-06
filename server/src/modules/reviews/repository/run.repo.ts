@@ -1,6 +1,7 @@
 import { and, desc, eq } from 'drizzle-orm';
 import type { Db } from '../../../db/client.js';
 import * as t from '../../../db/schema.js';
+import { stripNulDeep } from '../../../db/text.js';
 import type { RunSummary, RunTrace } from '@devdigest/shared';
 
 // ---- in-flight / history --------------------------------------------------
@@ -177,7 +178,11 @@ export async function completeAgentRun(
 }
 
 /** Persist the WHOLE run log as ONE document. PK = runId → agent_runs. */
-export async function saveRunTrace(db: Db, runId: string, trace: RunTrace): Promise<void> {
+export async function saveRunTrace(db: Db, runId: string, rawTrace: RunTrace): Promise<void> {
+  // `jsonb` refuses U+0000 like `text` does, and the trace carries model strings
+  // through `log[].msg`. Cleaned here rather than in the two builders so a third
+  // builder cannot miss it.
+  const trace = stripNulDeep(rawTrace);
   await db
     .insert(t.runTraces)
     .values({ runId, trace })

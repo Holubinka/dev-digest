@@ -33,3 +33,50 @@ const NUL = String.fromCharCode(0);
  */
 export const stripNul = (text: string): string =>
   text.includes(NUL) ? text.replaceAll(NUL, '') : text;
+
+/**
+ * The same strip, over every string reachable in a JSON document.
+ *
+ * `jsonb` refuses U+0000 exactly as `text` does — `select '{"a":"x\\u0000y"}'::jsonb`
+ * answers `unsupported Unicode escape sequence` — so a run trace carries the
+ * defect one station past `insertReview`. It gets there without any obvious
+ * model field: `trace.log` is the run's event buffer verbatim, and the engine
+ * writes `grounding dropped "<title>": file '<file>' not present in diff` into
+ * it. A `file` holding a NUL is ALWAYS dropped, because a git path cannot
+ * contain one — so that log line always carries it.
+ *
+ * Left alone deliberately: numbers, booleans and null. Only strings can hold
+ * the byte, and rebuilding the rest would change types on their way to `jsonb`.
+ */
+export function stripNulDeep<T>(value: T): T {
+  if (typeof value === 'string') return stripNul(value) as T;
+  if (Array.isArray(value)) return value.map(stripNulDeep) as T;
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, stripNulDeep(v)]),
+    ) as T;
+  }
+  return value;
+}
+
+/** Postgres `integer` is 32-bit signed. */
+const INT4_MIN = -2_147_483_648;
+const INT4_MAX = 2_147_483_647;
+
+/**
+ * Clamp a number into a Postgres `integer` column.
+ *
+ * `Finding.start_line` and `end_line` are `z.number().int()` with no bounds,
+ * and `groundFindings` does not close the gap: for `kind` of `secret_leak`,
+ * `lethal_trifecta`, `phantom` or `hook` it keeps a finding on file presence
+ * alone and never reaches the line check — and `kind` is a field the model
+ * fills in. So `{"kind":"hook","start_line":9999999999}` on a file that really
+ * is in the diff reaches the insert, and Postgres answers `integer out of
+ * range`, losing the whole review the way the NUL did.
+ *
+ * This makes the row STORABLE, not correct. A clamped line number is still a
+ * wrong citation; judging that is grounding's job, and the `kind` skip above is
+ * where it would be fixed.
+ */
+export const toInt4 = (n: number): number =>
+  Number.isFinite(n) ? Math.min(INT4_MAX, Math.max(INT4_MIN, Math.trunc(n))) : 0;
