@@ -49,6 +49,39 @@ Files that reach no domain land in `checklist[]`: `.github/workflows/**`, `scrip
 The one thing worth raising from that list: `docs/architecture.md` in the diff earns a `note`
 asking whether its diagram still holds.
 
+### The `security` agent enumerates before it searches
+
+Its brief carries one instruction its skill does not: **before looking for a vulnerability, build
+the list.** For each attacker-reachable path the diff touches, name every input that travels it
+and the bound on each one — length, byte size, count, allowed characters, resolved location. An
+input whose bound you cannot name is a finding. Say so explicitly when there is none: *"every
+input on this path is bounded, and here they are"* is a result, and it is the only form of answer
+the next run can check.
+
+The list is not the findings. Only its unbounded entries are, and a bound enforced elsewhere on
+the path still counts as a bound — §5's ban on padding a thin run applies here unchanged.
+
+The failure it answers, from the first branch this skill reviewed four times. Four consecutive
+`--full` runs on `feat/agent-layer` each returned exactly one defect of the same shape, all on the
+classifier's input path, and each fix opened the next run's surface:
+
+| Run | Finding | Bound that was missing |
+|---|---|---|
+| 1 | a symlink read escaping the clone | where the path resolves |
+| 2 | a symlink resolving back into `<clone>/.git` | where the path resolves |
+| 3 | `fs.readFile` on an attacker-named file | bytes |
+| 4 | twenty commit subjects, count-capped only | characters |
+
+Every one was present and findable in run 1. What differed was attention: an agent told to
+*search* samples the space and returns what it happens to reach, so it surfaces one instance per
+pass and stops. Runs 3 and 4 were also steered — their briefs said prior rounds had found defects
+in that file, which shortens the search but is not review. An enumeration needs no steering, and
+its output is falsifiable: a named input with a named bound can be checked by the next reader,
+and a missing row is visible where a silent pass is not.
+
+**Unmeasured.** Whether this finds the set in one pass, or only makes reports longer, has not
+been run — [README.md](README.md) §8 records it as owing a measurement.
+
 ## 2. Skills that ship a checklist — run it
 
 Three of the thirteen end in a checklist written to be run against a diff. Open the skill and

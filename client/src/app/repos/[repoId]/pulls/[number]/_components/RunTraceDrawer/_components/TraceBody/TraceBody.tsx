@@ -73,6 +73,15 @@ export function TraceBody({ trace, findings }: { trace: RunTrace; findings: Find
 
       <TraceSection icon="FileText" title={t("trace.promptAssembly")} defaultOpen={false}>
         <PromptBlock label={t("trace.prompt.system")} text={trace.prompt_assembly.system} color={PROMPT_COLORS.system} />
+        {/* Description and intent, in the order `assemblePrompt` pushes them —
+            both were absent here, so the intent that really went into the
+            prompt was invisible even though it is persisted on the trace. */}
+        {trace.prompt_assembly.pr_description != null && (
+          <PromptBlock label={t("trace.prompt.prDescription")} text={trace.prompt_assembly.pr_description} color={PROMPT_COLORS.prDescription} />
+        )}
+        {trace.prompt_assembly.intent != null && (
+          <PromptBlock label={t("trace.prompt.intent")} text={trace.prompt_assembly.intent} color={PROMPT_COLORS.intent} />
+        )}
         {trace.prompt_assembly.skills != null && (
           <PromptBlock label={t("trace.prompt.skills")} text={trace.prompt_assembly.skills} color={PROMPT_COLORS.skills} />
         )}

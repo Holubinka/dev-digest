@@ -7,7 +7,12 @@ import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/platform/config.js';
 import { seed } from '../src/db/seed.js';
 import * as t from '../src/db/schema.js';
-import { MockEmbedder, MockGitClient, MockLLMProvider } from '../src/adapters/mocks.js';
+import {
+  MockEmbedder,
+  MockGitClient,
+  MockLLMProvider,
+  MockSecretsProvider,
+} from '../src/adapters/mocks.js';
 import type { Review, RunTrace } from '@devdigest/shared';
 
 const hasDocker = await dockerAvailable();
@@ -57,14 +62,31 @@ d('skills in the assembled prompt', () => {
     await pg?.stop();
   });
 
+  /**
+   * `llmFallback` is what keeps this hermetic, structurally. The 05 intent
+   * pre-pass resolves `review_intent` from `settings.feature_models` — a row,
+   * not a constant — so no set of `llm` keys written here can be complete, and
+   * before the catch-all existed `container.llm('openrouter')` built the REAL
+   * provider from `~/.devdigest/secrets.json`. Measured 2026-08-05: two live,
+   * paid OpenRouter requests on every review these tests start, ~3s each and up
+   * to 12s under load, which is what pushed `waitForPrRuns`'s 10s budget over.
+   *
+   * The fallback carries the Review fixture, which does not satisfy `Intent`, so
+   * the derivation still degrades and the prompt is the same `intent: null`
+   * assembly these tests were written against — now because an override
+   * answered, not because a key was missing. `MockSecretsProvider({})` stays as
+   * defence in depth.
+   */
   function makeApp() {
     return buildApp({
       config: loadConfig({ ...process.env, NODE_ENV: 'test' } as NodeJS.ProcessEnv),
       db: pg.handle.db,
       overrides: {
+        secrets: new MockSecretsProvider({}),
         embedder: new MockEmbedder(),
         git: new MockGitClient({ diff: DIFF }),
         llm: { openai: new MockLLMProvider('openai', { structured: REVIEW_FIXTURE }) },
+        llmFallback: new MockLLMProvider('openai', { structured: REVIEW_FIXTURE }),
       },
     });
   }
@@ -220,6 +242,13 @@ d('skills in the assembled prompt', () => {
     expect(trace.prompt_assembly.skills ?? null).toBeNull();
     expect(trace.prompt_assembly.user).not.toContain('## Skills / rules');
     expect(trace.log.map((l) => l.msg).some((m) => m.startsWith('skills:'))).toBe(false);
+    // The intent pre-pass ran against `llmFallback`, not against a real
+    // provider: the reason names the mock's fixture. Drop the fallback and this
+    // reads "OPENROUTER_API_KEY is not configured" — or, on a machine that has
+    // one, makes a live paid request.
+    expect(trace.log.map((l) => l.msg)).toContainEqual(
+      expect.stringMatching(/Intent unavailable — MockLLMProvider fixture failed schema/),
+    );
     await app.close();
   });
 });

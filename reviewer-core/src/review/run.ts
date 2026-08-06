@@ -2,6 +2,7 @@ import type {
   Finding,
   LLMProvider,
   PromptAssembly,
+  PromptSectionLog,
   Review,
   RunEventKind,
   UnifiedDiff,
@@ -71,6 +72,13 @@ export interface ReviewInput {
   /** PR author's description/body (untrusted; truncated + delimiter-wrapped in
       the prompt). Empty/undefined → section omitted. */
   prDescription?: string;
+  /**
+   * Derived PR intent + scope (05), pre-rendered by the caller. Untrusted —
+   * it is a summary OF untrusted text, so it is delimiter-wrapped and
+   * truncated exactly like the PR description. Rendered right after
+   * `## PR description`, which it summarises. Empty/undefined → omitted.
+   */
+  intent?: string;
   /** Task framing line, e.g. "Review PR #482 …". */
   task?: string;
   /** Override the structured-output retry budget. */
@@ -92,6 +100,18 @@ export interface ReviewInput {
   checkCancelled?: () => void;
 }
 
+/**
+ * The metadata-only description of ONE assembled prompt, tagged with the chunk
+ * it was assembled for. assemblePrompt runs once per chunk — single-pass has one
+ * ('all files'), map-reduce one per changed file — so a caller that logs these
+ * without the label emits N lines that look identical and name nothing.
+ */
+export interface PromptChunkLog {
+  /** Same label as `chunks[].label`: a file path in map-reduce, 'all files' otherwise. */
+  chunk: string;
+  sections: PromptSectionLog[];
+}
+
 export interface ReviewOutcome {
   /** The reduced, GROUNDED review (findings that survived the citation gate). */
   review: Review;
@@ -105,6 +125,11 @@ export interface ReviewOutcome {
   assembly: PromptAssembly;
   /** Per-chunk labels (for the run trace's tool_calls). */
   chunks: { label: string }[];
+  /**
+   * One metadata-only entry per prompt actually SENT to the model, in call
+   * order. Carries no prompt content — see `describePromptSection`.
+   */
+  prompts: PromptChunkLog[];
   tokensIn: number;
   tokensOut: number;
   costUsd: number | null;
@@ -135,6 +160,7 @@ export async function reviewPullRequest(input: ReviewInput): Promise<ReviewOutco
     callers: input.callers,
     repoMap: input.repoMap,
     prDescription: input.prDescription,
+    intent: input.intent,
     task: input.task,
   };
 
@@ -154,6 +180,7 @@ export async function reviewPullRequest(input: ReviewInput): Promise<ReviewOutco
   );
 
   const partials: Review[] = [];
+  const prompts: PromptChunkLog[] = [];
   let tokensIn = 0;
   let tokensOut = 0;
   let costUsd: number | null = 0;
@@ -171,6 +198,7 @@ export async function reviewPullRequest(input: ReviewInput): Promise<ReviewOutco
     );
     const a = assemblePrompt({ ...promptParts, diff: chunk.diffText });
     if (mode === 'single-pass') assembly = a.assembly;
+    prompts.push({ chunk: chunk.label, sections: a.sections });
     const res = await input.llm.completeStructured<Review>({
       model: input.model,
       schema: ReviewSchema,
@@ -211,6 +239,7 @@ export async function reviewPullRequest(input: ReviewInput): Promise<ReviewOutco
     mode,
     assembly,
     chunks: chunks.map((c) => ({ label: c.label })),
+    prompts,
     tokensIn,
     tokensOut,
     costUsd,

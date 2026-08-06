@@ -10,6 +10,19 @@
   "overlap": "{count} overlap",
   "unavailable": "Brief not available yet.",
   "unavailableHint": "Run a review or open the PR to compute it.",
+  "intent": {
+    "inScope": "In scope",
+    "outOfScope": "Out of scope",
+    "riskAreas": "Risk areas",
+    "confidence": "{band} confidence",
+    "recompute": "Recompute",
+    "computing": "Computing…",
+    "failed": "Couldn't compute intent.",
+    "unavailable": "No intent derived for this PR yet.",
+    "unavailableHint": "A review run derives it — or press Recompute.",
+    "model": "via {model}",
+    "none": "—"
+  },
   "why": {
     "title": "git-why",
     "blame": "blame",

@@ -8,7 +8,15 @@ import messages from "../../../../../../../../messages/en/runs.json"; // apps/we
 const TRACE: RunTrace = {
   config: { agent: "Security", version: "1", provider: "openai", model: "gpt-4.1", pr: 482, source: "local" },
   stats: { duration_ms: 8200, tokens_in: 12000, tokens_out: 1500, cost_usd: 0.06, findings: 2, grounding: "2/2 passed" },
-  prompt_assembly: { system: "You are a reviewer.", skills: "### skill", memory: null, specs: null, user: "Review PR #482" },
+  prompt_assembly: {
+    system: "You are a reviewer.",
+    pr_description: "Rate-limits the public pricing API.",
+    intent: "Intent: rate-limit the public pricing API",
+    skills: "### skill",
+    memory: null,
+    specs: null,
+    user: "Review PR #482",
+  },
   tool_calls: [{ tool: "review_file", args: "src/config.ts", meta: "single-pass", ms: 1200 }],
   raw_output: '{"verdict":"request_changes"}',
   memory_pulled: [{ pr: 471, text: "rate-limit public endpoints" }],
@@ -66,6 +74,50 @@ describe("A5 Run Trace drawer (smoke)", () => {
     renderWithIntl(<RunTraceDrawer runId="r1" agentName="Security" prNumber={482} onClose={() => {}} />);
     expect(screen.getByText("COST")).toBeInTheDocument();
     expect(screen.getByText("$0.060")).toBeInTheDocument();
+  });
+
+  /**
+   * `PromptAssembly` has nine fields and this section rendered seven: the PR
+   * description and the derived intent were both dropped, so the intent that
+   * really went into the prompt was invisible in the UI while sitting in
+   * `run_traces.trace.prompt_assembly.intent` all along.
+   */
+  it("shows every prompt leg that the trace carries, in assembly order", () => {
+    const { container } = renderWithIntl(
+      <RunTraceDrawer runId="r1" agentName="Security" prNumber={482} onClose={() => {}} />,
+    );
+    fireEvent.click(screen.getByText(messages.trace.promptAssembly));
+
+    expect(screen.getByText(messages.trace.prompt.prDescription)).toBeInTheDocument();
+    expect(screen.getByText(messages.trace.prompt.intent)).toBeInTheDocument();
+
+    // Description, then intent, then skills — the order `assemblePrompt` uses.
+    const text = container.textContent ?? "";
+    expect(text.indexOf(messages.trace.prompt.prDescription)).toBeGreaterThan(
+      text.indexOf(messages.trace.prompt.system),
+    );
+    expect(text.indexOf(messages.trace.prompt.intent)).toBeGreaterThan(
+      text.indexOf(messages.trace.prompt.prDescription),
+    );
+    expect(text.indexOf(messages.trace.prompt.skills)).toBeGreaterThan(
+      text.indexOf(messages.trace.prompt.intent),
+    );
+  });
+
+  /** A run with no derived intent shows no intent block — not an empty one. */
+  it("omits both blocks when the trace has neither", () => {
+    hooks.useRunTrace.mockReturnValue({
+      data: { ...TRACE, prompt_assembly: { ...TRACE.prompt_assembly, pr_description: null, intent: null } },
+      isLoading: false,
+    });
+    renderWithIntl(
+      <RunTraceDrawer runId="r1" agentName="Security" prNumber={482} onClose={() => {}} />,
+    );
+    fireEvent.click(screen.getByText(messages.trace.promptAssembly));
+
+    expect(screen.queryByText(messages.trace.prompt.prDescription)).not.toBeInTheDocument();
+    expect(screen.queryByText(messages.trace.prompt.intent)).not.toBeInTheDocument();
+    expect(screen.getByText(messages.trace.prompt.system)).toBeInTheDocument();
   });
 
   it("switches to the live log tab", () => {

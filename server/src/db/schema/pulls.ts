@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, integer, timestamp, uniqueIndex, index } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, integer, jsonb, timestamp, uniqueIndex, index } from 'drizzle-orm/pg-core';
 import { workspaces } from './core';
 import { repos } from './repos';
 
@@ -24,6 +24,16 @@ export const pullRequests = pgTable(
     filesCount: integer('files_count').notNull().default(0),
     status: text('status').notNull().default('needs_review'),
     body: text('body'),
+    /** Cached GitHub issue linked from the PR body — written by GET /pulls/:id so
+        the review run needs ZERO GitHub calls. Shape mirrors the `IssueMeta`
+        contract; inlined rather than imported because no db/schema file imports
+        from @devdigest/shared and this is not the place to start. */
+    linkedIssue: jsonb('linked_issue').$type<{
+      number: number;
+      title: string;
+      body: string | null;
+      state: string;
+    }>(),
     openedAt: timestamp('opened_at', { withTimezone: true }),
     updatedAt: timestamp('updated_at', { withTimezone: true }),
   },

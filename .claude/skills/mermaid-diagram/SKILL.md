@@ -5,9 +5,9 @@ description: "Create Mermaid diagrams in markdown. Use when the user wants to vi
 
 # Mermaid Diagram Creator
 
-Generate Mermaid diagrams embedded in markdown that **communicate clearly** — showing relationships, flows, and structure that words alone can't express.
+Generate Mermaid diagrams embedded in markdown that **communicate clearly** — showing relationships, flows, and structure that prose alone cannot carry.
 
-See `examples.md` for ready-to-use templates for each diagram type. See `references.md` for official docs and tools.
+See [`examples.md`](examples.md) for ready-to-use templates, one per diagram type, every subject drawn from this repository.
 
 ---
 
@@ -87,7 +87,7 @@ end
 
 ## Sequence Diagrams
 
-Use for API flows, service interactions, and request/response patterns. Ideal for documenting Express routes, middleware chains, and client-server communication.
+Use for API flows, service interactions, and request/response patterns. Ideal for documenting a Fastify route through `routes → service → repository`, the plugin and hook chain ahead of it, and client-server communication.
 
 ### Syntax
 
@@ -108,7 +108,7 @@ Use for API flows, service interactions, and request/response patterns. Ideal fo
 
 ## Class Diagrams
 
-Use for data models, Mongoose schemas, and object relationships.
+Use for ports and the adapters implementing them, service collaborations, and object relationships. For database tables use an ER diagram instead.
 
 ### Relationships
 
@@ -137,7 +137,7 @@ class ClassName {
 
 ## ER Diagrams
 
-Use for MongoDB schema relationships, database design.
+Use for Drizzle/Postgres table relationships and schema design. Write the Postgres type in the attribute slot (`uuid`, `text`, `timestamptz`, `jsonb`, `vector`), so the diagram can be checked against `\d+ <table>`.
 
 ### Relationship Syntax
 

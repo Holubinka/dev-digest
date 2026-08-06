@@ -1,4 +1,4 @@
-import type { PrMeta } from '@devdigest/shared';
+import type { PrDetail, PrMeta } from '@devdigest/shared';
 import { deriveReviewStatus, type ListFinding, type SeverityCounts } from './status.js';
 
 /**
@@ -86,5 +86,74 @@ export function toPrMeta(row: PrListRow, rollups: PrRollups, now: number): PrMet
     findings_warning: findings ? findings.counts.warning : null,
     findings_suggestion: findings ? findings.counts.suggestion : null,
     findings_top: findings ? findings.top : null,
+  };
+}
+
+/**
+ * The extra `pull_requests` columns the detail DTO reads. Same table as
+ * `PrListRow`, so it extends it rather than restating fourteen fields.
+ */
+export interface PrDetailRow extends PrListRow {
+  body: string | null;
+  linkedIssue: PrDetail['linked_issue'];
+}
+
+/** The `pr_files` columns the detail DTO reads. */
+export interface PrFileRow {
+  path: string;
+  additions: number;
+  deletions: number;
+  patch: string | null;
+}
+
+/** The `pr_commits` columns the detail DTO reads. */
+export interface PrCommitRow {
+  sha: string;
+  message: string;
+  author: string;
+  committedAt: Date | null;
+}
+
+/**
+ * A PR and its persisted files and commits as the detail endpoint ships them.
+ *
+ * This is the offline path: `GET /pulls/:id` serves it when GitHub is
+ * unreachable or no token is configured, which makes it the only branch of that
+ * route a hermetic test can reach — and the reason it is worth having out here
+ * rather than inline in the handler's `catch`.
+ *
+ * `status` is passed through, unlike `toPrMeta`'s: detail reports GitHub's
+ * merge state, the list reports review freshness. They are different fields
+ * that happen to share a column.
+ */
+export function toPrDetail(row: PrDetailRow, files: PrFileRow[], commits: PrCommitRow[]): PrDetail {
+  return {
+    id: row.id,
+    number: row.number,
+    title: row.title,
+    author: row.author,
+    branch: row.branch,
+    base: row.base,
+    head_sha: row.headSha,
+    additions: row.additions,
+    deletions: row.deletions,
+    files_count: row.filesCount,
+    status: row.status as PrDetail['status'],
+    opened_at: row.openedAt?.toISOString() ?? null,
+    updated_at: row.updatedAt?.toISOString() ?? null,
+    body: row.body ?? null,
+    files: files.map((f) => ({
+      path: f.path,
+      additions: f.additions,
+      deletions: f.deletions,
+      patch: f.patch ?? null,
+    })),
+    commits: commits.map((c) => ({
+      sha: c.sha,
+      message: c.message,
+      author: c.author,
+      committed_at: c.committedAt?.toISOString() ?? null,
+    })),
+    linked_issue: row.linkedIssue ?? null,
   };
 }

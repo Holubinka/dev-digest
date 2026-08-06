@@ -26,6 +26,11 @@ const EnvSchema = z.object({
   // Note: even when on, sections only populate once the repo is indexed; an
   // unindexed repo degrades gracefully. Per-agent override: agents.repo_intel.
   REPO_INTEL_ENABLED: z.string().optional(),
+  // Verbose prompt-assembly logging: adds a sha256 digest per prompt section
+  // and a per-file breakdown of the diff section. Default OFF, and FORCED off
+  // when NODE_ENV=production (see loadConfig) — the extra detail is a local
+  // debugging aid, and a digest is still a fingerprint of prompt content.
+  PROMPT_LOG_VERBOSE: z.string().optional(),
   API_PORT: z.coerce.number().int().default(3001),
   WEB_PORT: z.coerce.number().int().default(3000),
   DEVDIGEST_CLONE_DIR: z.string().optional(),
@@ -59,6 +64,13 @@ export type AppConfig = {
    * EXACTLY like the ripgrep-only baseline.
    */
   repoIntelEnabled: boolean;
+  /**
+   * Whether the prompt-assembly log carries per-section digests and the
+   * per-file diff breakdown. Default false, and ALWAYS false in production
+   * whatever PROMPT_LOG_VERBOSE says — "local only" is a gate in loadConfig,
+   * not a sentence in a README.
+   */
+  promptLogVerbose: boolean;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -77,5 +89,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     webOrigin: `http://localhost:${parsed.WEB_PORT}`,
     embeddingsEnabled: parsed.EMBEDDINGS_ENABLED === 'true',
     repoIntelEnabled: parsed.REPO_INTEL_ENABLED !== 'false',
+    // The production check comes FIRST and cannot be argued with by the
+    // environment: a deployed instance never emits digests, however the env var
+    // was set by whoever built the image.
+    promptLogVerbose: parsed.NODE_ENV !== 'production' && parsed.PROMPT_LOG_VERBOSE === 'true',
   };
 }

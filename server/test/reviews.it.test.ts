@@ -4,10 +4,15 @@ import { waitForPrRuns } from './helpers/runs.js';
 import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/platform/config.js';
 import { seed } from '../src/db/seed.js';
-import { MockLLMProvider, MockEmbedder, MockGitClient } from '../src/adapters/mocks.js';
+import {
+  MockLLMProvider,
+  MockEmbedder,
+  MockGitClient,
+  MockSecretsProvider,
+} from '../src/adapters/mocks.js';
 import * as t from '../src/db/schema.js';
 import { eq } from 'drizzle-orm';
-import type { Review } from '@devdigest/shared';
+import type { Intent, LLMProvider, Review } from '@devdigest/shared';
 
 const hasDocker = await dockerAvailable();
 const d = hasDocker ? describe : describe.skip;
@@ -110,16 +115,37 @@ d('A2 reviews + agents (Testcontainers pg)', () => {
     await pg?.stop();
   });
 
-  function appWith(structured: unknown, provider: 'openai' | 'anthropic' = 'openai') {
+  /**
+   * `structured` serves every schemaName, so the 05 intent pre-pass receives the
+   * Review fixture for `Intent`, fails validation, and the run continues without
+   * an intent section — which is the degrade path, asserted explicitly below.
+   *
+   * `llmFallback` is what makes that hermetic, and it is STRUCTURAL. The intent
+   * pre-pass resolves its provider from `settings.feature_models`, so no `llm`
+   * key written here can name every id the run will ask for; the catch-all is
+   * consulted for whichever one it turns out to be, before any secret is read.
+   * `MockSecretsProvider({})` stays as defence in depth — it is no longer the
+   * mechanism, and a test that depended on it was depending on a missing key
+   * (a `ConfigError` on the failure path) rather than on an override.
+   */
+  function appWith(
+    structured: unknown,
+    provider: 'openai' | 'anthropic' = 'openai',
+    extraLlm: Record<string, MockLLMProvider> = {},
+    llmFallback: LLMProvider = new MockLLMProvider('openai', { structured }),
+  ) {
     return buildApp({
       config: config(),
       db: pg.handle.db,
       overrides: {
+        secrets: new MockSecretsProvider({}),
         embedder: new MockEmbedder(),
         git: new MockGitClient({ diff: DIFF }),
         llm: {
           [provider]: new MockLLMProvider(provider, { structured }),
+          ...extraLlm,
         },
+        llmFallback,
       },
     });
   }
@@ -302,6 +328,173 @@ d('A2 reviews + agents (Testcontainers pg)', () => {
     // seed has 2 enabled agents; we may have created more above in this PR's ws.
     expect(body.runs.length).toBeGreaterThanOrEqual(2);
     await app.close();
+  });
+
+  // ---- 05: the intent pre-pass ------------------------------------------
+
+  const INTENT_FIXTURE: Intent = {
+    intent: 'Adds rate limiting to the public API.',
+    in_scope: ['the limiter middleware'],
+    out_of_scope: ['billing'],
+    risk_areas: ['performance'],
+  };
+
+  it('a review derives the intent once, persists it, and sends it in the prompt', async () => {
+    const app = await appWith(REVIEW_FIXTURE, 'openai', {
+      openrouter: new MockLLMProvider('openai', {
+        structuredBySchema: { Intent: INTENT_FIXTURE },
+      }),
+    });
+    const { pr } = await setupRepoAndPr(pg.handle.db, workspaceId);
+    const agent = (
+      await app.inject({
+        method: 'POST',
+        url: '/agents',
+        payload: { name: 'Intent A', provider: 'openai', model: 'gpt-4.1', system_prompt: 'rev' },
+      })
+    ).json();
+
+    const body = (
+      await app.inject({ method: 'POST', url: `/pulls/${pr.id}/review`, payload: { agentId: agent.id } })
+    ).json();
+    await waitForPrRuns(pg.handle.db, pr.id, { expected: 1 });
+
+    const [intentRow] = await pg.handle.db
+      .select()
+      .from(t.prIntent)
+      .where(eq(t.prIntent.prId, pr.id));
+    expect(intentRow!.intent).toBe(INTENT_FIXTURE.intent);
+    expect(intentRow!.riskAreas).toEqual(INTENT_FIXTURE.risk_areas);
+    // 12 — the usage lands on pr_intent, once, and nowhere else.
+    expect(intentRow!.tokensIn).toBeGreaterThan(0);
+    expect(intentRow!.costUsd).toBeGreaterThan(0);
+
+    const trace = (
+      await app.inject({ method: 'GET', url: `/runs/${body.runs[0].run_id}/trace` })
+    ).json();
+    expect(trace.prompt_assembly.intent).not.toBeNull();
+    expect(trace.prompt_assembly.intent).toContain(INTENT_FIXTURE.intent);
+    expect(trace.prompt_assembly.user).toContain('## Intent');
+    expect(trace.prompt_assembly.user).toContain('<untrusted source="derived-intent">');
+    // Order invariant: after the description it summarises, before the rules
+    // and (always) before the diff.
+    const user: string = trace.prompt_assembly.user;
+    expect(user.indexOf('## PR description')).toBeLessThan(user.indexOf('## Intent'));
+    expect(user.indexOf('## Intent')).toBeLessThan(user.indexOf('## Diff to review'));
+
+    await app.close();
+  });
+
+  /**
+   * The plan's load-bearing guarantee. The intent call fails (no `Intent`
+   * fixture, so the Review fixture is offered to the `Intent` schema and is
+   * rejected) and the review must be completely unaffected.
+   *
+   * The reason string is asserted, not just the degrade: it is what distinguishes
+   * "the fallback answered and its fixture did not satisfy `Intent`" from "no key
+   * was configured", and only the first is an override doing the isolating.
+   */
+  it('a failed intent never fails a review', async () => {
+    const app = await appWith(REVIEW_FIXTURE);
+    const { pr } = await setupRepoAndPr(pg.handle.db, workspaceId);
+    const agent = (
+      await app.inject({
+        method: 'POST',
+        url: '/agents',
+        payload: { name: 'Intent B', provider: 'openai', model: 'gpt-4.1', system_prompt: 'rev' },
+      })
+    ).json();
+
+    const body = (
+      await app.inject({ method: 'POST', url: `/pulls/${pr.id}/review`, payload: { agentId: agent.id } })
+    ).json();
+    const runId = body.runs[0].run_id;
+    await waitForPrRuns(pg.handle.db, pr.id, { expected: 1 });
+
+    const [run] = await pg.handle.db.select().from(t.agentRuns).where(eq(t.agentRuns.id, runId));
+    expect(run!.status).toBe('done');
+    expect(run!.findingsCount).toBe(1);
+
+    const reviews = (await app.inject({ method: 'GET', url: `/pulls/${pr.id}/reviews` })).json();
+    expect(reviews[0].findings).toHaveLength(1);
+
+    const trace = (await app.inject({ method: 'GET', url: `/runs/${runId}/trace` })).json();
+    expect(trace.prompt_assembly.intent).toBeNull();
+    expect(trace.prompt_assembly.user).not.toContain('## Intent');
+    // Nothing is persisted on a failed derivation.
+    const rows = await pg.handle.db.select().from(t.prIntent).where(eq(t.prIntent.prId, pr.id));
+    expect(rows).toHaveLength(0);
+    // …and the Live Log says why, rather than swallowing it. The reason names the
+    // fixture, so the fallback provider IS what answered the intent call — with
+    // no fallback this would read "OPENROUTER_API_KEY is not configured".
+    expect(trace.log.map((l: { msg: string }) => l.msg)).toContainEqual(
+      expect.stringMatching(/Intent unavailable — MockLLMProvider fixture failed schema/),
+    );
+
+    await app.close();
+  });
+
+  /**
+   * `ContainerOverrides.llm` cannot express "this run touches no live LLM".
+   * `review_intent` is a row in `settings`, so the provider id the pre-pass asks
+   * `container.llm` for is chosen by DATA — here `anthropic`, which `overrides.llm`
+   * does not carry (the review agent's own `openai` mock is the only entry).
+   * `llmFallback` is what answers, and this asserts it three ways: the fallback
+   * recorded exactly the one `completeStructured` call, no per-id mock did, and
+   * the persisted row carries the workspace's chosen provider+model.
+   *
+   * Delete `llmFallback` and `container.llm('anthropic')` hits the empty
+   * `MockSecretsProvider`, throws `ConfigError`, `derive` degrades, and `pr_intent`
+   * stays empty — every assertion below fails.
+   */
+  it('the intent pre-pass is served by the catch-all override for a provider chosen from settings', async () => {
+    const fallback = new MockLLMProvider('openai', {
+      structuredBySchema: { Intent: INTENT_FIXTURE },
+    });
+    const app = await appWith(REVIEW_FIXTURE, 'openai', {}, fallback);
+    const { pr } = await setupRepoAndPr(pg.handle.db, workspaceId);
+
+    try {
+      const put = await app.inject({
+        method: 'PUT',
+        url: '/settings',
+        payload: {
+          feature_models: { review_intent: { provider: 'anthropic', model: 'claude-haiku-x' } },
+        },
+      });
+      expect(put.statusCode).toBe(200);
+
+      const agent = (
+        await app.inject({
+          method: 'POST',
+          url: '/agents',
+          payload: { name: 'Intent C', provider: 'openai', model: 'gpt-4.1', system_prompt: 'rev' },
+        })
+      ).json();
+      await app.inject({
+        method: 'POST',
+        url: `/pulls/${pr.id}/review`,
+        payload: { agentId: agent.id },
+      });
+      await waitForPrRuns(pg.handle.db, pr.id, { expected: 1 });
+
+      const [row] = await pg.handle.db
+        .select()
+        .from(t.prIntent)
+        .where(eq(t.prIntent.prId, pr.id));
+      expect(row!.provider).toBe('anthropic');
+      expect(row!.model).toBe('claude-haiku-x');
+      expect(row!.intent).toBe(INTENT_FIXTURE.intent);
+
+      const structuredCalls = fallback.calls.filter((c) => c.method === 'completeStructured');
+      expect(structuredCalls).toHaveLength(1);
+      expect((structuredCalls[0]!.req as { schemaName: string }).schemaName).toBe('Intent');
+    } finally {
+      // The override is a workspace row shared with every later case in this
+      // file; put `review_intent` back on the registry default.
+      await app.inject({ method: 'PUT', url: '/settings', payload: { feature_models: {} } });
+      await app.close();
+    }
   });
 
   it("the PR list's cost is the SUM of every run, not just the latest review's", async () => {

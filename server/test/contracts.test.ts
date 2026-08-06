@@ -67,8 +67,14 @@ describe('AI contracts parse fixtures', () => {
 
   it('Intent / BlastRadius / Risks / PrHistory', () => {
     expect(() =>
-      Intent.parse({ intent: 'x', in_scope: ['a'], out_of_scope: ['b'] }),
+      Intent.parse({ intent: 'x', in_scope: ['a'], out_of_scope: ['b'], risk_areas: ['auth'] }),
     ).not.toThrow();
+    // risk_areas is REQUIRED, not optional: it is a field of the strict schema
+    // handed to the model, and putting a field in that schema is how you get
+    // the model to fill it in.
+    expect(() =>
+      Intent.parse({ intent: 'x', in_scope: ['a'], out_of_scope: ['b'] }),
+    ).toThrow();
     expect(() =>
       BlastRadius.parse({
         changed_symbols: [{ name: 'rateLimit', file: 'a.ts', kind: 'function' }],

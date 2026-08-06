@@ -35,10 +35,10 @@ Scope is the whole repo: every package, every file the branch touched, committed
 
 | File | Lines | Answers |
 |---|---|---|
-| `README.md` | 549 | This card: scope, boundaries, sources, decisions, how it was tested, the environment overrides |
-| `SKILL.md` | 392 | When does it run? What is the procedure? Which mode? What must never be reported? |
+| `README.md` | 617 | This card: scope, boundaries, sources, decisions, how it was tested, the environment overrides |
+| `SKILL.md` | 415 | When does it run? What is the procedure? Which mode? What must never be reported? |
 | `modes.md` | 170 | How do `--freeze` and `--only critical` differ from a normal run? |
-| `routing.md` | 136 | Which files reach Track B, what each of its two agents opens, what is left out on purpose |
+| `routing.md` | 169 | Which files reach Track B, what each of its two agents opens, what is left out on purpose |
 | `gates.md` | 187 | What is each Track A gate, what does its failure look like, what do I try first? |
 | `severity.md` | 179 | Which of the four levels is this, and what does it stop? |
 
@@ -101,6 +101,7 @@ specific claim taken from it.
 | `scripts/pr-self-review/scope.sh` | the four buckets and their exact JSON — `routed` / `checklist` / `skipped` / `flagged`, and that `flagged` entries carry `line: 1` |
 | `scripts/pr-self-review/gates.sh` | the ten gates, the `skip` ≠ `ok` distinction, and that gate findings put the package name in `file` |
 | `scripts/pr-self-review/baseline.sh` | that only an `agent `-sourced finding is diff-anchored *or* freezable, and that the freeze fingerprint is `{file, line, message}` |
+| `scripts/pr-self-review/findings.sh` | that a subagent reply becomes a bare JSON array of objects, that a fenced or prose-wrapped one is recovered, and that anything unreadable fails loudly rather than becoming `[]` |
 | `scripts/pr-self-review/report.sh` | the seven trustworthiness rules, that the verdict never travels by exit code, that it is computed from `.gates[].status` as well as `.findings`, that a `full` run which dispatched no agent over routed files — or left a routed domain uncovered — is `incomplete`, and that any payload it cannot read — `.scope` not an object, or `.findings` / `.gates` / `.agents` / `.scope.skipped` not each an array of objects — is `incomplete` too |
 | `scripts/pr-self-review/gate.sh` | what the hook actually refuses, and that freshness is the load-bearing half |
 | `scripts/pr-self-review/registry.sh` | the five registry checks and their severities |
@@ -131,6 +132,72 @@ authoritative in the abstract. That is why a Track A critical and a Track B crit
 different objects, and why an upstream skill's CRITICAL is not ours.
 
 ## 8. Version and changelog
+
+### 1.4.0 — 2026-08-06
+
+Step 3 stops depending on a subagent obeying its output contract, and 1.3.0's promised
+measurement arrives.
+
+- **`scripts/pr-self-review/findings.sh`** turns one agent's raw reply into the bare JSON array
+  step 3 promised: pass-through if it already is one, else the first ```` ``` ```` block that
+  parses, else the span from the first `[` to the last `]`.
+- **It fails loudly, and that is the design.** Anything it cannot read exits non-zero with
+  nothing on stdout. Returning `[]` would be the worst available behaviour: step 5 adds the array
+  into the merge, and an empty one is what a clean run looks like — so a broken agent would be
+  the cheapest route to a `pass`, and `report.sh` rule 6 cannot tell the two apart. The refusal
+  names the remedy: that agent's `agents.json` entry gets a status other than `ok`, which makes
+  the run `incomplete`.
+- **Why it was needed.** Two of seven runs on `feat/agent-layer` returned the right findings
+  wrapped in a sentence and a ```` ```json ```` fence. The contract was stated in the brief both
+  times, in one case with an explicit *"a previous round's agent wrapped its array in prose and a
+  fence; do not"*. A contract a model breaks under instruction is not a contract.
+- **20 new assertions** (`test/findings.test.sh`), including both real reply shapes measured this
+  round and five inputs that must **not** become an empty result.
+
+**1.3.0's enumeration step, now measured.** It was recorded as owing a measurement; here it is,
+over rounds 5–7 of one branch, same two agents, same diff except for each round's fixes:
+
+| Round | Brief | `security` findings | Enumeration notes |
+|---|---|---|---|
+| 4 | search | 1 unbounded input | — |
+| 5 | **enumerate** | 2 unbounded inputs | 3 |
+| 6 | enumerate + wider paths | 1 (a `critical`, refuted on provenance) | 7 |
+| 7 | enumerate + provenance check | **0** | 5 |
+
+Rounds 1–4 returned exactly one defect each, all of the same shape, on the same path. Round 5 —
+the first with the step — returned two at once and named the paths it had cleared. Round 7
+returned nothing from either agent, `conventions` returning a literal `[]`. The step did what it
+was added to do; it also roughly doubled the report's length, which is the cost, and the notes
+are the reason that cost is worth paying — *"every input on this path is bounded, and here they
+are"* is checkable by the next run and by a reader, where silence is not.
+
+**One thing the measurement also exposed**, fixed in the same release by the provenance paragraph
+now in the `security` brief: a line inside a touched range is not necessarily one the branch
+wrote. Round 6's `critical` was accurate about the code and wrong about the branch — `git blame`
+put it two months behind the merge base and the function that built the string was not in the
+diff at all — and an adversarial verifier had to be spent to establish that.
+
+### 1.3.0 — 2026-08-06
+
+One addition to one brief, from the first branch to be reviewed four times.
+
+- **`security` enumerates before it searches** — `routing.md` §1. It must list every input on
+  each attacker-reachable path the diff touches, and name the bound on each, before it looks for
+  a vulnerability. An input with no nameable bound is a finding; *"all of them are bounded, here
+  they are"* is a result the next run can check, which silence is not.
+- **What prompted it.** Four consecutive `--full` runs on `feat/agent-layer` each returned
+  exactly one defect, all four on the classifier's input path and all four the same shape — an
+  attacker-controlled input with no stated bound. A clone read that escaped, one that resolved
+  back into `<clone>/.git`, an `fs.readFile` with no byte cap, and twenty commit subjects capped
+  by count but not by length. Every one was present and findable in run 1.
+- **Why the runs did not converge on their own.** A brief that says *search* gets sampling: the
+  agent returns what it happens to reach and stops, so one instance surfaces per pass and each
+  fix opens the next pass's surface. Two of the four runs were also steered — their briefs said
+  prior rounds had found defects in that file, which shortens the search but is not review.
+- **Unmeasured, and marked so.** 1.2.0 earned its cuts on §9's measurement; this earns nothing
+  yet. The failure it responds to is real and recorded above, but whether enumeration finds the
+  set in one pass — or merely produces longer reports — has not been run. Treat the next
+  four-round branch as the measurement.
 
 ### 1.2.0 — 2026-08-02
 
@@ -325,8 +392,9 @@ run, and the ones that did not go the way the spec predicted are recorded as the
 
 ### The scripts
 
-`bash scripts/pr-self-review/test/run.sh` — **347 assertions, 0 failures** across seven files
-(`baseline` 53, `gate` 34, `gates` 15, `registry` 7, `report` 158, `scope` 42, `seam` 38). Also a
+`bash scripts/pr-self-review/test/run.sh` — **422 assertions, 0 failures** across eight files
+(`baseline` 53, `findings` 20, `gate` 34, `gates` 20, `registry` 7, `report` 198, `scope` 46,
+`seam` 44). Also a
 CI job, `.github/workflows/pr-self-review.yml`, with `fetch-depth: 0` because `scope.sh` needs a
 real merge-base and the suite builds throwaway repos with real branches.
 

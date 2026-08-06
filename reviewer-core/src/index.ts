@@ -14,6 +14,7 @@
 // Prompt assembly + prompt-injection hardening.
 export {
   assemblePrompt,
+  describePromptSection,
   wrapUntrusted,
   type PromptParts,
   type AssembledPrompt,
@@ -42,6 +43,7 @@ export {
   type ReviewInput,
   type ReviewOutcome,
   type ReviewEvent,
+  type PromptChunkLog,
   type ReviewStrategy,
   type ReviewMode,
 } from './review/run.js';

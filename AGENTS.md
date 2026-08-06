@@ -103,7 +103,10 @@ would have been cosmetic. Cheap checks that catch real defects are not what to e
 - `server/src/vendor/**`, `client/src/vendor/**` — vendored copies. Change the server
   copy first, then mirror deliberately.
 - `server/clones/**` — runtime data from repo-intel cloning. Git-ignored, not a submodule.
-- `e2e/specs/*.flow.json` — live browser-test scenarios, not documentation.
+- `e2e/specs/*.flow.json` — live browser-test scenarios, not documentation. The one
+  exception is the `test-writer` agent adding a flow, e2e being a suite it covers; the gate
+  is unchanged — `scope.sh` still flags every such file `major` with *"confirm the change was
+  deliberate"*, which is now the right prompt rather than a contradiction.
 - `.claude/skills/*` named in `skills-lock.json` — pinned upstream copies. Skills absent
   from that lock, `engineering-insights` among them, are ours to edit.
 - `CLAUDE.md` in any package — a symlink to that folder's `AGENTS.md`, the compatibility

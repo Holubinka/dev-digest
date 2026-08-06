@@ -1,6 +1,6 @@
 import { simpleGit, type SimpleGit } from 'simple-git';
-import { join } from 'node:path';
-import { mkdir, readFile, access, rm } from 'node:fs/promises';
+import { join, relative, sep } from 'node:path';
+import { mkdir, open, access, rm, realpath } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import type {
   GitClient,
@@ -126,8 +126,62 @@ export class SimpleGitClient implements GitClient {
     }));
   }
 
-  async readFile(repo: RepoRef, path: string): Promise<string> {
-    return readFile(join(this.clonePathFor(repo), path), 'utf8');
+  /**
+   * Read one file out of the clone, refusing anything that resolves outside it
+   * or into its git directory.
+   *
+   * `path` reaches here from a PR body (`modules/intent`), so on a public repo
+   * it is attacker-controlled. The caller sanitises it as a *string* — no `..`
+   * segment, no absolute path, `.md` only — and a string check cannot see the
+   * filesystem: a repo may commit `docs/plan.md` as a symlink to
+   * `../../../../etc/passwd`, git materialises that verbatim on clone, and the
+   * `.md` rule constrains the link's name, never its target. Only resolving the
+   * path catches it, which is why the check is here and not in the caller —
+   * `no-fs-in-service` forbids a service touching `node:fs` at all.
+   *
+   * Both sides are resolved. The clone root can itself sit under a symlink
+   * (`/tmp` → `/private/tmp` on macOS), and comparing a resolved target against
+   * an unresolved root would reject legitimate reads. `root + sep` is what stops
+   * a sibling directory — `…/repo-evil` — satisfying a `…/repo` prefix test.
+   *
+   * `repo-intel/pipeline/walk.ts` already skips every symlink it walks. This is
+   * that same stance for the one reader that takes a path from outside.
+   *
+   * Containment alone is not enough, and the second check is not redundant with
+   * the first. `.git/config` carries the URL `clone()` was given, and that URL
+   * has the stored GitHub PAT embedded in it (`modules/repos/helpers.ts`
+   * `withGitHubToken`) — nothing rewrites the remote afterwards. So a symlink
+   * aimed *back inside* at `../.git/config` satisfies every containment test
+   * there is and still hands the token to the caller. `sanitizeRepoPath`
+   * refuses a `.git/` prefix on the string; this is that same rule applied
+   * after resolution, which is the only place a symlink is visible. The segment
+   * comparison is exact, so `.github/` — a directory somebody may legitimately
+   * want to read — is unaffected.
+   *
+   * Size is the third thing the path cannot tell you. `fs.readFile` allocates
+   * the whole file before anyone can measure it, so a caller's character cap
+   * runs one step too late; `open` + a fixed buffer is what makes the bound
+   * real. A cut can land mid-sequence and leave one U+FFFD at the end — that is
+   * the decoder behaving correctly on a truncated read, not a defect, and the
+   * caller's own truncation removes it in every case but an all-4-byte file.
+   */
+  async readFile(repo: RepoRef, path: string, maxBytes: number): Promise<string> {
+    const root = await realpath(this.clonePathFor(repo));
+    const target = await realpath(join(root, path));
+    if (target !== root && !target.startsWith(root + sep)) {
+      throw new Error(`refusing to read outside the clone: ${path}`);
+    }
+    if (relative(root, target).split(sep)[0] === '.git') {
+      throw new Error(`refusing to read the clone's git directory: ${path}`);
+    }
+    const handle = await open(target, 'r');
+    try {
+      const buf = Buffer.alloc(maxBytes);
+      const { bytesRead } = await handle.read(buf, 0, maxBytes, 0);
+      return buf.subarray(0, bytesRead).toString('utf8');
+    } finally {
+      await handle.close();
+    }
   }
 }
 

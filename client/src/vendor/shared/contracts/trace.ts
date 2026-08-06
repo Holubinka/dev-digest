@@ -48,9 +48,49 @@ export const PromptAssembly = z.object({
   repo_map: z.string().nullish(),
   /** PR author's description/body (truncated); null when absent. */
   pr_description: z.string().nullish(),
+  /** Derived intent + scope (truncated); null when absent. */
+  intent: z.string().nullish(),
   user: z.string(),
 });
 export type PromptAssembly = z.infer<typeof PromptAssembly>;
+
+/**
+ * One prompt section, described WITHOUT its content.
+ *
+ * PromptAssembly above holds the full text of every section, which is why it is
+ * unreadable as an operational signal and unsafe to ship anywhere. This is the
+ * metadata-only view of the same thing: what went into a prompt, and how big
+ * each part was. Nothing here is derived from what a section SAYS.
+ */
+export const PromptSectionLog = z.object({
+  section: z.string(), // 'system' | 'pr_description' | 'intent' | 'skills' | ...
+  source: z.enum(['agent', 'pr', 'derived', 'repo-intel', 'db', 'clone', 'diff']),
+  /** Length in CODE POINTS (`[...text].length`), not UTF-16 units. */
+  chars: z.number().int(),
+  /** Cheap local estimate, never a tokenizer call. See reviewer-core/src/prompt.ts. */
+  tokens_approx: z.number().int(),
+  /** Whether this section's cap actually FIRED — not whether one exists. */
+  truncated: z.boolean(),
+  /** First 12 hex of sha256(content). Verbose mode only; null otherwise. */
+  digest: z.string().nullable(),
+});
+export type PromptSectionLog = z.infer<typeof PromptSectionLog>;
+
+/** Metadata-only description of one assembled prompt. Carries no content. */
+export const PromptAssemblyLog = z.object({
+  correlation_id: z.string(),
+  provider: z.string().nullable(),
+  model: z.string(),
+  sections: z.array(PromptSectionLog),
+  /**
+   * Size of the sections the prompt is assembled from. Verbose mode appends
+   * breakdown entries (`diff:<path>`) that detail a section already counted
+   * here, so the totals stay comparable between a verbose and a quiet run.
+   */
+  total_chars: z.number().int(),
+  total_tokens_approx: z.number().int(),
+});
+export type PromptAssemblyLog = z.infer<typeof PromptAssemblyLog>;
 
 export const MemoryPulled = z.object({
   pr: z.number().int().nullish(),

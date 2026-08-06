@@ -68,6 +68,54 @@ config is part of trusting the result.
 
 ## Codebase Patterns
 
+### Truncate untrusted text BEFORE `wrapUntrusted`, never after
+
+The order looks like a style choice and is not. `wrapUntrusted(label, text)`
+(`reviewer-core/src/prompt.ts:30-34`) returns `<untrusted source="…">\n{text}\n</untrusted>`, so
+capping the *wrapped* string is what eventually cuts the closing fence off — and a prompt whose
+last delimiter is missing hands everything after it to attacker-controlled text. Capping the raw
+string first cannot: the fence is added afterwards.
+
+Worked example: `renderClassifierInput` (`modules/intent/helpers.ts`) truncates the PR body and
+the linked issue, then wraps. `server/test/intent-helpers.test.ts` pins it with a body 500 code
+points over the cap and asserts the block count still matches the fence count. Note also that
+the escape `wrapUntrusted` applies (`</untrusted>` → `<\/untrusted>`) makes the wrapped string
+slightly longer than the cap — which is correct, because the cap is a statement about the source
+text, not about the rendered message.
+
+### A service the container constructs must not import `Container`
+
+**Symptom.** `pnpm arch` on 2026-08-05: `no-circular: src/modules/intent/service.ts →
+src/platform/container.ts → src/modules/intent/service.ts`. Typecheck was clean.
+
+**Cause.** `container.ts` needs a value import of the service to build it for a getter, and
+the service names `Container` for its constructor. `tsPreCompilationDeps` is on, so the
+`import type` counts as an edge and the two files form a cycle. `RepoIntelService` has the
+same cycle and it is one of the entries in the arch baseline — which is why the pattern reads
+as safe when you copy it.
+
+**Fix.** Declare the slice of the container the service actually needs as a structural
+interface in the module's own `types.ts` and take that instead — `modules/intent/types.ts`
+`IntentContainer` is the worked example, and `run-executor.ts:21-26` does the same with its
+`Logger`. A real `Container` satisfies it by construction, so `new IntentService(this)` in
+the composition root is unchanged and no adapter is imported.
+
+The rule of thumb: **only a service the container does NOT construct may import `Container`.**
+`AgentsService` and `ReviewService` can, because their routes build them.
+
+### `modules/_shared/` is subject to `no-sql-outside-repository` like anything else
+
+Moving `feature-models.ts` out of `modules/settings/` on 2026-08-05 to make it reachable from
+`modules/intent/` turned a baselined violation into a new, unbaselined one: the baseline keys
+on the `from` path, and `REPOSITORY` in `.dependency-cruiser.cjs:29` only matches
+`src/modules/<slice>/repository(.ts|/)`. `_shared/` is neither a repository nor a route.
+
+So a cross-slice helper that reads the DB needs its SQL to leave with it. The route taken was
+`SettingsRepository` (`modules/settings/repository.ts`) hung off `container.settingsRepo`, with
+`_shared/feature-models.ts` reaching it through a structural `SettingsReader` — which also
+avoids `_shared/` importing the `settings` slice. Net effect on the baseline: 20 entries → 19,
+and the fixed entry was removed by hand rather than by `arch:baseline`.
+
 ### A link table's foreign key proves existence, not tenancy
 
 `agent_skills.skill_id` references `skills.id` and nothing more. `AgentsService.setSkills`
@@ -119,6 +167,36 @@ feeds it 250 astral characters.
 anything outside CRITICAL / WARNING / SUGGESTION instead of ranking it last, because the
 client maps severity to an icon through a lookup with no fallback (see
 `client/INSIGHTS.md`). A bad row costs one missing preview entry, never a broken page.
+
+### A pre-pass living in another slice reaches its consumer through the container, with NO import
+
+`no-cross-module` (`.dependency-cruiser.cjs:139-158`) forbids `modules/reviews/**` from importing
+`modules/intent/**`. It is not a rule you route around, because **the edge is reported against
+the file you import** — a re-export barrel in `reviews/` pointing at `intent/` is the same edge
+with one more hop, and `_shared/` only helps for code that genuinely belongs to neither slice.
+
+The sanctioned route is the composition root. `run-executor.ts` calls
+`this.container.intentService.derive(...)` and contains **no import statement naming
+`modules/intent/` at all** — it works because dependency-cruiser follows imports, not inferred
+types, and `container.intentService` is typed as the `IntentDeriver` port. The same file already
+did this with `this.container.repoIntel.getCallerSignatures(...)`; copy that, not an import.
+
+The part that is easy to get wrong is the return trip. The executor needs the *rendered*
+`## Intent` prompt section, and `renderIntentSection` is a pure helper inside `modules/intent/` —
+so importing it is precisely the violation you just avoided. Two ways out, and the second is
+better: put the helper in `modules/_shared/`, or **have the result object carry the rendered
+string**. 05 took the second — `IntentDerivation`'s `ok: true` branch has
+`section: string`, rendered inside `IntentService` — so nothing new crosses and `_shared/` does
+not grow a file per feature. Generalised: **when a cross-slice call needs a formatted value back,
+format it on the producing side and return it; do not export the formatter.**
+
+Two supporting rules that fall out of the same design. The port
+(`modules/intent/types.ts`) is expressed in primitives and contract types only — no `PullRow`, no
+`Db` — because it is consumed across a ring boundary (§3.5); the repository is supplied by
+`platform/container.ts` (`new IntentService(this, new IntentRepository(this.db))`) rather than
+defaulted inside the service, which is what keeps `Db` off the port at all. And `derive` **never
+throws**: one discriminated `{ ok }` result serves both a route that must report the failure as a
+502 and an executor that must ignore it, with no `throwOnError` flag.
 
 ## Tool & Library Notes
 
@@ -297,6 +375,56 @@ Do not "sync" the two lists on sight. `tsconfig.json:21-26` carries four mapping
 subpath today — every `@devdigest/…` specifier in `src/` and `test/` is bare. That
 asymmetry is inert, not a bug.
 
+### An integration test that starts a review makes LIVE OpenRouter calls unless `secrets` is overridden
+
+**Symptom.** `pnpm exec vitest run .it.test` failed 2 of 4 consecutive runs on 2026-08-05 —
+2 or 3 cases in `test/reviews-skills.it.test.ts`, always `expect(res.statusCode).toBe(200)`
+receiving `404` from `GET /runs/:id/trace`. The same file passed 3/3 when run alone. Nothing in
+that file had been edited.
+
+**Cause.** Not flakiness in the ordinary sense. The 05 intent pre-pass runs inside every review,
+`review_intent` defaults to provider `openrouter`, and `overrides.llm` in that file supplied
+`openai` only. `container.llm('openrouter')` therefore built a **real** `OpenRouterProvider`
+whose key came from `~/.devdigest/secrets.json` — which `LocalSecretsProvider` reads regardless
+of `NODE_ENV`. Proved by probe, not inferred: the persisted trace carried
+`Deriving PR intent done (2973ms)` and
+`Intent unavailable — OpenRouter structured output failed schema validation for Intent`, and
+that message is only reachable at `reviewer-core/src/llm/openrouter.ts:177`, after the request
+loop has actually called the API. So every review in that file made two paid requests, sent the
+fixture PR's text to a third party, and added 3–12s of wall clock. `waitForPrRuns`
+(`test/helpers/runs.ts:19`) gives up after 10s and **returns the rows anyway**, so the test then
+asked for a trace that had not been written — hence 404, and only under parallel load.
+
+**Fix.** `overrides.secrets: new MockSecretsProvider({})` in every integration test that starts
+a review. The derivation then fails instantly on the missing key and degrades, which is the
+`intent: null` assembly those tests were written against. That file dropped from 17–19s to 2.8s
+and the whole suite from ~22–43s to ~10s. Two general lessons: **a slow integration test is
+worth a probe before it is worth a retry**, and `waitForPrRuns` returning on timeout instead of
+throwing turns "the run never finished" into a misleading assertion failure three lines later.
+
+**Correction, 2026-08-05 — the fix above works, but it is the wrong mechanism.** An empty
+`MockSecretsProvider` isolates a test through the **failure path**: `container.llm(id)` reaches
+for a key, finds none, and throws `ConfigError`. Nothing is overridden; the test passes because
+something broke in the right order. Two consequences. It cannot express "this run touches no
+live LLM" *successfully* — a case that needs a real answer from a data-chosen provider has no
+way to supply one. And the isolation is silently conditional: give that container a secrets
+provider that does have the key, for any other reason, and the paid request comes straight back.
+
+The mechanism is `ContainerOverrides.llmFallback` (`platform/container.ts`), a catch-all
+`LLMProvider` consulted by `Container.llm(id)` when `overrides.llm[id]` is absent and **before**
+any key lookup or cache read. `overrides.llm` is keyed by provider id, and since 05 the set of
+ids one review touches depends on `settings.feature_models` — a row — so no `llm` object written
+when the app is built can name them all. A sibling field rather than a magic `fallback` key
+inside the record: a member of that record would widen the key union so `container.llm('fallback')`
+type-checks, and would collide the day a provider is actually called that.
+
+So: **`llmFallback` for isolation, `MockSecretsProvider({})` as defence in depth.** Both are in
+`test/reviews.it.test.ts` and `test/reviews-skills.it.test.ts`. Write the assertion so it can
+tell them apart — the degrade reason reads `Intent unavailable — MockLLMProvider fixture failed
+schema` when the fallback answered and `OPENROUTER_API_KEY is not configured` when a missing key
+did. Asserting only that the review survived cannot distinguish the two, which is how the
+original omission survived review.
+
 ## Session Notes
 
 ### 2026-08-03
@@ -318,6 +446,104 @@ asymmetry is inert, not a bug.
   (`no-service-to-adapter-impl`). Using `this.container.tokenizer.count()` fixed the violation
   and produced an exact token count rather than the `length / 4` estimate.
 
+### 2026-08-05
+
+- Landed the intent pre-pass (spec 05, steps 5, 6, 8, 9, 10, 12, 15). The two arch lessons
+  above are the transferable half; both were found by `pnpm arch`, not by review.
+- `buildApp` overrides do **not** cover an unmocked provider. Before this change no test path
+  resolved `openrouter`, so `reviews.it.test.ts` never noticed; the intent pre-pass resolves
+  `review_intent` → `openrouter` on every review, and `LocalSecretsProvider` reads
+  `~/.devdigest/secrets.json` regardless of `NODE_ENV`. On a machine with a real key the suite
+  would have made live requests. `appWith` now passes `secrets: new MockSecretsProvider({})`.
+  **Any integration test that triggers a review needs it.**
+- `MockLLMProvider`'s `id` union is `'openai' | 'anthropic'`, so a mock cannot *be* an
+  OpenRouter provider — but `overrides.llm` is keyed independently, so
+  `llm: { openrouter: new MockLLMProvider('openai', …) }` is the working form. The key is what
+  `container.llm` resolves on; the `id` only reaches traces.
+- `MockGitClient.readFile` returns `''` for an unknown path where `SimpleGitClient` throws
+  ENOENT. A "file missing" degrade path tested only against the mock therefore passes while
+  reading a phantom empty file. `IntentService.readPlanFiles` treats a blank read as absent,
+  which makes the two behave the same.
+- Later the same day: capped the classifier's PR body (4000) and linked issue (2000 body / 300
+  title) in `modules/intent/constants.ts`, closing the Open Question the previous dispatch left.
+  The three cap tests were each proved to fail with the cap removed before being left green.
+- The `MockSecretsProvider` note above was only half-applied: `reviews.it.test.ts` had it,
+  `reviews-skills.it.test.ts` did not, and that one omission was making the integration suite
+  hit the live OpenRouter API. Full entry under Recurring Errors & Fixes. When an INSIGHTS entry
+  says "any test that does X needs Y", grep for X — `grep -ln '/review' test/*.it.test.ts` takes
+  a second and would have found it.
+- Later still, applying six review findings to the same uncommitted change: the two bullets above
+  were both treating a symptom. `ContainerOverrides.llmFallback` replaced them as the mechanism —
+  see the dated correction under Recurring Errors & Fixes, which is the transferable half.
+- `modules/settings/feature-models.ts` was left behind as a one-line re-export of
+  `_shared/feature-models.ts` so one test kept resolving. It was deleted: it had zero production
+  importers, and **no module outside `settings/` could legally import it** — `no-cross-module`
+  fails that edge — so the specifier it advertised was a trap for the next consumer, not a
+  compatibility shim. A re-export whose only importer is a test is a test import to retarget.
+- Every new assertion in this pass was proved falsifiable before being left green: deleting the
+  `llmFallback` lookup from `Container.llm` failed exactly three cases across
+  `reviews.it.test.ts` and `reviews-skills.it.test.ts`, and swapping `resolveFeatureModel` for
+  `defaultFeatureModel` in `IntentService.derive` failed exactly the new
+  `intent.it.test.ts` override walk with `expected 'z-ai/glm-4.7-flash' to be
+  'minimax/minimax-m2.5'`.
+
 ## Open Questions
 
-_Nothing recorded yet._
+- The classifier's PR body and linked-issue text reach `renderClassifierInput` uncapped. Plan 05
+  specifies caps only for plan/spec files (3 × 6000 code points), and `assemblePrompt` caps
+  `prDescription` at 4000 — so the review path is bounded and the intent path is not. A 65k-char
+  body is attacker-controlled input to a paid call. Deliberately not "fixed" during
+  implementation because picking a number the plan did not pick is a design decision, not a bug
+  fix. Raised for review 2026-08-05.
+  - **Closed 2026-08-05.** The numbers were chosen outside the plan and implemented:
+    `MAX_PR_BODY_CHARS = 4000` (deliberately equal to `MAX_PR_DESCRIPTION_CHARS` in
+    `reviewer-core/src/prompt.ts:37`, so the classifier never reads more of the body than the
+    reviewer does), `MAX_ISSUE_BODY_CHARS = 2000`, `MAX_ISSUE_TITLE_CHARS = 300`, all in
+    `modules/intent/constants.ts` and applied in `renderClassifierInput`. Commit subjects and
+    changed-file paths are still capped by COUNT only (20 / 40) and not by length — a
+    thousand-character commit subject is possible and is nobody's cap today.
+  - **Fully closed 2026-08-06**, over three further `/pr-self-review` rounds, each of which found
+    exactly one of the remaining gaps: `MAX_COMMIT_SUBJECT_CHARS = 200`, then
+    `MAX_FILE_PATH_CHARS = 400` and `MAX_PR_TITLE_CHARS = 300`. The title was nobody's finding
+    until the fourth round — it was never on the list above, because the list was written from
+    what the plan named rather than from what the function reads.
+
+    **The lesson is the shape, not the numbers.** Writing "still capped by COUNT only" and
+    leaving it is what made the next two rounds necessary: a known gap recorded and not closed
+    reads, one release later, exactly like a gap nobody knew about. The countermeasure is in
+    `test/intent-helpers.test.ts` — one test feeds every source oversized at once and asserts the
+    **set of `<untrusted>` labels** equals a table of per-label ceilings, so a source added
+    without a cap fails there rather than in a fifth review round. The same instinct is now in
+    the `security` agent's brief (`.claude/skills/pr-self-review/routing.md` §1): enumerate the
+    inputs on a path and name each bound, rather than searching for one unbounded one.
+
+- **`test/helpers/runs.ts` has a race that `MockSecretsProvider` masked, not fixed.**
+  `run-executor.ts` writes `completeAgentRun({ status: 'done' })` at `:294` and the
+  `run_traces` document only *after* it. `waitForPrRuns` returns the moment a run is terminal
+  (`runs.ts:30`), so `traceOf` in `reviews-skills.it.test.ts` can `GET /runs/:id/trace` inside
+  that window and get a `404`. Measured 2026-08-05 over twenty full `.it.test` runs: **3 bad runs
+  in 14 with the `llmFallback` change, 2 in 6 without it** — so it is pre-existing and unrelated,
+  and the earlier entry blaming live OpenRouter latency identified an aggravator, not the cause.
+  It is load-dependent: fourteen consecutive clean runs happen, then two bad ones in a row.
+  Two candidate fixes, neither taken because both are wider than the change that found this:
+  write the trace inside the same transaction as the status, or have `waitForPrRuns` throw on
+  timeout and poll `run_traces` too. The second changes a helper five files share, and turning a
+  soft return into a throw would surface every other latent race at once — which may be right,
+  but is its own change. Until then, a `traceOf` 404 is this race, not a regression.
+
+- **`IntentService.derive` never reads its own cache, and Step 12 of the plan assumes it does.**
+  `modules/intent/service.ts:68-117` goes straight from `getPull` to `resolveFeatureModel` to
+  `completeStructured`; `repo.getIntent` is called only by `get()`. So every review run pays the
+  classifier again even when a fresh `pr_intent` row is sitting there, and a three-agent
+  re-review of an unchanged PR buys three identical derivations of the same text. That
+  contradicts `specs/05-intent-layer.md` Step 12, which justifies storing the cost on `pr_intent`
+  rather than on `agent_runs` with *"one derivation serves every agent and every re-review until
+  someone hits Recompute"* — the sentence is true of the storage and false of the code.
+  Deliberately **not** fixed on 2026-08-05 while fixing the classifier's 502: `derive` is the
+  method the Recompute button calls, so it cannot simply return the cached row, and the
+  discriminator between "cached and still valid" and "cached and stale" is the PR's head sha,
+  which `pr_intent` does not carry. That is a migration plus a staleness rule plus a decision
+  about what a `force` flag does to the route — a design call, not a bug fix. Whoever takes it:
+  the cheapest correct shape is a `head_sha` column written by `upsertIntent`, `derive({ force })`
+  from `POST /pulls/:id/intent`, and the pre-pass in `run-executor.ts:88-100` passing no `force`.
+  Raised 2026-08-05.

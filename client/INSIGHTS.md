@@ -396,6 +396,22 @@ Brand names stay literal — the `AppShell` crumb is `"DevDigest"` in every loca
 
 ## Tool & Library Notes
 
+### `@testing-library/user-event` is not installed here — every test uses `fireEvent`
+
+**Symptom.** `Failed to resolve import "@testing-library/user-event"` and a test file that
+collects zero tests. Hit on 2026-08-05 writing `IntentCard.test.tsx` from the
+`react-testing-library` skill, whose anti-pattern table says *"`fireEvent.click()` → use
+`await user.click()`"*.
+
+**Cause.** `client/package.json` carries `@testing-library/jest-dom` and
+`@testing-library/react` and nothing else from that family. All 44 existing client test files
+use `fireEvent` because that is what is there.
+
+**Fix.** `import { fireEvent } from "@testing-library/react"` and drop the `async`/`await` the
+skill's examples carry. Do not add the package to satisfy a skill: the skill is
+project-agnostic, this package's convention is not, and a dependency added for one test file is
+a supply-chain decision nobody asked for. If the whole suite ever moves, that is its own change.
+
 ### Two `vi.mock` specifiers for the same module do not merge — the later one replaces the first
 
 **Symptom.** `[vitest] No "useAgents" export is defined on the "@/lib/hooks/agents" mock`, on a
@@ -450,6 +466,17 @@ held, so the inner branch that would have shown the message never ran.
 **Fix.** Check the domain flag before the query flag:
 `stillRunning ? tracePending : isLoading && !trace ? loadingTrace : …`. More generally, never
 express "we have not asked yet" through `isLoading` — ask the thing that decides `enabled`.
+
+**Addendum, 2026-08-05 — the rule is about the fall-through, not about the line order.**
+`IntentCard` checks `isLoading` *first* of its four states and is still correct, which looks
+like a contradiction until you ask where a disabled query lands. `usePrIntent(prId)` is
+`enabled: !!prId`, so with no `prId` the query reports `isLoading === false` and `data ===
+undefined` — the branch order then carries it to `intent == null`, the empty state, which is
+the right answer for "nothing has been derived". The `RunTraceDrawer` bug was that the
+fall-through went somewhere *wrong* (`noTrace`, a claim about the server), not that `isLoading`
+was read early. So the check to run on a new query-backed component is: **write down what a
+disabled query renders, and confirm that state is one you would want to show.** If it is not,
+reorder.
 
 ## Recurring Errors & Fixes
 
@@ -616,6 +643,44 @@ the two sides disagree about which rows exist, which is worse than the bug.
 **A test that pins this must name the inherited keys.** Asserting that `'CRITICAL'` passes and
 `'nope'` fails is green *before* the fix, because `in` is correct for both.
 
+### A `<ul>` in this app has no bullets, and `paddingLeft` alone does not bring them back
+
+**Symptom.** A colocated list styled from a `styles.ts` renders as an unbroken wall of text:
+no marker, and consecutive items visually indistinguishable. `IntentCard`'s scope columns
+shipped this way on 2026-08-05 — the `ul` computed to `list-style: none; padding-left: 18px`
+and every `li` to `margin-bottom: 0`, so 18px was reserved for a marker that never rendered.
+
+**Cause.** Two defaults, both invisible in the component. Tailwind's preflight resets `ol, ul`
+to `list-style: none; margin: 0; padding: 0` globally, and `app/globals.css:59-93` restores
+markers **only** under `.dd-md` (rendered markdown). Nothing else in the app gets one back. The
+`li` margin is the browser default, which is zero.
+
+**Fix.** State both in the colocated `styles.ts`: a marker on the `ul` and separation on the
+`li`. `IntentCard/styles.ts` uses `listStyleType: '"·  "'` — a CSS string marker, so it stays a
+real `::marker` with no extra DOM and inherits the list's `color` instead of needing a token of
+its own — plus `listItem: { marginBottom: 6 }`.
+
+**A test for this cannot rely on the browser default.** jsdom has no preflight, so an untouched
+`ul` reports `list-style-type: disc` there while the real page shows nothing. Assert the value
+you set (`getComputedStyle(ul).listStyleType` contains `·`), not merely that it is not `none`.
+
+### `PromptAssembly` gains a field and the trace drawer does not — nothing checks
+
+**Symptom.** `run_traces.trace.prompt_assembly.intent` held 801 chars on a real run and the Run
+trace drawer showed no Intent block at all. `pr_description` had been missing the same way for
+longer.
+
+**Cause.** `TraceBody.tsx` lists the legs by hand — `system, skills, memory, repo_map, specs,
+callers, user` — while the contract (`vendor/shared/contracts/trace.ts`) has nine. Adding a
+field to the contract type-checks on both sides and renders nothing; there is no gate that
+compares the two lists, and `diff -r` only compares the vendored copies with each other.
+
+**Fix.** When adding a field to `PromptAssembly`, three files move together: the contract (both
+vendored copies), `TraceBody.tsx`, and `messages/en/runs.json` under `trace.prompt.*`, plus a
+`PROMPT_COLORS` entry in the drawer's `constants.ts`. Render in the order `assemblePrompt`
+pushes the sections (`reviewer-core/src/prompt.ts:125-148`), and pin that order in
+`RunTraceDrawer.test.tsx` — an out-of-order block is a lie about what the model read.
+
 ## Session Notes
 
 ### 2026-07-28
@@ -771,6 +836,24 @@ the two sides disagree about which rows exist, which is worse than the bug.
   shows the toggle off and asking to enable never reaches the server. It shipped untested.
   `AgentEditor`'s `tab === "skills"` branch was the other blind spot: `SkillsTab.test.tsx`
   mounts the tab directly, so nothing covered the dispatch that makes it reachable.
+
+### 2026-08-05
+
+- Built the INTENT card (spec 05, step 14): `usePrIntent` / `useRecomputeIntent` in
+  `lib/hooks/core.ts`, a presentational `_components/IntentCard/`, and the two-column row on
+  `OverviewTab` whose second cell is an empty `aria-hidden` div reserving the BLAST RADIUS slot.
+- Every one of the 14 test cases was proved falsifiable by mutating the component and watching
+  it fail — nine mutations, one at a time. Two of them were worth the minutes: removing the
+  `??` in `riskIcon` broke six cases, and swapping `Badge` for `Chip` broke the one asserting
+  `getAllByRole("button")` has length 1. Without that second assertion nothing in the suite
+  would have noticed a risk area becoming a dead `<button>`.
+- The confidence badge and the risk icons are both `Map` + `??`, not object literals — the
+  vendored `Badge` does `Icon[icon]` with no guard, so an unmapped string is a whole-route
+  crash, and `src/lib/api.ts` never validates what the server sent.
+- `messages/en/*.json` is loaded by directory listing, so `brief.json` gaining an `intent`
+  block needed no wiring. In a test, `NextIntlClientProvider messages={{ brief: messages }}`
+  with the JSON imported directly is enough — and importing it means the assertions read
+  `messages.intent.failed` rather than a copy of the English string.
 
 ## Open Questions
 

@@ -12,4 +12,6 @@ cross-package architecture (that is [`../../docs/architecture.md`](../../docs/ar
 conventions the agent must follow (that is [`../AGENTS.md`](../AGENTS.md)), or debugging
 notes (that is [`../INSIGHTS.md`](../INSIGHTS.md)).
 
-Empty for now — the first server-specific design note goes here.
+| File | What it covers |
+|---|---|
+| [`skill-injection-detection.md`](skill-injection-detection.md) | what `detectInjection` flags, and exactly what `create`/`update`/prompt-assembly each do with a flagged skill body |

@@ -7,6 +7,7 @@ import type {
   Embedder,
   LLMProvider,
   SkillFetcher,
+  PromptTemplates,
 } from '@devdigest/shared';
 import type { AppConfig } from './config.js';
 import type { Db } from '../db/client.js';
@@ -27,11 +28,16 @@ import { ConfigError } from './errors.js';
 import { AgentsRepository } from '../modules/agents/repository.js';
 import { ReviewRepository } from '../modules/reviews/repository.js';
 import { PullsRepository } from '../modules/pulls/repository.js';
+import { SettingsRepository } from '../modules/settings/repository.js';
 import type { RepoIntel } from '../modules/repo-intel/types.js';
 import { RepoIntelService } from '../modules/repo-intel/service.js';
+import type { IntentDeriver } from '../modules/intent/types.js';
+import { IntentService } from '../modules/intent/service.js';
+import { IntentRepository } from '../modules/intent/repository.js';
 import { type DepGraph, DepCruiseGraph } from '../adapters/depgraph/index.js';
 import { type Tokenizer, TiktokenTokenizer } from '../adapters/tokenizer/index.js';
 import { HttpSkillFetcher } from '../adapters/skill-fetch/index.js';
+import { FilePromptTemplates } from '../adapters/prompts/file-templates.js';
 
 /**
  * DI container. One per app instance. Holds config, db, the JobRunner,
@@ -49,13 +55,37 @@ export interface ContainerOverrides {
   embedder?: Embedder;
   /** Pre-built providers by id (skip key lookup). */
   llm?: Partial<Record<'openai' | 'anthropic' | 'openrouter', LLMProvider>>;
+  /**
+   * Catch-all for every provider id `llm` does not name — consulted BEFORE any
+   * key lookup, so a container carrying one reaches no secret and no network for
+   * any provider at all.
+   *
+   * It exists because the set of ids a run touches is no longer knowable when
+   * the container is built. Before 05 every LLM call in a review used the
+   * agent's own provider, which a test could name; the intent pre-pass resolves
+   * a SECOND provider from `settings.feature_models`, so which id
+   * `container.llm` is asked for depends on a database row. `llm` alone can
+   * therefore only ever be an incomplete allowlist, and a test relying on that
+   * gap is relying on the failure path — a missing key throwing `ConfigError` —
+   * rather than on an override.
+   *
+   * A sibling field rather than a `fallback` key inside `llm`: the record is
+   * keyed by provider id, and a magic member would widen that union so
+   * `container.llm('fallback')` type-checks, and would collide outright the day
+   * a provider is called that.
+   */
+  llmFallback?: LLMProvider;
   /** repo-intel facade (T1.1+) — tests inject mock RepoIntel implementations. */
   repoIntel?: RepoIntel;
+  /** PR intent derivation (05) — tests inject a canned deriver. */
+  intent?: IntentDeriver;
   /** repo-intel T3 adapters — only the indexer pipeline reads these. */
   depgraph?: DepGraph;
   tokenizer?: Tokenizer;
   /** Skill import by URL — tests inject a canned document instead of a network. */
   skillFetcher?: SkillFetcher;
+  /** Instruction templates — tests inject canned text instead of reading `src/prompts`. */
+  prompts?: PromptTemplates;
 }
 
 export class Container {
@@ -78,10 +108,13 @@ export class Container {
   private _agentsRepo?: AgentsRepository;
   private _reviewRepo?: ReviewRepository;
   private _pullsRepo?: PullsRepository;
+  private _settingsRepo?: SettingsRepository;
   private _repoIntel?: RepoIntel;
+  private _intentService?: IntentDeriver;
   private _depgraph?: DepGraph;
   private _tokenizer?: Tokenizer;
   private _skillFetcher?: SkillFetcher;
+  private _prompts?: PromptTemplates;
   private _priceBook?: PriceBook;
 
   constructor(config: AppConfig, db: Db, private overrides: ContainerOverrides = {}) {
@@ -105,6 +138,19 @@ export class Container {
     return this._skillFetcher;
   }
 
+  /**
+   * Instruction templates. A port because the implementation reads
+   * `src/prompts/*.md`, and a service may not touch the filesystem — an
+   * indirection through a loader module satisfies `no-fs-in-service` while
+   * breaking what it stands for, so the rule cannot be the thing that enforces
+   * this.
+   */
+  get prompts(): PromptTemplates {
+    if (this.overrides.prompts) return this.overrides.prompts;
+    this._prompts ??= new FilePromptTemplates();
+    return this._prompts;
+  }
+
   get agentsRepo(): AgentsRepository {
     return (this._agentsRepo ??= new AgentsRepository(this.db));
   }
@@ -122,6 +168,15 @@ export class Container {
     return (this._pullsRepo ??= new PullsRepository(this.db));
   }
 
+  /**
+   * Non-secret preference rows. Hung off the container so
+   * `modules/_shared/feature-models.ts` can resolve a workspace's model choice
+   * without holding Drizzle itself and without importing the settings slice.
+   */
+  get settingsRepo(): SettingsRepository {
+    return (this._settingsRepo ??= new SettingsRepository(this.db));
+  }
+
   get codeIndex(): CodeIndex {
     if (this.overrides.codeIndex) return this.overrides.codeIndex;
     this._codeIndex ??= new RipgrepCodeIndex(this.git);
@@ -137,6 +192,19 @@ export class Container {
     if (this.overrides.repoIntel) return this.overrides.repoIntel;
     this._repoIntel ??= new RepoIntelService(this);
     return this._repoIntel;
+  }
+
+  /**
+   * PR intent derivation (05). The review pre-pass consumes it through the
+   * container rather than an import: `modules/reviews/**` may not reach into
+   * `modules/intent/**` (`no-cross-module`), and a barrel does not help.
+   */
+  get intentService(): IntentDeriver {
+    if (this.overrides.intent) return this.overrides.intent;
+    // The repository is built HERE, not defaulted inside the service: naming a
+    // concrete type is the composition root's job, and it is what keeps `Db`
+    // off `IntentContainer`, the port `IntentService` codes against.
+    return (this._intentService ??= new IntentService(this, new IntentRepository(this.db)));
   }
 
   /** Import-graph builder (dependency-cruiser). T3 indexer pipeline only. */
@@ -185,6 +253,9 @@ export class Container {
   async llm(id: 'openai' | 'anthropic' | 'openrouter'): Promise<LLMProvider> {
     const injected = this.overrides.llm?.[id];
     if (injected) return injected;
+    // Before the secret, before the cache: `llmFallback` is what makes "this run
+    // touches no live LLM" expressible for a provider chosen from data.
+    if (this.overrides.llmFallback) return this.overrides.llmFallback;
     const cached = this.llmCache.get(id);
     if (cached) return cached;
     const provider = await this.buildLlm(id);

@@ -7,6 +7,7 @@ import type { AgentRow } from '../../db/rows.js';
 import type { ReviewRepository, FindingRow, PullRow, ReviewRow } from './repository.js';
 import { REVIEW_STRATEGY } from './constants.js';
 import { attachedSkills, skillBodiesFor, taskLine } from './helpers.js';
+import { buildPromptAssemblyLog, promptLogDetail } from './prompt-log.js';
 import { loadDiff } from './diff-loader.js';
 
 /** Thrown by a run when the user cancels it mid-flight (between map files). */
@@ -36,9 +37,10 @@ export type RunOutcome = {
 
 /**
  * Owns the background execution of queued agent runs (extracted from
- * ReviewService; behaviour unchanged). Loads the diff + intent once, then
- * map-reduces each agent, streaming events over the runBus and persisting each
- * review. Per-agent failures are isolated.
+ * ReviewService). Loads the diff and derives the PR's intent once — both shared
+ * by every queued agent — then map-reduces each agent, streaming events over the
+ * runBus and persisting each review. Per-agent failures are isolated; a failed
+ * diff load fails every run, while a failed intent only omits a prompt section.
  */
 export class ReviewRunExecutor {
   constructor(
@@ -49,8 +51,9 @@ export class ReviewRunExecutor {
 
   /**
    * Background execution of the queued agent runs (NOT awaited by the route).
-   * Loads the diff + intent once, then map-reduces each agent, streaming events
-   * over the runBus and persisting each review. Per-agent failures are isolated.
+   * Loads the diff and derives the PR's intent once, then map-reduces each
+   * agent, streaming events over the runBus and persisting each review.
+   * Per-agent failures are isolated.
    */
   async executeRuns(
     workspaceId: string,
@@ -104,6 +107,34 @@ export class ReviewRunExecutor {
     }
     runLog.info(`Diff ready — ${diff.files.length} changed file(s); starting ${jobs.length} agent run(s)`);
 
+    // Intent is PRE-WORK: derived ONCE for every queued agent, streamed into
+    // each run's Live Log by the fanned-out logger, and cached on the PR. The
+    // deriver arrives as `container.intentService` — modules/reviews may not
+    // import modules/intent (`no-cross-module`), and the rendered section rides
+    // on the result so nothing here needs one. A failure degrades the prompt to
+    // exactly today's shape; it never fails a run.
+    let intentSection: string | undefined;
+    const derived = await runLog.step(
+      'Deriving PR intent',
+      () =>
+        this.container.intentService.derive({
+          workspaceId,
+          prId: pull.id,
+          onEvent: (kind, msg) => runLog.event(kind, msg),
+        }),
+      { kind: 'tool' },
+    );
+    if (derived.ok) {
+      intentSection = derived.section;
+      runLog.info(
+        `Intent ready — ${derived.record.confidence} confidence from ` +
+          `${derived.record.evidence.join(', ')}; ${derived.tokensIn}+${derived.tokensOut} tokens, ` +
+          `${derived.costUsd == null ? 'cost unknown' : `$${derived.costUsd.toFixed(4)}`}`,
+      );
+    } else {
+      runLog.info(`Intent unavailable — ${derived.reason}; reviewing without it`);
+    }
+
     for (const { agent, runId } of jobs) {
       const agentStart = Date.now();
       logger?.info(
@@ -111,7 +142,16 @@ export class ReviewRunExecutor {
         `review: agent "${agent.name}" started (${agent.provider}/${agent.model})`,
       );
       try {
-        const outcome = await this.runOneAgent(workspaceId, pull, repo, diff, agent, runId, runLog);
+        const outcome = await this.runOneAgent(
+          workspaceId,
+          pull,
+          repo,
+          diff,
+          intentSection,
+          agent,
+          runId,
+          runLog,
+        );
         logger?.info(
           {
             runId,
@@ -140,14 +180,15 @@ export class ReviewRunExecutor {
     pull: PullRow,
     repo: typeof schema.repos.$inferSelect,
     diff: UnifiedDiff,
+    intentSection: string | undefined,
     agent: AgentRow,
     runId: string,
     parentLog: RunLogger,
   ): Promise<RunOutcome> {
     const start = Date.now();
-    // Narrow the fanned-out pre-work logger to THIS run; the shared diff/intent
-    // events are already in this run's buffer, so the persisted trace below
-    // (built from the buffer) includes them too.
+    // Narrow the fanned-out pre-work logger to THIS run; the shared diff-load
+    // and intent-derivation events are already in this run's buffer, so the
+    // persisted trace below (built from the buffer) includes them too.
     const runLog = parentLog.forRun(runId, { agent: agent.name });
 
     runLog.info(`Starting review with agent "${agent.name}" (${agent.provider}/${agent.model})`);
@@ -210,6 +251,10 @@ export class ReviewRunExecutor {
         // PR author's description/body — untrusted; assemblePrompt wraps +
         // truncates it. Omitted when the PR has no body.
         ...(pull.body ? { prDescription: pull.body } : {}),
+        // 05 — the derived intent, rendered by the intent service. Same
+        // omit-when-absent contract: no intent ⇒ a prompt byte-identical to the
+        // pre-05 shape.
+        ...(intentSection ? { intent: intentSection } : {}),
         task,
         sessionId: `${repo.owner}/${repo.name}#${pull.number}:${agent.name}`,
         onEvent: (e) => runLog.event(e.kind, e.msg, e.data),
@@ -218,6 +263,36 @@ export class ReviewRunExecutor {
         },
       });
       const { tokensIn, tokensOut, costUsd, grounding } = outcome;
+
+      // ---- Observability: what went into each prompt, WITHOUT its content ----
+      // One line per prompt actually sent (single-pass: one; map-reduce: one per
+      // changed file), each naming its chunk so N lines are not N anonymous
+      // ones. The payload is metadata only — see modules/reviews/prompt-log.ts.
+      const verbose = this.container.config.promptLogVerbose;
+      for (const prompt of outcome.prompts) {
+        const log = buildPromptAssemblyLog({
+          correlationId: runId,
+          provider: agent.provider,
+          model: agent.model,
+          sections: prompt.sections,
+          ...(verbose
+            ? {
+                detail: promptLogDetail({
+                  mode: outcome.mode,
+                  chunk: prompt.chunk,
+                  diff,
+                  assembly: outcome.assembly,
+                  task,
+                }),
+              }
+            : {}),
+        });
+        runLog.info(
+          `Prompt assembled for "${prompt.chunk}" — ${prompt.sections.length} section(s), ` +
+            `${log.total_chars} chars, ~${log.total_tokens_approx} tokens`,
+          { chunk: prompt.chunk, prompt_assembly_log: log },
+        );
+      }
 
       const keptFindings = outcome.review.findings;
 

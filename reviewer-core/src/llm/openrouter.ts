@@ -71,6 +71,30 @@ export class DeadlineExceededError extends Error {
   }
 }
 
+/**
+ * The answer text of one choice — `message.content`, except when it is empty.
+ *
+ * Observed on OpenRouter 2026-08-05: a backend serving `z-ai/glm-4.7-flash`
+ * (DeepInfra, under a `max_tokens` cap) answered with `content: null` and the
+ * complete, valid JSON in `message.reasoning` — the string literally began
+ * `{"intent": "Fixes the GitHub API import logic…`. The repair loop then parsed
+ * an empty string, retried, failed again, and the call died reporting that the
+ * schema had failed validation, which was never true. Which backend OpenRouter
+ * routes to varies per request, so it failed intermittently.
+ *
+ * Deliberately narrow: `content` wins whenever it holds anything at all, and
+ * `reasoning` is read only when `content` is empty or whitespace. `reasoning`
+ * is an OpenRouter extension with no place in the OpenAI SDK's message type,
+ * which is what the cast is for.
+ */
+function answerText(message: { content?: string | null } | undefined): string {
+  const content = message?.content ?? '';
+  if (content.trim().length > 0) return content;
+  const reasoning = (message as { reasoning?: unknown } | undefined)?.reasoning;
+  if (typeof reasoning === 'string' && reasoning.trim().length > 0) return reasoning;
+  return content;
+}
+
 export class OpenRouterProvider implements LLMProvider {
   readonly id: 'openai' | 'openrouter';
   private client: OpenAI;
@@ -132,6 +156,25 @@ export class OpenRouterProvider implements LLMProvider {
         // OpenRouter usage accounting — ask it to return the REAL generation
         // cost (USD) in `usage.cost`, instead of estimating from a price book.
         ...(this.id === 'openrouter' ? { usage: { include: true } } : {}),
+        // One slug can be served by several backends with different feature
+        // sets — z-ai/glm-4.7-flash is currently on four, and Novita reports
+        // `structured_outputs: false`. Routing there fails the whole request,
+        // at a frequency that depends on OpenRouter's load balancing that
+        // minute. `require_parameters` restricts routing to endpoints that
+        // support every parameter sent, which is exactly the guarantee
+        // `response_format: json_schema, strict: true` needs. Applied to every
+        // OpenRouter call on purpose: a review whose schema was quietly dropped
+        // is worse than one that fails loudly.
+        ...(this.id === 'openrouter' ? { provider: { require_parameters: true } } : {}),
+        // Reasoning off, only when the caller explicitly asks for it. A short
+        // extraction (the intent classifier) has no use for reasoning tokens
+        // and they bill at the output rate: measured 2026-08-05, the same
+        // answer cost 1078 completion tokens with reasoning on and 113 with it
+        // off. `undefined` — every other caller — sends nothing, so no existing
+        // request changes shape.
+        ...(this.id === 'openrouter' && req.reasoning === false
+          ? { reasoning: { enabled: false } }
+          : {}),
         }, { signal }),
       );
 
@@ -142,7 +185,7 @@ export class OpenRouterProvider implements LLMProvider {
         const errMsg = (res as unknown as { error?: { message?: string } }).error?.message;
         throw new Error(`OpenRouter returned no choices for ${req.schemaName}${errMsg ? `: ${errMsg}` : ''}`);
       }
-      lastRaw = choice.message?.content ?? '';
+      lastRaw = answerText(choice.message);
       tokensIn += res.usage?.prompt_tokens ?? 0;
       tokensOut += res.usage?.completion_tokens ?? 0;
       // `usage.cost` is an OpenRouter extension (USD), absent from the OpenAI SDK type.

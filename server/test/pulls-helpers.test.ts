@@ -7,7 +7,13 @@
  * the UI tell "reviewed and clean" from "never reviewed".
  */
 import { describe, it, expect } from 'vitest';
-import { toPrMeta, type PrListRow, type PrRollups } from '../src/modules/pulls/helpers.js';
+import {
+  toPrDetail,
+  toPrMeta,
+  type PrDetailRow,
+  type PrListRow,
+  type PrRollups,
+} from '../src/modules/pulls/helpers.js';
 
 const now = Date.UTC(2026, 5, 11);
 
@@ -141,5 +147,61 @@ describe('toPrMeta', () => {
 
   it('reports a null cost rather than a misleading zero when nothing was priced', () => {
     expect(toPrMeta(row(), noRollups, now).cost_usd).toBeNull();
+  });
+});
+
+/**
+ * The offline half of `GET /pulls/:id`. This mapping was inline in the route's
+ * `catch` block, where the only way to reach it was to make GitHub unreachable
+ * — which is why it had no test at all until it moved out here.
+ */
+describe('toPrDetail', () => {
+  const detailRow = (over: Partial<PrDetailRow> = {}): PrDetailRow => ({
+    ...row(),
+    body: 'Adds a per-token limiter.',
+    linkedIssue: null,
+    ...over,
+  });
+
+  it('renames the row columns onto the wire contract', () => {
+    expect(toPrDetail(detailRow(), [], [])).toMatchObject({
+      id: 'pr-1',
+      number: 482,
+      head_sha: 'abc123',
+      files_count: 5,
+      body: 'Adds a per-token limiter.',
+    });
+  });
+
+  /** Detail reports GitHub's merge state; only the list derives review freshness. */
+  it('passes the merge state through instead of deriving a review status', () => {
+    expect(toPrDetail(detailRow({ status: 'open' }), [], []).status).toBe('open');
+    expect(toPrMeta(row({ status: 'open' }), noRollups, now).status).toBe('needs_review');
+  });
+
+  it('maps files and commits, turning a missing patch and date into null', () => {
+    const detail = toPrDetail(
+      detailRow(),
+      [{ path: 'src/limiter.ts', additions: 40, deletions: 2, patch: null }],
+      [{ sha: 'abc123', message: 'feat: limiter', author: 'octocat', committedAt: null }],
+    );
+
+    expect(detail.files).toEqual([
+      { path: 'src/limiter.ts', additions: 40, deletions: 2, patch: null },
+    ]);
+    expect(detail.commits).toEqual([
+      { sha: 'abc123', message: 'feat: limiter', author: 'octocat', committed_at: null },
+    ]);
+  });
+
+  /**
+   * The cached linked issue is what lets a review run make zero GitHub calls,
+   * so the detail response is the only place its absence and its presence are
+   * distinguishable from outside.
+   */
+  it('carries the cached linked issue, and reports null when there is none', () => {
+    const issue = { number: 471, title: 'Public API is unmetered', body: null, state: 'open' };
+    expect(toPrDetail(detailRow({ linkedIssue: issue }), [], []).linked_issue).toEqual(issue);
+    expect(toPrDetail(detailRow(), [], []).linked_issue).toBeNull();
   });
 });
