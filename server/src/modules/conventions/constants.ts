@@ -34,6 +34,19 @@ export const CONFIG_PATHS = [
 export const MAX_FILE_CHARS = 6_000;
 
 /**
+ * Byte bound handed to `GitClient.readFile`, which requires one: a sampled path
+ * names content from an imported public repo, and a cap applied to the returned
+ * string runs only once the whole file is in memory.
+ *
+ * Derived from `MAX_FILE_CHARS` rather than chosen. The prompt shows the model
+ * at most that many characters of a file, so a quote it produces can only come
+ * from that slice — and at a worst case of 3 UTF-8 bytes per UTF-16 unit, four
+ * bytes per character is more than enough to hold the slice whole. So grounding
+ * can still verify every quote the model was in a position to write.
+ */
+export const MAX_SAMPLE_FILE_BYTES = MAX_FILE_CHARS * 4;
+
+/**
  * Floor for a sample. Ranking rewards being imported everywhere, which a
  * nine-line helper often is; there is no convention to read out of it, and it
  * still costs one of the twelve slots.

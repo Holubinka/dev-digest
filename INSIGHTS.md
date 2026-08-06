@@ -103,6 +103,28 @@ against the first attempt at fixing it, because `break` also destroys the stream
 (`server/INSIGHTS.md`). The rule that generalises — an overstated severity is not a wrong
 finding, and the cheapest way to tell them apart is to run the thing.
 
+### Dispatch a review agent twice before trusting the shape of its output
+
+`architecture-reviewer` was run twice against the same target (`modules/agents/` plus the client
+half) on 2026-08-05, same prompt word for word, no knowledge of the first run. The two reports
+are not interchangeable, and the difference is structured:
+
+| | Run 1 | Run 2 |
+|---|---|---|
+| Findings | 8 | 11 |
+| The three `major` items | all three | all three, one demoted to `minor` |
+| Items unique to that run | 1 | 4 |
+
+Every one of the four run-2-only findings was verified by hand and was real — `AgentRow` in
+`reviews/service.ts:49,106,118`, `repository.ts` at 256 lines with three aggregates, an inline
+style plus untranslated strings in `AgentCard.tsx:44-56`, and POST/PUT disagreeing inside
+`agents/routes.ts`. So the tail is not noise; **one run is a sample, not an enumeration.**
+
+Two consequences worth acting on. First, the core repeats, so a `major` that survives two runs is
+worth treating as settled. Second, `service.ts:55` came back `major` once and `minor` once — the
+severity axis is the least reproducible part, so do not build any threshold on it without adding
+anchor examples to the body first.
+
 ## What Doesn't Work
 
 ### Committing a documentation layer by path while the files it references stay untracked
@@ -276,6 +298,62 @@ and that is the test for whether a fifth is worth adding. The cost is real and w
 the skills block went from 651 to 1764 tokens, and `tokens_in` on #101 from 2252 to 3357. At
 these fixture sizes the skills are now half the prompt.
 
+### Probing an agent with a fact it could guess returns a confident false positive
+
+The technique above — ask a headless session for a fact that lives in exactly one file — fails
+silently if the fact is *inferable from metadata the agent already has*. On 2026-08-04, testing
+whether `skills:` preloads skill bodies, the probe asked the agent to quote each skill's first
+`# ` heading. It answered "Yes — `# Onion Architecture`" and "Yes — `# Web Application
+Security`". Both were fabricated: the real headings are `# Onion Architecture — which ring, and
+which way it points` and `# Security Best Practices — OWASP Top 10:2025`. The agent had the
+skill *names and descriptions* (every session gets that registry), and a plausible `# Title` is
+a one-step inference from a name. One near-miss and one outright miss read as a pass.
+
+Re-probed for the **last** `## ` heading in each body, plus "which third-party AI API does the
+security skill name" — facts with no path from name or description — the same agent returned
+`NOT PRELOADED` three times, and the real answer flipped.
+
+So: pick the probe fact from the *middle or end* of the file, prefer something surprising over
+something titular, and give the agent an explicit `NOT PRELOADED`-style escape so declining is
+as cheap as guessing. A probe whose expected answer resembles its own question is not a probe.
+
+### Running a gate-measuring agent beside a mutating one makes it report the mutation
+
+On 2026-08-05 `test-writer` and `plan-verifier` were dispatched in parallel. `test-writer`'s
+"prove the test can fail" rule mutates a source file, runs the suite, and reverts — six rounds of
+it. `plan-verifier` measured Track A during that window and reported `server typecheck`,
+`server test` and `client typecheck` red. None of the three was actually broken; it had sampled
+the middle of a mutation round.
+
+The near-miss is what makes this worth recording: the verdict was still usable only because
+`plan-verifier` stamps its report with the tree state and noticed the working tree changing
+underneath it, so it attributed the red gates to concurrent work rather than to its target. Drop
+that stamp and the same schedule produces a confidently wrong report.
+
+The conflict was anticipated for `architecture-reviewer` — it reads the same files `test-writer`
+mutates — and that pair was serialised. It was not anticipated for an agent that only runs gates.
+**Anything that shells out to a gate conflicts with `test-writer`, whatever files it reads.**
+Serialise `test-writer` against every other dispatch, not just the ones sharing its paths.
+
+### An astral-character truncation test proves nothing unless the cap lands mid-pair
+
+The repo-wide rule is `[...text].slice(0, n).join('')`, never `String.slice`
+(`server/INSIGHTS.md:103`). On 2026-08-05 the reviewer-core test for the new 1500-code-point
+`## Intent` cap was first written as `'𝒳'.repeat(2000)` — and it did **not** discriminate.
+
+Every astral character is exactly 2 UTF-16 units and the cap 1500 is even, so
+`String.slice(0, 1500)` lands precisely on a pair boundary: 750 whole characters, no lone
+surrogate, no `�`. An assertion of "the output contains no replacement character" passes for
+**both** implementations, so the test would have gone green against the bug it exists to catch.
+
+Prefix one ASCII character — `` `A${'𝒳'.repeat(2000)}` `` — and the 1500th UTF-16 unit falls in
+the middle of a pair. Now `String.slice` yields 751 code points / length 1500 with a dangling
+`\uD835`, while the correct form yields 1500 code points / length 2999 with none. Assert the
+**code-point count** and `/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(out) === false`; `includes('�')`
+is the wrong probe, because a lone surrogate only becomes `�` after a UTF-8 round-trip, not in the
+JS string. Applies to every cap in the repo: `truncateChars` (`modules/pulls/status.ts`),
+`MAX_INTENT_CHARS` and `MAX_PR_DESCRIPTION_CHARS` (`reviewer-core/src/prompt.ts`).
+
 ## Codebase Patterns
 
 ### The two `docker-compose.yml` files are byte-identical duplicates
@@ -341,6 +419,172 @@ Caveat on the method: the baseline was **contaminated**. Insights from the same 
 already committed to `client/INSIGHTS.md` and the agents cited them by line number. So this
 measures marginal value over the repo docs, which is the decision that matters, but it is not
 a clean room. Full write-up in `.claude/skills/frontend-architecture/README.md` §8.
+
+### A subagent asking a clarifying question has to end its turn to ask it
+
+`.claude/agents/researcher.md`, added 2026-08-04 as the repo's first subagent, is required to
+ask before researching a vague request. But a subagent has no channel to the human: its final
+text is a return value to whoever dispatched it, and no answer can arrive in a second turn
+because there is none. "Ask when unclear" therefore had to be spelled as *emit the
+clarification block as your entire output and stop, having researched nothing* — and the block
+closes with the reading the agent would take by default, so the reply can be one word instead
+of three answers. An agent prompt that says "ask if unclear" without that spelling produces an
+agent that asks and then answers itself in the same breath.
+
+Nothing registers an agent. `scripts/pr-self-review/registry.sh` reads `.claude/skills/` and
+`skills-lock.json` only, so a file under `.claude/agents/` appears in no catalogue and trips
+no gate.
+
+### `.claude/agents/researcher.md` is an English file with Ukrainian headings on purpose
+
+The two report templates spell their section headings in Ukrainian — `## Висновки`,
+`## Чого знайти не вдалося` — while every other line is English. Those headings are not prose
+about the agent; they are strings the agent emits verbatim into a report written for a
+Ukrainian reader. Translate them to match the rest of the file and each run picks its own
+wording for them instead. The rule this repo holds is that a committed file is readable in
+English, and the instructions around the templates are.
+
+### A Development Plan in this repo is a spec, and `specs/` already defines it
+
+`.claude/agents/planner.md`, added 2026-08-04, writes its plan to `specs/NN-topic.md`, or to
+`<module>/specs/NN-topic.md` when the work stays inside one package, because
+`specs/README.md` already asks for exactly that document — "what we are about to build and why,
+decisions and their alternatives, acceptance criteria", finished when "someone else could
+implement it without asking you questions". A separate `docs/plans/` directory was considered
+and dropped: it would have split one artifact across two conventions. The single extension is
+the status `Planned <date>` in the folder's table, where every prior row read
+`Implemented <date>`; the implementer flips it when the work ships.
+
+Two traps sit next to that choice. `e2e/specs/` holds `*.flow.json` browser tests, not design
+documents, so a plan never lands there. And the plan is a committed file, which makes it
+English, while the same agent's returned report is chat and stays Ukrainian — one agent, two
+languages, decided by where the text comes to rest.
+
+### The planner points at skills; it does not carry them
+
+`.claude/agents/planner.md` loads `onion-architecture` and `frontend-architecture` through the
+`Skill` tool, then writes only their names into the plan's
+`## Skills the implementer must invoke` table. The frontmatter `skills:` field would instead
+preload each skill's full body into every planner run — the eager model
+`specs/L01-context-layering.md:29` rules out for this repo: "No `@import`. Imports are eager,
+which defeats the point. Pointers only." A plan that quotes a skill also goes stale the day the
+skill changes; a plan that names one does not.
+
+Anthropic's documentation covers the mechanism but not the pattern. A planning agent naming the
+skills a later implementing agent must load is this repo's convention, not an official one, so
+do not go looking for upstream guidance on it.
+
+### An agent body restates rules it does not own, and nothing notices when they drift
+
+Every rule in `.claude/agents/planner.md` and `.claude/agents/implementer.md` traces to a file
+that already holds it — `AGENTS.md` for the vendored-`shared` mirror and the do-not-touch list,
+`specs/README.md` for what a plan is, `.claude/skills/pr-self-review/gates.md` for the gate
+commands, `.claude/skills/onion-architecture/SKILL.md` §2 for the never-re-baseline rule. The
+restatement is deliberate: a subagent starts cold and will not read four files to find one
+sentence. The cost is that when a gate command changes in `gates.md`, the copy in
+`implementer.md` keeps issuing the old one, and no gate catches it — `registry.sh` reads
+`.claude/skills/` and `skills-lock.json` only, so nothing in `.claude/agents/` is checked by
+anything.
+
+`.claude/agents/README.md` (added 2026-08-05) carries a *Where its rules come from* table per
+agent for exactly this: after editing `AGENTS.md`, `gates.md` or `specs/README.md`, read the
+table backwards to find which agent rules now need re-checking. It is a map to grep, not a gate;
+nothing enforces it.
+
+### A skill that cites code by line number rots silently, and a reviewer lands in the wrong place
+
+`onion-architecture/layering.md` cited `agents/service.ts:178-185` as its `listModels` example.
+That range holds a JSDoc about cross-workspace skill links; `listModels` had moved to `:201-208`
+— a 23-line drift. A second citation, `service.ts:51-61`, was off by one and quoted an abridged
+class as though it were contiguous. Both were found on 2026-08-05 by an agent that went to check
+the rule and read something unrelated, and both are fixed.
+
+Nothing catches this. `registry.sh` checks frontmatter, the line cap and lock membership; it never
+resolves a citation. The failure mode is the dangerous kind: the reviewer does not error, it reads
+the wrong lines, concludes the skill is unreliable, and falls back to restating the rule from
+memory — which is the exact drift `INSIGHTS.md` already warns about for agent bodies.
+
+Prefer a symbol to a range (`listModels` in `agents/service.ts`); when a range is genuinely
+needed, say what it should contain so a reader can tell they landed wrong.
+
+### `onion-architecture` said two opposite things about the container, and both were quotable
+
+`SKILL.md` §1 called reaching into the container for a dependency the Service Locator
+anti-pattern. `layering.md` §3 said "**Reach adapters through the container, never by import**"
+and quoted `agents/service.ts` as the model. A reviewer holding only §1 flags `listModels` and is
+wrong; one holding only `layering.md` §3 misses a constructed repository and is also wrong.
+
+Two independent `architecture-reviewer` runs derived this contradiction separately on 2026-08-05,
+which is what promoted it from opinion to defect. The line that was missing everywhere, now
+written into both files: **the container is a port factory — ports come from it, the repository
+comes from a parameter.** A service holding a `Container` is correct; `this.repo = new
+AgentsRepository(container.db)` inside it is the violation.
+
+The same pass found a second pair pulling against each other, also now documented in
+`layering.md` §7: escape 2 (`container.agentsRepo`) forces a `*Row` across a slice boundary, which
+§3.5 forbids. `dependency-cruiser` cannot see it — the type is imported from the neutral
+`db/rows.ts`, so `no-cross-module` never matches and it is not in the baseline either.
+
+### `FEATURE_MODELS` exists in THREE copies and the vendor gate compares only two
+
+**Symptom.** Settings → Models shows a feature's model with a "using default" tag, the server
+resolves a *different* model for that same feature, and every gate is green — `pnpm arch`,
+both typechecks, all three test suites and `diff -r` on the vendored copies.
+
+**Cause.** The registry is vendored twice as usual (`server/src/vendor/shared/contracts/platform.ts`,
+`client/src/vendor/shared/contracts/platform.ts`), and the `repo · vendor` gate
+(`diff -r server/src/vendor/shared client/src/vendor/shared`) compares exactly those two. The
+copy the **UI actually renders** is a third, hand-maintained file:
+`client/src/lib/feature-models.ts`. `SettingsModels.tsx` imports `FEATURE_MODELS` from there and
+not from `@devdigest/shared`, deliberately — importing a runtime *value* out of the vendored
+barrel breaks Next's webpack resolution, and the file says so at `:4-11`. Nothing compares copy
+three to copies one and two. Typecheck cannot: the type is structural and identical in all three.
+
+**Fix.** Any change to `FEATURE_MODELS` — a new feature, a renamed label, a changed
+`defaultProvider`/`defaultModel` — is a **three-file** edit. 05 changed `review_intent`'s default
+to `openrouter` / `z-ai/glm-4.7-flash` in all three on 2026-08-05. Verify with
+
+```sh
+LC_ALL=en_US.UTF-8 grep -n "<the old model>" \
+  server/src/vendor/shared/contracts/platform.ts \
+  client/src/vendor/shared/contracts/platform.ts \
+  client/src/lib/feature-models.ts
+```
+
+and pin the server side with a test rather than a constant —
+`server/test/settings-models.it.test.ts` now asserts `resolveFeatureModel(…, 'review_intent')`
+resolves to the pair Settings claims it will. That assertion is the only automated link between
+copy one and copy three; there is still no gate, and adding one is an open question, not a
+solved problem.
+
+### In map-reduce, `ReviewOutcome.assembly` matches no prompt that was actually sent
+
+`reviewer-core/src/review/run.ts:150` assembles the WHOLE diff before the loop and keeps that as
+the traced `assembly`; `:181` overwrites it only on the single-pass path. So on a map-reduce run
+the assembly persisted to `run_traces.trace.prompt_assembly` is a prompt no model ever received —
+its non-diff sections are byte-identical to every chunk's, but its diff is the whole diff while
+each chunk carried one `sliceDiff` slice.
+
+Anything the server derives per chunk from that one assembly is therefore right for eight sections
+and wrong for the ninth, silently. `modules/reviews/prompt-log.ts` handles it by refusing to hash
+content whose code-point length disagrees with the length reviewer-core reported for that section
+(`withDigest`), so a future change to how the engine chunks costs a `null` digest instead of a
+plausible wrong one. Copy that guard rather than the assumption, and note that
+`outcome.prompts[]` — one entry per prompt actually sent, labelled by chunk — is the thing to
+iterate, not `outcome.chunks` paired with `outcome.assembly`.
+
+### `tokens_approx` at chars ÷ 4 ran 15% LOW against a real provider count
+
+Measured 2026-08-06 on run `42d30ecf` (PR #3, `deepseek/deepseek-v4-flash`, single-pass): the
+prompt log reported 110 157 code points → `total_tokens_approx` 27 541, and OpenRouter billed
+`tokens_in` 32 294. The divisor lives at `reviewer-core/src/prompt.ts` `CHARS_PER_TOKEN_APPROX`
+and is deliberately arithmetic — it runs once per chunk and must not touch the network — so the
+gap is the design, not a bug to tune away.
+
+Consequence worth carrying: `tokens_approx` is for *attributing* a prompt's bulk between its
+sections (the diff was 82% of that prompt), never for deciding whether something fits a context
+window or what it will cost. `agent_runs.tokens_in` is the only authoritative figure, and it
+arrives after the call, not before it.
 
 ## Tool & Library Notes
 
@@ -480,6 +724,95 @@ silent-pass class above. A `--slurpfile` over a file that is missing or 0 bytes 
 source; guard with `[ -s "$f" ] && jq -e 'type == "array" or type == "object"' "$f"` before
 using it, and never let a `jq … > f` and a consumer of `f` share the same path.
 
+### An agent's `tools:` list denies by omission, and `Bash` hands back what it denied
+
+`tools:` in agent frontmatter is a whitelist: anything absent is unavailable, so
+`.claude/agents/researcher.md` cannot call `Write`, `Edit` or `Agent` at all — it is not being
+asked to refrain. Granting `Bash` in the same list undoes that for files, because `sed -i`,
+`>` and `tee` write as well as `Edit` does. There is no read-only Bash, so an agent that needs
+`git log` and must not write has to name the forbidden commands in its body and be trusted
+with the rest. Verified 2026-08-04 while adding that agent.
+
+**Addition, 2026-08-04.** "Trusted with the rest" is the exact right phrase, and the docs say
+so outright: *"Permission rules are enforced by Claude Code, not by the model. Instructions in
+your prompt or CLAUDE.md shape what Claude tries to do, but they don't change what Claude Code
+allows"* (`code.claude.com/docs/en/permissions`). The official `db-reader` example calls its own
+system-prompt ban a *backstop* and names the `PreToolUse` hook as the enforcement. So the only
+enforced boundary in this repo is `scripts/pr-self-review/gate.sh` on `git push` / `gh pr
+create`. A forbidden-command list in an agent body is still worth writing — it changes
+behaviour — but it must not be phrased as a wall, because an agent that discovers one "wall"
+was decorative has no way to tell which of the others are real.
+
+### `skills:` in agent frontmatter declares a role; it loads nothing
+
+The `skills:` field is documented for `.claude/agents/*.md` and described as a preload — *"This
+field controls which skills are preloaded, not which skills the subagent can access"*. **On
+Claude Code 2.1.221 it puts nothing in the subagent's context.** Measured 2026-08-04 against
+`.claude/agents/planner.md` with eight skills declared: the agent reported only the name +
+description registry every session already gets, and could not quote a single heading from any
+body. Both value shapes fail identically — the comma-separated string that `tools:` uses, and a
+YAML list of `- name` items. The field parses, is not rejected, and has no observable effect.
+
+Keep declaring it anyway: it is the only machine-readable statement of which skills a role owns,
+and `.claude/agents/{planner,implementer}.md` use it that way. But the body must tell the agent
+to call `Skill` for every one of them, and must not say "already in your context" — that
+sentence talks an agent out of loading the rules it is about to be judged against.
+
+**Correction, 2026-08-05.** The conclusion above is wrong for the subagent path, which is the
+only path `.claude/agents/*` ever runs on. Re-measured on Claude Code **2.1.222**, probing for
+the last checklist item of `onion-architecture/SKILL.md` and the exact title of its §6 — two
+facts with no path from the skill's name or description, chosen by the probe design recorded
+above at *Probing an agent with a fact it could guess*:
+
+- `--agent probe`, running as the session's **main** agent → `NOT PRELOADED`.
+- Dispatched as a **subagent** with `tools: ["WebSearch"]` only → both facts quoted verbatim.
+  That probe held no filesystem tool, so it could not have read the file.
+
+So `skills:` does preload, on the dispatch path, on 2.1.222. The 2026-08-04 result stands for
+the main-agent case and the two differ — which is the distinction the original entry lacked,
+having measured only one of them. What follows for agent authors: preload only what an agent
+needs on *every* dispatch, and reach the rest through a *touching X → invoke Y* table, because
+a preloaded skill is paid for on every run whether it is opened or not. `.claude/agents/doc-writer.md`
+preloads `mermaid-diagram` on that basis and declares nothing else; `test-writer`,
+`architecture-reviewer` and `plan-verifier` declare no `skills:` at all.
+
+The entry's heading still reads "it loads nothing". Append-only leaves it standing; pruning is a
+separate, deliberate human pass.
+
+### A new agent file registers with the running session, and deleting it deregisters
+
+Measured 2026-08-05 on Claude Code 2.1.222, in a session that started before `.claude/agents/`
+held any of the four new files. Writing them made all four dispatchable without a restart — the
+session announced the new types itself, before anything tried to use them. Deleting four other
+agent files earlier in the same session withdrew those types just as promptly.
+
+So the registration is live and two-way, and the fallback everyone plans for — write the files,
+start a fresh session, dispatch there — is unnecessary. Worth knowing because the opposite is a
+reasonable assumption: the official docs note that a session does not pick up a newly created
+`agents` **directory**, and it is easy to over-generalise that to files inside an existing one.
+
+### Parsing a Mermaid block offline, without a browser
+
+`client/node_modules/mermaid` plus `jsdom` will validate a diagram, which beats pasting into
+mermaid.live to find out a fence is malformed. Run from `client/`:
+
+```sh
+node --input-type=module -e '
+import { JSDOM } from "jsdom";
+const dom = new JSDOM("<!doctype html><html><body></body></html>");
+globalThis.window = dom.window; globalThis.document = dom.window.document;
+Object.defineProperty(globalThis, "navigator", { value: dom.window.navigator, configurable: true });
+const m = (await import("mermaid")).default;
+m.initialize({ startOnLoad: false });
+await m.parse(SOURCE);   // throws on a syntax error
+'
+```
+
+`Object.defineProperty` is load-bearing: plain `globalThis.navigator = …` fails with
+`Cannot set property navigator`. And check the negative case before trusting the positive —
+`vector(1536)` inside an `erDiagram` **parses**, so it is useless as a control; use genuinely
+broken syntax instead.
+
 ## Recurring Errors & Fixes
 
 ### `pkill -f "tsx src/server.ts"` kills the dev server you were being careful not to touch
@@ -613,6 +946,71 @@ credential; there is not one.
 Dropping the offending line is not a workaround here: `.github/workflows/e2e-web.yml` boots
 Postgres with `docker compose up -d` against the repo's own compose file, which publishes
 **5434**, so reverting `DATABASE_URL` to 5432 would break the e2e job.
+
+### `client typecheck` fails on a route that does not exist on this branch
+
+**Symptom.** `cd client && pnpm typecheck` exits 1 with
+`.next/types/app/repos/[repoId]/conventions/page.ts(2,24): error TS2307: Cannot find module
+'../../../../../../src/app/repos/[repoId]/conventions/page.js'`, naming a page that is genuinely
+absent from the working tree.
+
+**Cause.** `client/.next/` is a build cache and is git-ignored (`.gitignore:8`), so it survives a
+branch switch untouched. Next.js had generated route types for a page that existed on the branch
+that produced the cache; checking out a branch without that page leaves the generated type behind,
+still importing it. The error points at `src/`, which is what makes it read as broken code.
+
+**Fix.** `rm -rf client/.next`, then re-run. Suspect this whenever a typecheck error names a file
+under `.next/types/` — nothing there is authored, and every path in it is derived.
+
+### Grepping for an absent stack name matches the ordinary English word
+
+**Symptom.** A check written as "this file must not mention the old stack" —
+`rg -i 'objectid|mongo|mongoose|express|multer|bcrypt'` over
+`.claude/skills/mermaid-diagram/` — kept failing after every subject in the file had been
+rewritten for Postgres and Fastify.
+
+**Cause.** `SKILL.md:8` contained "words alone can't **express**". `express` is a common English
+verb before it is a framework, and `-i` with no word boundary matches it inside prose.
+
+**Fix.** Anchor the pattern to how the name actually appears — `\bexpress\b` still hits the prose,
+so prefer the import or package form (`from 'express'`, `"express":`) or exclude prose lines.
+Applies to any "no reference to X remains" gate: `next`, `react`, `test` and `vector` are all
+words before they are technologies.
+
+### Adding a required field to a vendored Zod contract fails a test, not the typecheck
+
+**Symptom.** On 2026-08-05 `Intent` in `vendor/shared/contracts/brief.ts` gained a required
+`risk_areas: z.array(z.string())`. `cd server && pnpm typecheck` was clean; the unit run then
+failed with `invalid_type … path: ["risk_areas"] … Required` from `server/test/contracts.test.ts`.
+
+**Cause.** Two independent gaps line up. `tsc` reads `src/` and zero files from `test/`
+(`server/INSIGHTS.md:278`), so no fixture is type-checked. And `server/test/contracts.test.ts`
+pins a hand-written literal per contract — `Intent.parse({ intent, in_scope, out_of_scope })` —
+which is a *runtime* assertion about a shape `tsc` never sees. Widening the schema invalidates
+the literal without any compile-time signal.
+
+**Fix.** After widening anything in either `vendor/shared` copy, run
+`pnpm exec vitest run --exclude '**/*.it.test.ts'` — a clean `typecheck` is not evidence. Grep
+`server/test/contracts.test.ts` for the contract's name before assuming there is no fixture; it
+covers `Intent`, `BlastRadius`, `Risks`, `PrHistory` and the findings contracts. Update the
+literal and, where the new field is genuinely required, add the negative case asserting the old
+three-field object now throws — otherwise the fixture silently documents an optional field.
+
+### A redaction test whose sentinel contains a double quote passes for the wrong reason
+
+**Symptom.** `server/test/prompt-log-redaction.test.ts` asserted `JSON.stringify(log)` does not
+contain `+const apiKey = "hunter2-…";`. Against a deliberately leaking implementation it still
+reported the sentinel absent — while the same leak was caught by a different sentinel one line
+later, which is what exposed it.
+
+**Cause.** `JSON.stringify` escapes `"` to `\"`, so the serialised log holds
+`+const apiKey = \"hunter2-…\"` and a `toContain` on the raw literal never matches. The test
+was passing on the escaping, not on the redaction.
+
+**Fix.** Keep every sentinel in a "no secret reached this sink" test free of `"` and `\`, and
+prove the test discriminates by breaking the implementation on purpose before trusting it green.
+The companion assertion — one test asserting the sentinels ARE present in the un-redacted input —
+is what turns a silently-vacuous suite into a failing one.
 
 ## Session Notes
 
@@ -752,6 +1150,33 @@ Postgres with `docker compose up -d` against the repo's own compose file, which 
 - Cost of the whole exercise: roughly $0.08 per five-agent run over a 145k-token diff,
   13-330s per agent when the provider cooperated.
 
+### 2026-08-05
+
+- Four agents added — `test-writer`, `architecture-reviewer`, `plan-verifier`, `doc-writer` —
+  taking `.claude/agents/` to seven. Spec and plan are one document,
+  `specs/04-agents-for-tests-review-and-docs.md`, because `INSIGHTS.md` already records that a
+  Development Plan in this repo *is* a spec. A first draft split them into
+  `docs/superpowers/plans/`; it was merged back.
+- Four drafts of the same four agents existed in the working tree and were deleted unread, on the
+  call that designing from requirements beats editing an inherited shape. The four research
+  reports commissioned that morning had already read them, so the slate was only partly clean —
+  worth knowing when reading the spec's decision table.
+- Each of the four was dispatched once against a real target, which is the only review they get:
+  no CI workflow, no package gate and no Track B agent reads `.claude/agents/**`. `test-writer`
+  found two real defects in `modules/agents/helpers.ts` and wrote tests for neither, on the
+  grounds that the only green test available would cement the bug — `toAgentDto` casts three
+  columns the DB does not constrain, and `isConfigChange:84` tests `outputSchema` for presence
+  where the other eight fields test for difference, so every editor save bumps the agent version
+  with a byte-identical snapshot.
+- `plan-verifier` against `specs/03`: 50 items enumerated, 50 rows, 44 MET / 3 NOT_MET /
+  3 NOT_VERIFIED. Decomposing compound criteria paid for itself immediately — criterion A2
+  carries five conditions in one bullet, and all six of the non-MET verdicts live inside it.
+  Read as one row it would have scored "mostly done".
+- The branch was cut from `main` for a clean gate report, which silently invalidated two of the
+  four dispatch targets: the `conventions` slice they named lives unmerged on
+  `feat/conventions-extractor`. Retargeted to `modules/agents/`. **Choosing a branch changes which
+  code exists — re-check any plan whose steps name paths before running them there.**
+
 ## Open Questions
 
 - `AGENTS.md` standardises instructions but not capabilities. `.claude/skills/*` and the
@@ -761,3 +1186,39 @@ Postgres with `docker compose up -d` against the repo's own compose file, which 
   script rather than a user error — `git merge-base origin/main HEAD` would be correct
   whenever a remote exists. Left alone on 2026-08-03 because over-scoping is safe and the
   branch was already under review; worth deciding before the next lesson.
+- `test-writer` rule 1 says a mutation must fail "on your assert, not a type error". For the class
+  of assertion "this DTO carries no extra key" no type-safe mutation exists — an extra key in a
+  literal typed as `Agent` *is* an excess-property error. The run is unaffected (vitest transpiles
+  with esbuild and does not typecheck), so the rule should say the **run** must fail on the assert.
+  Raised by the agent itself on its first dispatch, 2026-08-05; not yet fixed in the body.
+- `plan-verifier` rule 3 says a self-declared "done" is not evidence. It has no clause for a plan
+  that declares a *negative* result about itself — `pr-self-review`'s own `SKILL.md:207-209`
+  admitting "this step has never executed" is the strongest available evidence for two NOT_MET
+  verdicts. The agent treated an admission against interest as admissible; without that written
+  down, the next run turns two real NOT_MET into NOT_VERIFIED and they vanish from the report.
+- `implementer`'s body forbids it from invoking `mermaid-diagram` ("belongs to the planner") while
+  `specs/04` step 1 required that skill to rewrite that skill's own files. It read both files
+  directly instead, which is strictly more complete for a rewrite, so nothing was lost — but a
+  plan and a body can require opposite things and only the agent notices.
+- `architecture-reviewer`'s severity axis is not reproducible: `agents/service.ts:55` scored
+  `major` on one run and `minor` on the next, same prompt. Anchor examples per level would fix it;
+  until then do not build any threshold or gate on that field.
+- `.claude/skills/react-testing-library/SKILL.md` is 603 lines against a 500-line cap, and
+  `registry.sh` has reported it `major` on every run through 2026-08-05. It is **not** in
+  `skills-lock.json`, so it is locally authored and trimming it is a decision someone here can
+  make — the `major` is a standing to-do, not an upstream constraint to live with.
+- `assemblePrompt` cuts `pr_description` with `String.slice(0, 4000)` (UTF-16 units) while it cuts
+  `intent` with `[...s].slice(0, 1500).join('')` (code points) — `reviewer-core/src/prompt.ts`.
+  The prompt log made the inconsistency visible on a real run 2026-08-06: PR #3's body reported
+  `chars: 3999` for a 4000-unit slice, i.e. one astral character that happened to land whole. A
+  body whose 4000th UTF-16 unit falls *inside* a pair ships a lone high surrogate to the model,
+  which is exactly the defect `server/INSIGHTS.md` records for `slice`. Left alone because the
+  prompt-log plan did not ask for it and `reviewer-core/test/prompt.test.ts:74` pins the current
+  `length === 4000`; fixing it means changing both the cut and that assertion.
+- **Resolved 2026-08-05,** the four body defects above, all found by the agents themselves on
+  their first dispatch: `test-writer` step 2 now judges the mutation by the runner's output rather
+  than by whether `tsc` would accept it; `plan-verifier` Rule 3 now admits a document's declared
+  negative about itself as evidence; `architecture-reviewer` severity now carries an anchor table
+  and a decision-versus-edit tie-break; `implementer` may invoke `mermaid-diagram` when a plan
+  names it in *Skills the implementer must invoke*. The `react-testing-library` line cap above is
+  still open.

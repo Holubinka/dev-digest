@@ -6,12 +6,50 @@ import { z } from 'zod';
  */
 
 // ---- Intent ----
+/**
+ * What the intent classifier returns. FLAT ON PURPOSE: four required fields, no
+ * nesting, no unions, no optionals. Under OpenAI Structured Outputs' `strict`
+ * mode a small model reaches 100% schema validity while semantic accuracy
+ * drops as the schema gets more constrained, so every field earns its place.
+ * This is the schema handed to `completeStructured` as `schemaName: 'Intent'`.
+ */
 export const Intent = z.object({
   intent: z.string(),
   in_scope: z.array(z.string()),
   out_of_scope: z.array(z.string()),
+  risk_areas: z.array(z.string()),
 });
 export type Intent = z.infer<typeof Intent>;
+
+/** Which evidence the derivation actually had. Drives `confidence` in code. */
+export const IntentEvidenceSource = z.enum([
+  'title',
+  'body',
+  'linked_issue',
+  'plan_spec',
+  'commits_files',
+]);
+export type IntentEvidenceSource = z.infer<typeof IntentEvidenceSource>;
+
+/**
+ * Confidence BAND, derived deterministically from which documentary sources were
+ * present — never self-reported by the model. Small models pin verbal confidence
+ * near-constant regardless of accuracy, so a number from one is not evidence.
+ */
+export const IntentConfidence = z.enum(['high', 'medium', 'low']);
+export type IntentConfidence = z.infer<typeof IntentConfidence>;
+
+/** The persisted / API shape: the model's answer plus everything we know about it. */
+export const IntentRecord = Intent.extend({
+  confidence: IntentConfidence,
+  evidence: z.array(IntentEvidenceSource),
+  /** Repo-relative paths of the plan/spec files that were read, if any. */
+  plan_refs: z.array(z.string()),
+  provider: z.string(),
+  model: z.string(),
+  computed_at: z.string(),
+});
+export type IntentRecord = z.infer<typeof IntentRecord>;
 
 // ---- Blast radius ----
 export const ChangedSymbol = z.object({

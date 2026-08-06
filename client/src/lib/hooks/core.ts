@@ -15,6 +15,7 @@ import type {
   Repo,
   PrMeta,
   PrDetail,
+  IntentRecord,
   SpecFile,
   IndexStatus,
 } from "../types";
@@ -116,6 +117,26 @@ export function usePullDetail(prId: string | number | null | undefined) {
     queryKey: ["pull", prId],
     queryFn: () => api.get<PrDetail>(`/pulls/${prId}`),
     enabled: prId != null,
+  });
+}
+
+// ---- PR intent (05: GET/POST /pulls/:id/intent) ----
+
+/** `null` (not an error) is the answer for a PR whose intent was never derived. */
+export function usePrIntent(prId: string | null | undefined) {
+  return useQuery({
+    queryKey: ["pr-intent", prId],
+    queryFn: () => api.get<IntentRecord | null>(`/pulls/${prId}/intent`),
+    enabled: !!prId,
+  });
+}
+
+/** One LLM call server-side (rate-limited 6/min), so it is never automatic. */
+export function useRecomputeIntent(prId: string | null | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<IntentRecord>(`/pulls/${prId}/intent`),
+    onSuccess: (data) => qc.setQueryData(["pr-intent", prId], data),
   });
 }
 

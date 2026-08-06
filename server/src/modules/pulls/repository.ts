@@ -44,8 +44,30 @@ export interface PrListReviewRow {
   kind: 'summary' | 'review';
 }
 
+/**
+ * The columns a GitHub detail refresh writes back onto the PR row. Derived from
+ * the table rather than restated, so adding a column to the refresh reaches the
+ * caller as a type error instead of a silently dropped write.
+ */
+export type PrDetailPatch = Pick<
+  typeof t.pullRequests.$inferInsert,
+  'body' | 'linkedIssue' | 'additions' | 'deletions' | 'filesCount'
+>;
+
 export class PullsRepository {
   constructor(private db: Db) {}
+
+  /**
+   * Write a refreshed GitHub detail back onto the PR row.
+   *
+   * Small enough to look inline-able from the route, and it was. `pnpm arch`
+   * will not stop anyone putting it back: `no-db-from-routes` for
+   * `pulls/routes.ts` is frozen in the dependency-cruiser baseline, and a frozen
+   * edge silences that edge entirely rather than counting new violations on it.
+   */
+  async updateDetail(prId: string, patch: PrDetailPatch): Promise<void> {
+    await this.db.update(t.pullRequests).set(patch).where(eq(t.pullRequests.id, prId));
+  }
 
   /**
    * Reviews for a page of PRs, newest first, across every review kind.

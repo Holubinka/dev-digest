@@ -1,4 +1,4 @@
-import type { ChatMessage, PromptAssembly } from '@devdigest/shared';
+import type { ChatMessage, PromptAssembly, PromptSectionLog } from '@devdigest/shared';
 
 /**
  * Prompt assembly + prompt-injection hardening.
@@ -36,6 +36,14 @@ export function wrapUntrusted(label: string, content: string): string {
 /** Cap the PR description so a huge author body can't blow the token budget. */
 const MAX_PR_DESCRIPTION_CHARS = 4000;
 
+/**
+ * Cap the derived intent so a verbose classifier can't crowd out the diff.
+ * Lower than the description's cap because assemblePrompt runs once per CHUNK:
+ * a 20-file map-reduce review pays this section 20 times, and the intent is a
+ * derived summary of a description that is already paying full price.
+ */
+const MAX_INTENT_CHARS = 1500;
+
 export interface PromptParts {
   /** Agent's system prompt (trusted). */
   system: string;
@@ -66,6 +74,13 @@ export interface PromptParts {
    * undefined → section omitted.
    */
   prDescription?: string;
+  /**
+   * Derived PR intent + scope (05), pre-rendered by the caller. Untrusted —
+   * it is a summary OF untrusted text, so it is delimiter-wrapped and
+   * truncated exactly like the PR description. Rendered right after
+   * `## PR description`, which it summarises. Empty/undefined → omitted.
+   */
+  intent?: string;
   /** The unified diff / user task (untrusted content). */
   diff: string;
   /** Optional task framing line, e.g. "Review PR #482 '…'". */
@@ -75,6 +90,53 @@ export interface PromptParts {
 export interface AssembledPrompt {
   messages: ChatMessage[];
   assembly: PromptAssembly;
+  /**
+   * Metadata-only description of the sections above, in prompt order. Sizes and
+   * provenance, never content — see `describePromptSection`.
+   */
+  sections: PromptSectionLog[];
+}
+
+/**
+ * Chars-per-token divisor for `tokens_approx`.
+ *
+ * 4 is the usual rule of thumb for English and code. It is deliberately a rough
+ * local arithmetic estimate: this runs on every prompt assembly (once per chunk,
+ * so once per changed file on a map-reduce review) and must never make a network
+ * request or load a tokenizer. Treat the number as an order of magnitude for
+ * budgeting — it is NOT the model's count, and the run's real `tokens_in` from
+ * the provider is the only figure to bill or size a context window against.
+ */
+const CHARS_PER_TOKEN_APPROX = 4;
+
+/**
+ * Describe one prompt section without carrying any of its text.
+ *
+ * The leak-proofing is structural: the returned object has no content field, so
+ * a section added to PromptAssembly cannot reach a log by being spread or picked
+ * — someone has to call this, and this only ever emits a length and a label.
+ *
+ * `digest` is always null here. Hashing is the host's decision (verbose mode is
+ * a server config) and its dependency (`node:crypto`) — reviewer-core has two
+ * runtime deps and neither is a hash.
+ */
+export function describePromptSection(
+  section: string,
+  source: PromptSectionLog['source'],
+  text: string,
+  truncated = false,
+): PromptSectionLog {
+  // Code points, not UTF-16 units: String.length reports 2 for every emoji and
+  // 2 for every astral character (server/INSIGHTS.md, "Cut by code point").
+  const chars = [...text].length;
+  return {
+    section,
+    source,
+    chars,
+    tokens_approx: Math.ceil(chars / CHARS_PER_TOKEN_APPROX),
+    truncated,
+    digest: null,
+  };
 }
 
 /**
@@ -96,26 +158,52 @@ export function assemblePrompt(parts: PromptParts): AssembledPrompt {
       ? parts.specs.map((s, i) => wrapUntrusted(`spec-${i}`, s)).join('\n\n')
       : undefined;
 
+  // Spread-then-slice counts CODE POINTS, not UTF-16 units: String.slice splits
+  // a surrogate pair and sends the model a lone high surrogate. Both caps cut
+  // the same way — an emoji in a PR body is as ordinary as one in a derived
+  // intent, and an asymmetry here is a defect waiting for the right input.
   const prDescription =
     parts.prDescription && parts.prDescription.trim().length > 0
-      ? parts.prDescription.slice(0, MAX_PR_DESCRIPTION_CHARS)
+      ? [...parts.prDescription].slice(0, MAX_PR_DESCRIPTION_CHARS).join('')
       : undefined;
 
+  const intent =
+    parts.intent && parts.intent.trim().length > 0
+      ? [...parts.intent].slice(0, MAX_INTENT_CHARS).join('')
+      : undefined;
+
+  // Hoisted so the rendered prompt and the section log below cannot drift
+  // apart: one expression decides whether each is present. `assembly` keeps
+  // recording the raw input, unchanged.
+  const task = parts.task && parts.task.length > 0 ? parts.task : undefined;
+  const repoMap = (parts.repoMap ?? '').trim().length > 0 ? parts.repoMap : undefined;
+  const callers = (parts.callers ?? '').trim().length > 0 ? parts.callers : undefined;
+
+  // Whether each cap actually FIRED, measured the same way the cut is made —
+  // by code point, for both.
+  const prDescriptionTruncated =
+    [...(parts.prDescription ?? '')].length > MAX_PR_DESCRIPTION_CHARS;
+  const intentTruncated = [...(parts.intent ?? '')].length > MAX_INTENT_CHARS;
+
   const userSections: string[] = [];
-  if (parts.task) userSections.push(parts.task);
+  if (task) userSections.push(task);
   if (prDescription) {
     userSections.push(`## PR description\n${wrapUntrusted('pr-description', prDescription)}`);
   }
+  // The 'derived-intent' label is INJECTION_GUARD's own vocabulary ("derived
+  // intent/scope") — using it is what makes the guard cover this section
+  // without editing the guard.
+  if (intent) {
+    userSections.push(`## Intent\n${wrapUntrusted('derived-intent', intent)}`);
+  }
   if (skillsBlock) userSections.push(`## Skills / rules\n${skillsBlock}`);
   if (memoryBlock) userSections.push(`## Relevant memory\n${memoryBlock}`);
-  if (parts.repoMap && parts.repoMap.trim().length > 0) {
-    userSections.push(`## Repo skeleton\n${wrapUntrusted('repo-map', parts.repoMap)}`);
+  if (repoMap) {
+    userSections.push(`## Repo skeleton\n${wrapUntrusted('repo-map', repoMap)}`);
   }
   if (specsBlock) userSections.push(`## Project context\n${specsBlock}`);
-  if (parts.callers && parts.callers.trim().length > 0) {
-    userSections.push(
-      `## Callers of changed symbols\n${wrapUntrusted('callers', parts.callers)}`,
-    );
+  if (callers) {
+    userSections.push(`## Callers of changed symbols\n${wrapUntrusted('callers', callers)}`);
   }
   userSections.push(`## Diff to review\n${wrapUntrusted('diff', parts.diff)}`);
 
@@ -134,8 +222,33 @@ export function assemblePrompt(parts: PromptParts): AssembledPrompt {
     callers: parts.callers ?? null,
     repo_map: parts.repoMap ?? null,
     pr_description: prDescription ?? null,
+    intent: intent ?? null,
     user,
   };
 
-  return { messages, assembly };
+  // The metadata-only view of the SAME locals the prompt was built from — each
+  // section described, none of them read. `user` is deliberately absent: it is
+  // the concatenation of the sections below, so listing it would double every
+  // total. `source` says where a section came from, never what it contains.
+  const sections: PromptSectionLog[] = [describePromptSection('system', 'agent', system)];
+  const describe = (
+    section: string,
+    source: PromptSectionLog['source'],
+    text: string | undefined,
+    truncated = false,
+  ) => {
+    if (text !== undefined) sections.push(describePromptSection(section, source, text, truncated));
+  };
+  // The task line names the PR (number, title, author) — PR-derived framing.
+  describe('task', 'pr', task);
+  describe('pr_description', 'pr', prDescription, prDescriptionTruncated);
+  describe('intent', 'derived', intent, intentTruncated);
+  describe('skills', 'db', skillsBlock);
+  describe('memory', 'db', memoryBlock);
+  describe('repo_map', 'repo-intel', repoMap);
+  describe('specs', 'clone', specsBlock);
+  describe('callers', 'repo-intel', callers);
+  describe('diff', 'diff', parts.diff);
+
+  return { messages, assembly, sections };
 }

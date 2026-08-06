@@ -1,12 +1,8 @@
-import { eq } from 'drizzle-orm';
 import {
   FEATURE_MODELS,
   FeatureModelChoice,
   type FeatureModelId,
 } from '@devdigest/shared';
-import type { Container } from '../../platform/container.js';
-import * as t from '../../db/schema.js';
-import { rowsToSettings } from './helpers.js';
 
 /**
  * Per-feature model configuration.
@@ -16,7 +12,29 @@ import { rowsToSettings } from './helpers.js';
  * module constant. When the workspace hasn't chosen one, we fall back to the
  * registry default in `FEATURE_MODELS` — which mirrors each module's old
  * constant, so behaviour is unchanged until a model is explicitly picked.
+ *
+ * It lives in `_shared/` rather than in `modules/settings/` because it is
+ * cross-slice by definition — every feature in the registry needs it, and
+ * `modules/intent/service.ts` importing `modules/settings/` would be a
+ * `no-cross-module` violation. This is the ONLY path: the re-export shim that
+ * briefly stood at `modules/settings/feature-models.ts` was deleted, because it
+ * advertised an import specifier no module outside `settings/` could legally
+ * use.
  */
+
+/**
+ * What resolution needs from the composition root, stated structurally.
+ *
+ * `Container` is deliberately NOT imported: `platform/container.ts` constructs
+ * `IntentService`, which reaches this file, so naming `Container` here closes an
+ * import cycle that `no-circular` rejects. A `Container` satisfies this shape by
+ * construction, so every existing call site is unchanged.
+ */
+export interface SettingsReader {
+  readonly settingsRepo: { value(workspaceId: string, key: string): Promise<unknown> };
+}
+
+const FEATURE_MODELS_KEY = 'feature_models';
 
 const DEFAULTS = Object.fromEntries(
   FEATURE_MODELS.map((f) => [f.id, { provider: f.defaultProvider, model: f.defaultModel }]),
@@ -34,22 +52,19 @@ export function defaultFeatureModel(id: FeatureModelId): FeatureModelChoice {
  * `resolveFeatureModel` instead.
  */
 export async function getFeatureModelOverride(
-  container: Container,
+  container: SettingsReader,
   workspaceId: string,
   id: FeatureModelId,
 ): Promise<FeatureModelChoice | undefined> {
-  const rows = await container.db
-    .select({ key: t.settings.key, value: t.settings.value })
-    .from(t.settings)
-    .where(eq(t.settings.workspaceId, workspaceId));
-  const fm = (rowsToSettings(rows) as { feature_models?: Record<string, unknown> }).feature_models;
-  const parsed = FeatureModelChoice.safeParse(fm?.[id]);
+  const stored = await container.settingsRepo.value(workspaceId, FEATURE_MODELS_KEY);
+  const byFeature = stored as Record<string, unknown> | null | undefined;
+  const parsed = FeatureModelChoice.safeParse(byFeature?.[id]);
   return parsed.success ? parsed.data : undefined;
 }
 
 /** Resolve `id` to a concrete provider+model: workspace override, else registry default. */
 export async function resolveFeatureModel(
-  container: Container,
+  container: SettingsReader,
   workspaceId: string,
   id: FeatureModelId,
 ): Promise<FeatureModelChoice> {

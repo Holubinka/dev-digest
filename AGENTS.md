@@ -45,6 +45,30 @@ working tree. Only that hook enforces it; a push from your own terminal is untou
 A Track A gate failure (arch, lint, typecheck, tests, vendor mirror, skills registry) stops both
 the push and the PR. A critical found by a review subagent stops only the PR.
 
+## What a session costs
+
+Measured on the Intent Layer, 2026-08-06: **$440**, of which **$313 was re-reading context** and
+$37 was producing output. The bill is `turns × context × rate` — 1368 turns × 458k average, about
+**$0.23 per turn** before anything is written. So whatever you put in the conversation is paid
+again on every later turn: a printed review report costs $0.20 to generate and **$2.67 to carry**.
+
+- **Review three times, not eleven.** `/pr-self-review` when the feature is complete, once after
+  the fixes, done. Eleven rounds ran; the feature stopped producing findings at round seven, and
+  rounds 8-10 reviewed the fixes to rounds 7-9 — 2.8M subagent tokens, 42% of the total, for six
+  minors.
+- **Refactor after the PR is open, not between rounds.** A fix is new code, and new code is what
+  a review is for. That is the loop those three rounds were.
+- **Do not print what a script already wrote.** `report.sh` writes `.pr-self-review/report.md`;
+  the verdict line plus the findings needing a decision is enough in the conversation.
+- **A plan is a fraction of the code, not 64% of it.** `specs/05-intent-layer.md` was 1535 lines
+  and six agents read it whole.
+- **Batch independent commands into one call.** Every extra turn costs the same $0.23 whether it
+  runs one command or five.
+
+**Not on this list: proving a new test fails before leaving it green.** Two extra turns, and it
+caught a vacuous UTF-16 test, a `vi.mock` that had stopped intercepting, and a diff filter that
+would have been cosmetic. Cheap checks that catch real defects are not what to economise on.
+
 ## Non-default conventions
 
 - **Cross-package imports resolve to a sibling's TypeScript source** via tsconfig
@@ -80,7 +104,10 @@ the push and the PR. A critical found by a review subagent stops only the PR.
 - `server/src/vendor/**`, `client/src/vendor/**` — vendored copies. Change the server
   copy first, then mirror deliberately.
 - `server/clones/**` — runtime data from repo-intel cloning. Git-ignored, not a submodule.
-- `e2e/specs/*.flow.json` — live browser-test scenarios, not documentation.
+- `e2e/specs/*.flow.json` — live browser-test scenarios, not documentation. The one
+  exception is the `test-writer` agent adding a flow, e2e being a suite it covers; the gate
+  is unchanged — `scope.sh` still flags every such file `major` with *"confirm the change was
+  deliberate"*, which is now the right prompt rather than a contradiction.
 - `.claude/skills/*` named in `skills-lock.json` — pinned upstream copies. Skills absent
   from that lock, `engineering-insights` among them, are ours to edit.
 - `plugins/*/skills/**` and `server/src/db/seed-skills.ts` — generated from

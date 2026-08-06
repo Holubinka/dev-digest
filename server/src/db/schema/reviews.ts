@@ -52,6 +52,20 @@ export const prIntent = pgTable('pr_intent', {
   intent: text('intent').notNull(),
   inScope: jsonb('in_scope').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
   outOfScope: jsonb('out_of_scope').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  riskAreas: jsonb('risk_areas').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  // `confidence` gets no CHECK on purpose: `text(name, { enum })` is a
+  // TypeScript-level enum that emits plain text, and the whole schema follows
+  // that pattern (reviews.kind, findings.severity, pull_requests.status). The
+  // vocabulary is enforced by IntentConfidence at the edge.
+  confidence: text('confidence', { enum: ['high', 'medium', 'low'] }).notNull().default('low'),
+  evidence: jsonb('evidence').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  planRefs: jsonb('plan_refs').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  provider: text('provider'),
+  model: text('model'),
+  tokensIn: integer('tokens_in'),
+  tokensOut: integer('tokens_out'),
+  costUsd: doublePrecision('cost_usd'),
+  computedAt: timestamp('computed_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const prBrief = pgTable('pr_brief', {

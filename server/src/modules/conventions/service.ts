@@ -15,6 +15,7 @@ import {
   MAX_CANDIDATES,
   MAX_FILE_CHARS,
   MAX_RULE_CHARS,
+  MAX_SAMPLE_FILE_BYTES,
   MAX_SAMPLE_TOKENS,
   MIN_FILE_CHARS,
   MIN_VERIFIED_EVIDENCE,
@@ -207,7 +208,7 @@ export class ConventionsService {
     const out: Sample[] = [];
     for (const path of paths) {
       const content = await this.container.git
-        .readFile({ owner: repo.owner, name: repo.name }, path)
+        .readFile({ owner: repo.owner, name: repo.name }, path, MAX_SAMPLE_FILE_BYTES)
         .catch(() => null);
       if (content !== null && content.trim() !== '') out.push({ path, content });
     }
@@ -217,9 +218,11 @@ export class ConventionsService {
   /**
    * Read the sampled files, stopping at the token budget.
    *
-   * The content kept here is the WHOLE file even when the prompt gets a
-   * truncated copy: grounding checks a quote against the repository, not
-   * against what happened to fit in the context window.
+   * The content kept here is not the truncated copy the prompt gets: grounding
+   * checks a quote against the repository, not against what happened to fit in
+   * the context window. It is bounded, though — `MAX_SAMPLE_FILE_BYTES`, which
+   * the read port requires — and that bound is wide enough to hold everything
+   * the prompt could have shown, so no verifiable quote is lost to it.
    */
   private async collectSources(repo: RepoRef, paths: string[]): Promise<Sample[]> {
     const out: Sample[] = [];

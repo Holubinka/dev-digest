@@ -46,8 +46,16 @@ Same folders you already have, named. Nothing moves.
 | **Composition root** | Wiring. Outside the rings on purpose — the one place allowed to name every concrete type `[S1]`. | `platform/container.ts`, `app.ts`, `modules/index.ts` |
 
 `platform/container.ts` importing `modules/` is **not** a violation to fix. A composition root
-is *defined* as the single place that knows the concrete graph `[S1]`. Everywhere else, reaching
-for the container to fetch a dependency is the Service Locator anti-pattern.
+is *defined* as the single place that knows the concrete graph `[S1]`.
+
+Everywhere else the container is a **port factory, and only that**. `container.git`, `await
+container.github()`, `await container.llm(provider)` are not merely allowed — §3.3 requires them,
+because the container is what resolves overrides and secrets. Reaching into it for a collaborator
+that could have arrived as a parameter — a repository above all — is the Service Locator
+anti-pattern, and it is the move that removes the seam a test needs.
+
+So a service holding a `Container` is not the violation. `this.repo = new
+AgentsRepository(container.db)` inside that service is.
 
 Modules are vertical slices; the rings live *inside* each slice. That hybrid is deliberate —
 see §6.
@@ -110,7 +118,9 @@ violation is the one thing this gate cannot survive.
    `constructor(container: Container, repo = new XRepository(container.db))`. The default keeps
    call sites unchanged; the parameter is what makes the service testable `[S1]`. Every existing
    service builds its own repository, which is exactly why three of them have no unit tests —
-   see [testing-the-rings.md](testing-the-rings.md).
+   see [testing-the-rings.md](testing-the-rings.md). Keeping the `Container` is right: that is
+   how ports are reached (§1). Taking the repository out of it, or building one inside the
+   constructor, is what this rule forbids.
 4. **Every external call goes behind a port** `[H1]`. A port is not finished until
    `adapters/mocks.ts` has an implementation of it.
 5. **Data crossing a ring boundary is a plain structure** `[C1]`. A `*Row` never leaves its

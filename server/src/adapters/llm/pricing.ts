@@ -24,13 +24,17 @@ const PRICING: Record<string, Price> = {
   'claude-3-5-sonnet-latest': { in: 3.0, out: 15.0 },
   'claude-3-5-haiku-latest': { in: 0.8, out: 4.0 },
   'claude-3-opus-latest': { in: 15.0, out: 75.0 },
-  // OpenRouter (CI runner, cheap models). Slugs + prices are APPROXIMATE and
-  // must be confirmed against openrouter.ai/models before relying on cost.
+  // OpenRouter (CI runner, cheap models). The four slugs below were confirmed
+  // against https://openrouter.ai/api/v1/models on 2026-08-05; the rest of this
+  // block remains approximate and must be checked there before relying on cost.
   // Unknown slugs fall through to null cost (explicitly flagged), which is safe.
-  'z-ai/glm-4.7-flash': { in: 0, out: 0 }, // free baseline for evals
-  'deepseek/deepseek-v4-flash': { in: 0.14, out: 0.28 },
-  'z-ai/glm-4.7-flashx': { in: 0.15, out: 0.4 },
-  'minimax/minimax-m2.5': { in: 0.3, out: 1.2 },
+  // NOTE: `z-ai/glm-4.7-flash` was carried here as `{ in: 0, out: 0 }` labelled
+  // "free baseline for evals" — Z.AI's "free tier" is a PRODUCT tier, not a
+  // price, and the model has never been free on OpenRouter. A zero here is a
+  // lie rather than a null, so it is the one number worth stating a date on.
+  'z-ai/glm-4.7-flash': { in: 0.06, out: 0.4 }, // confirmed 2026-08-05
+  'deepseek/deepseek-v4-flash': { in: 0.14, out: 0.28 }, // confirmed 2026-08-05
+  'minimax/minimax-m2.5': { in: 0.22, out: 0.9 }, // confirmed 2026-08-05
   'z-ai/glm-5.1': { in: 0.6, out: 2.2 },
 };
 

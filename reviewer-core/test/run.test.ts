@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import type { LLMProvider, StructuredResult } from '@devdigest/shared';
+import type { LLMProvider, StructuredResult, UnifiedDiff } from '@devdigest/shared';
 import { MockLLMProvider, MockGitClient } from '../../server/src/adapters/mocks.js';
-import { reviewPullRequest } from '../src/index.js';
+import { reviewPullRequest, sliceDiff } from '../src/index.js';
 
 /**
  * Engine-level test for reviewPullRequest (the core lifted out of the server's
@@ -86,6 +86,62 @@ describe('reviewPullRequest (engine)', () => {
 
     expect(outcome.review.findings).toHaveLength(0);
     expect(outcome.review.score).toBe(100);
+  });
+
+  describe('prompts — the metadata-only prompt log', () => {
+    const clean = { verdict: 'approve', summary: 'ok', score: 100, findings: [] };
+
+    it('single-pass: one entry, labelled like the chunk it was assembled for', async () => {
+      const llm = new MockLLMProvider('openai', { structured: clean });
+      const diff = await new MockGitClient().diff();
+      const outcome = await reviewPullRequest({ systemPrompt: 's', model: 'm', diff, llm });
+
+      expect(outcome.prompts).toHaveLength(1);
+      expect(outcome.prompts.map((p) => p.chunk)).toEqual(outcome.chunks.map((c) => c.label));
+      expect(outcome.prompts[0]!.sections.find((s) => s.section === 'diff')!.chars).toBe(
+        [...diff.raw].length,
+      );
+    });
+
+    it('map-reduce: one entry per file, each sized for ITS chunk', async () => {
+      // Without the chunk label these would be N lines that look identical and
+      // name nothing — the whole reason `prompts` carries one.
+      const file = (path: string, body: string) =>
+        [
+          `diff --git a/${path} b/${path}`,
+          `--- a/${path}`,
+          `+++ b/${path}`,
+          '@@ -1,1 +1,2 @@',
+          ' const x = 1;',
+          `+${body}`,
+        ].join('\n');
+      const diff: UnifiedDiff = {
+        raw: `${file('src/a.ts', 'const a = 1;')}\n${file('src/b.ts', 'const bbbbbbbbbb = 2;')}`,
+        files: ['src/a.ts', 'src/b.ts'].map((path) => ({
+          path,
+          additions: 1,
+          deletions: 0,
+          hunks: [{ file: path, oldStart: 1, oldLines: 1, newStart: 1, newLines: 2, newLineNumbers: [2] }],
+        })),
+      };
+
+      const llm = new MockLLMProvider('openai', { structured: clean });
+      const outcome = await reviewPullRequest({
+        systemPrompt: 's',
+        model: 'm',
+        diff,
+        llm,
+        strategy: 'map-reduce',
+      });
+
+      expect(outcome.mode).toBe('map-reduce');
+      expect(outcome.prompts.map((p) => p.chunk)).toEqual(['src/a.ts', 'src/b.ts']);
+      for (const p of outcome.prompts) {
+        const section = p.sections.find((s) => s.section === 'diff')!;
+        expect(section.chars).toBe([...sliceDiff(diff, p.chunk)].length);
+        expect(section.chars).toBeLessThan([...diff.raw].length);
+      }
+    });
   });
 
   it('checkCancelled throwing aborts before the LLM call', async () => {

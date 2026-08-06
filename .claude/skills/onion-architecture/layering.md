@@ -70,7 +70,7 @@ export class AgentsService {
   }
 }
 ```
-— `modules/agents/service.ts:51-61`
+— `modules/agents/service.ts:52-62`, abridged: the real class continues past `list`.
 
 This is the shape to copy **except for one thing**: the repository is constructed, not injected.
 For new code, add the seam:
@@ -91,6 +91,11 @@ a test can now pass a fake. Without it the only way to substitute a repository i
 container.github()`, `await container.llm(provider)`. The container resolves overrides and
 secrets; importing `SimpleGitClient` bypasses both.
 
+This is the half of the container that is prescribed, and it does not contradict the Service
+Locator warning in `SKILL.md` §1 — see that section for the line. Ports come from the container;
+the repository comes from a parameter. A reviewer who reads only §1 will flag `listModels` above
+and be wrong.
+
 **Degrade rather than throw when enrichment is optional:**
 
 ```ts
@@ -99,7 +104,7 @@ async listModels(provider: Provider): Promise<ModelInfo[]> {
   catch { return []; }
 }
 ```
-— `agents/service.ts:178-185`
+— `agents/service.ts:201-208`
 
 ## 4. When a service is too big
 
@@ -200,6 +205,17 @@ of preference:
 What is left over is job kinds: `repos/service.ts:11` imports `INDEX_JOB_KIND` from
 `repo-intel/constants.ts` because a job kind has no neutral home. It is in the baseline. If you
 add another cross-slice constant, put it in `_shared/` instead.
+
+**Escape 2 and rule §3.5 pull against each other, and the ordering above is the tie-breaker.**
+A repository returns rows (§3.2), so taking one off the container carries a `*Row` out of its
+slice — which §3.5 forbids. That is not hypothetical: `reviews/service.ts:49,106,118` and
+`run-executor.ts:59,143,451` all carry `AgentRow` in public signatures. No gate sees it, because
+the type is imported from the neutral `db/rows.ts` rather than from `modules/agents/`, so
+`no-cross-module` never matches and it is not in the baseline either.
+
+So: escape 2 is for reaching a *behaviour* on another slice. The moment its rows start appearing
+in your own signatures, you wanted escape 3 — declare the minimal shape your slice actually needs
+in `modules/<yours>/types.ts` and map to it in the owning slice's `helpers.ts`.
 
 ## 8. `platform/` is not a lower layer
 

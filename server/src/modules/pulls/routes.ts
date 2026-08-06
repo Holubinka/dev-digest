@@ -8,7 +8,7 @@ import { getContext } from '../_shared/context.js';
 import { IdParams } from '../_shared/schemas.js';
 import { AppError, NotFoundError } from '../../platform/errors.js';
 import { rollupSeverities, topFindings, type ListFinding, type SeverityCounts } from './status.js';
-import { toPrMeta } from './helpers.js';
+import { toPrDetail, toPrMeta } from './helpers.js';
 
 /** How many findings the list previews per PR in its hover card. */
 const LIST_FINDINGS_PREVIEW = 3;
@@ -255,51 +255,30 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
           })),
         );
       }
-      await container.db
-        .update(t.pullRequests)
-        .set({
-          body: detail.body ?? null,
-          // Diff stats aren't on GitHub's PR-list payload — backfill them from
-          // the detail fetch so the Pull Requests list shows real size/files.
-          additions: detail.additions,
-          deletions: detail.deletions,
-          filesCount: detail.files_count,
-        })
-        .where(eq(t.pullRequests.id, pr.id));
+      await container.pullsRepo.updateDetail(pr.id, {
+        body: detail.body ?? null,
+        // Cache the linked issue so a review run needs zero GitHub calls.
+        linkedIssue: detail.linked_issue
+          ? {
+              number: detail.linked_issue.number,
+              title: detail.linked_issue.title,
+              body: detail.linked_issue.body ?? null,
+              state: detail.linked_issue.state,
+            }
+          : null,
+        // Diff stats aren't on GitHub's PR-list payload — backfill them from
+        // the detail fetch so the Pull Requests list shows real size/files.
+        additions: detail.additions,
+        deletions: detail.deletions,
+        filesCount: detail.files_count,
+      });
 
       return { ...detail, id: pr.id };
     } catch (err) {
       app.log.warn({ err }, 'GitHub PR detail refresh skipped (no token / offline); serving persisted detail');
       const files = await container.db.select().from(t.prFiles).where(eq(t.prFiles.prId, pr.id));
       const commits = await container.db.select().from(t.prCommits).where(eq(t.prCommits.prId, pr.id));
-      return {
-        id: pr.id,
-        number: pr.number,
-        title: pr.title,
-        author: pr.author,
-        branch: pr.branch,
-        base: pr.base,
-        head_sha: pr.headSha,
-        additions: pr.additions,
-        deletions: pr.deletions,
-        files_count: pr.filesCount,
-        status: pr.status as PrDetail['status'],
-        opened_at: pr.openedAt?.toISOString() ?? null,
-        updated_at: pr.updatedAt?.toISOString() ?? null,
-        body: pr.body ?? null,
-        files: files.map((f) => ({
-          path: f.path,
-          additions: f.additions,
-          deletions: f.deletions,
-          patch: f.patch ?? null,
-        })),
-        commits: commits.map((c) => ({
-          sha: c.sha,
-          message: c.message,
-          author: c.author,
-          committed_at: c.committedAt?.toISOString() ?? null,
-        })),
-      };
+      return toPrDetail(pr, files, commits);
     }
   });
 

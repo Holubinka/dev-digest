@@ -75,6 +75,45 @@ Two properties are worth keeping when touching this: the budget covers the whole
 not each attempt (per-attempt is what multiplied in the first place), and a real provider
 error still propagates unchanged — the clock only takes the blame when the clock ran out.
 
+### One OpenRouter slug is several backends, and they do not share a feature set
+
+**Symptom.** A structured call intermittently fails with "lack of support" for
+`response_format: json_schema`, at a rate nothing in this repo controls.
+
+**Cause.** OpenRouter load-balances one model id across provider endpoints that advertise
+different capabilities. `z-ai/glm-4.7-flash` — the `review_intent` default since 05 — was
+served by DeepInfra, Venice, Cloudflare and Novita on 2026-08-05, and Novita reports
+`structured_outputs: false`. Which one you get is decided per request.
+
+**Fix.** `openrouter.ts` sends `provider: { require_parameters: true }` on every OpenRouter
+request, in the same `this.id === 'openrouter'` block as `session_id` and `usage`. It
+restricts routing to endpoints that support every parameter in the body.
+
+Two things to keep. It is unconditional across the review path and the CI runner on purpose:
+a review whose schema was quietly dropped is worse than one that fails loudly. And the
+alternative — pinning `provider: { order: [...] }` per call — hardcodes vendor names that rot
+the next time OpenRouter changes its fleet. `test/openrouter-routing.test.ts` asserts the
+field is on the outgoing body, including on repair attempts, and absent under `id: 'openai'`.
+
+### Reasoning tokens bill at the output rate, and a short extraction has no use for them
+
+The same intent classification, measured against OpenRouter on 2026-08-05 with the real
+`server/src/prompts/intent.system.md` and the same JSON-schema request:
+
+| config | routed to | reasoning chars | content chars | completion tokens |
+|---|---|---|---|---|
+| as shipped | Cloudflare | 3983 | 403 | 1078 |
+| `reasoning: { enabled: false }` | DeepInfra | 0 | 436 | **113** |
+| `max_tokens: 2000` | DeepInfra | 718 | **0** | fails — see Recurring Errors |
+| `deepseek/deepseek-v4-flash` | StreamLake | 2561 | 361 | ok |
+
+Same answer, roughly a tenth of the completion tokens. `StructuredRequest.reasoning?: boolean`
+(`vendor/shared/adapters.ts`, both copies) carries it, and `openrouter.ts` sends
+`reasoning: { enabled: false }` only when the caller passes `false` and only on OpenRouter —
+absent by default, so no existing call changed shape. `IntentService.derive` is the only caller
+that sets it. Do **not** reach for `max_tokens` as a cost control instead: that is the row that
+pushed the whole answer into `reasoning` and broke the call.
+
 ## Recurring Errors & Fixes
 
 ### A change here breaks the server with no build error
@@ -88,6 +127,25 @@ silently.
 
 **Fix.** After changing anything exported, run `cd ../server && pnpm typecheck`. CI
 encodes this too: `reviewer-core/**` changes trigger the `server-unit` workflow.
+
+### "failed schema validation" when the schema was never the problem
+
+**Symptom.** `POST /pulls/:id/intent` returns 502 `OpenRouter structured output failed schema
+validation for Intent` on some PRs and not others, and re-running the same PR sometimes works.
+
+**Cause.** Not the schema. Some OpenRouter backends answer with `message.content: null` and put
+the complete, valid JSON in `message.reasoning` — observed 2026-08-05 with DeepInfra serving
+`z-ai/glm-4.7-flash` under a `max_tokens` cap, where the reasoning string literally began
+`{"intent": "Fixes the GitHub API import logic…`. `openrouter.ts` read `content` only, handed
+`parseWithRepair` an empty string, retried, failed again, and threw the message at the end of
+the loop — which names schema validation whatever the real reason was. Which backend OpenRouter
+routes to varies per request, so it fails intermittently.
+
+**Fix.** `answerText()` (`src/llm/openrouter.ts`) falls back to `message.reasoning` when
+`content` is empty or whitespace, and only then. Covered by
+`test/openrouter-reasoning.test.ts`. When debugging a schema-validation error here, check
+whether the raw text was empty **before** touching the Zod schema: the final `throw` is the
+loop's exit, not a diagnosis.
 
 ## Session Notes
 

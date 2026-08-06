@@ -1,8 +1,8 @@
 import type { Container } from '../../platform/container.js';
 import type { UnifiedDiff } from '@devdigest/shared';
 import { parseUnifiedDiff } from '../../adapters/git/diff-parser.js';
-import * as schema from '../../db/schema.js';
-import type { ReviewRepository, PullRow } from './repository.js';
+import type { ReviewRepository } from './repository.js';
+import type { ReviewPull, ReviewRepo } from './types.js';
 
 /**
  * Load the unified diff for a PR. Prefers a real `git diff base...head`; falls
@@ -13,8 +13,8 @@ export async function loadDiff(
   container: Container,
   repo: ReviewRepository,
   workspaceId: string,
-  pull: PullRow,
-  repoRow: typeof schema.repos.$inferSelect,
+  pull: ReviewPull,
+  repoRow: ReviewRepo,
 ): Promise<UnifiedDiff> {
   try {
     const diff = await container.git.diff(

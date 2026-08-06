@@ -67,6 +67,17 @@ export interface StructuredRequest<T> {
    * the `session_id` body field; ignored by providers that don't support it.
    */
   sessionId?: string;
+  /**
+   * Whether the model may spend reasoning tokens on this call. ABSENT BY
+   * DEFAULT — omitting it leaves every existing call exactly as it was, and the
+   * model's own default applies. Only `false` is acted on, and only on
+   * OpenRouter (`reasoning: { enabled: false }`).
+   *
+   * Turn it off for a short extraction: reasoning tokens bill at the output
+   * rate and buy nothing. Measured 2026-08-05 on the intent classifier —
+   * 1078 completion tokens with reasoning on, 113 with it off, same answer.
+   */
+  reasoning?: boolean;
 }
 
 export interface StructuredResult<T> {
@@ -223,7 +234,18 @@ export interface GitClient {
   diffNameOnly(repo: RepoRef, base: string, head: string): Promise<string[]>;
   blame(repo: RepoRef, path: string): Promise<BlameLine[]>;
   log(repo: RepoRef, path?: string): Promise<GitCommit[]>;
-  readFile(repo: RepoRef, path: string): Promise<string>;
+  /**
+   * Read one file out of the clone, bounded at `maxBytes` by the read itself.
+   *
+   * The bound is a required argument, not an option with a default. Every path
+   * this port is handed names repo content, which is attacker-controlled for an
+   * imported public repo, and a cap the caller applies to the returned string
+   * runs only once the whole file is already in memory — too late for a repo
+   * that committed a 400 MB `plan.md`. Bytes rather than characters because
+   * bytes are what a read can bound; callers still truncate to their own
+   * character budget afterwards.
+   */
+  readFile(repo: RepoRef, path: string, maxBytes: number): Promise<string>;
   clonePathFor(repo: RepoRef): string;
 }
 
@@ -305,4 +327,20 @@ export interface SkillFetcher {
    * redirects that leave public space, oversized bodies, and non-text replies.
    */
   fetchMarkdown(url: string): Promise<FetchedMarkdown>;
+}
+
+// ---------- Prompt templates (instruction text kept out of the code) ----------
+export interface PromptTemplates {
+  /**
+   * Load the named instruction template and interpolate its `{{var}}`
+   * placeholders in one step.
+   *
+   * A port because the implementation reads the filesystem, which a service may
+   * not do. `no-fs-in-service` matches a direct `node:fs` edge only, so a
+   * service reaching a loader module that reads for it passes the rule and still
+   * breaks it — this port is the part the rule cannot see.
+   *
+   * `name` is a template filename, never user input.
+   */
+  render(name: string, vars: Record<string, string>): Promise<string>;
 }

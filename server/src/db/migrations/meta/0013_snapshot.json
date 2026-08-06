@@ -1,6 +1,6 @@
 {
-  "id": "dbb75e48-e44b-4b5a-869b-e00b625e96f3",
-  "prevId": "63125599-5362-4685-80b8-c0c4f019e37d",
+  "id": "9a1faa4d-54b7-440e-b05d-31df7ea31d98",
+  "prevId": "b0adb78d-5f88-4ede-adbf-ab0e7ffb2172",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -611,6 +611,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "linked_issue": {
+          "name": "linked_issue",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
         "opened_at": {
           "name": "opened_at",
           "type": "timestamp with time zone",
@@ -883,6 +889,71 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'[]'::jsonb"
+        },
+        "risk_areas": {
+          "name": "risk_areas",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "confidence": {
+          "name": "confidence",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'low'"
+        },
+        "evidence": {
+          "name": "evidence",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "plan_refs": {
+          "name": "plan_refs",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "tokens_in": {
+          "name": "tokens_in",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "tokens_out": {
+          "name": "tokens_out",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cost_usd": {
+          "name": "cost_usd",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "computed_at": {
+          "name": "computed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
         }
       },
       "indexes": {},
@@ -1677,6 +1748,13 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "accepted": {
+          "name": "accepted",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         }
       },
       "indexes": {

@@ -2,7 +2,7 @@
 name: pr-self-review
 description: "Reviews every open change on the branch against this repo's own skills and gates, and writes the verdict a push waits for. Use when running /pr-self-review, when a git push or gh pr create was refused by the PR Self-Review hook, before opening a PR, or when asked to check a branch against the repo conventions. Runs the deterministic gates first (arch, lint, typecheck, tests, vendor mirror, skills registry), then two subagents — security and conventions — over the routed files, verifies every critical adversarially, and records .pr-self-review/latest.json. It checks conventions, not correctness."
 metadata:
-  version: "1.2.0"
+  version: "1.4.0"
   tags: pr-review, self-review, pre-push, gates, subagents, verdict, conventions, blocking-hook
 ---
 
@@ -179,7 +179,26 @@ Each subagent's brief carries, and carries nothing else:
   `source` starts with `agent `, because that is what marks it as a model's opinion about a
   line rather than a deterministic fact about the repo. Drop the prefix and the finding stops
   being diff-anchored, and a pre-existing violation on an untouched line blocks the branch;
+- **`security` only** — the enumeration step from [routing.md](routing.md) §1: list every input
+  on each attacker-reachable path the diff touches and name the bound on each before searching for
+  anything, because an unbounded input is a finding and *"all of them are bounded, here they
+  are"* is a checkable answer where silence is not. Four consecutive runs on one branch each
+  returned exactly one unbounded input on the same path, and all four were present in the first;
 - read-only. It reports; it does not edit.
+
+**Put every reply through the extractor before you believe it.** The output contract above is a
+request, not a guarantee — two of seven measured runs on `feat/agent-layer` returned the right
+findings wrapped in a sentence and a ```` ```json ```` fence:
+
+```sh
+printf '%s' "$reply" | bash scripts/pr-self-review/findings.sh > "$TMP/<agent>.json"
+```
+
+It emits a bare array, recovering a fenced or prose-wrapped one, and **fails loudly on anything
+it cannot read** — non-zero, nothing on stdout. Do not paper over that with `|| printf '[]'`: an
+empty array is what a clean run looks like, so a broken agent would become the cheapest route to
+a `pass`, and `report.sh` rule 6 cannot tell the two apart. A refusal means that agent's entry in
+`agents.json` gets a status other than `ok`.
 
 Collect the arrays into `$TMP/findings.json`, and build `$TMP/agents.json` as
 `[{name, status, files}]` — **one entry per roster agent, and nothing else**: `report.sh`
