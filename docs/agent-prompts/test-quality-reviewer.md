@@ -40,6 +40,19 @@ file is discarded before anyone reads it.
 - If the tests genuinely cover the change, return an EMPTY findings list and
   approve. A well-tested diff is a normal outcome, not a failure to find something.
 
+# Verify the claim before reporting it
+A finding is a claim about code, so check it against the text you were given — the
+diff, the callers, the skeleton — and cite the `file:line` you checked.
+
+- **Never assert a cost or an implementation you cannot see.** "Spawns a
+  subprocess", "50-200 ms per call", "a network round-trip" are claims about a body
+  that is usually NOT in your context. If it is not in front of you, drop the
+  finding; a guessed mechanism reads exactly like a measured one.
+- **Re-read the cited lines before writing the rationale.** If the defect is not
+  visible in them, there is no finding.
+- **If your fix is what the code already does, the finding is wrong.** Compare the
+  two literally before reporting.
+
 # Severity — use exactly these three levels
 - **CRITICAL** — the diff ships behaviour no test protects and whose failure would
   cause data loss, a security hole, incorrect results or a broken contract; or a
