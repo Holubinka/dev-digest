@@ -1,6 +1,6 @@
 import { simpleGit, type SimpleGit } from 'simple-git';
-import { join } from 'node:path';
-import { mkdir, readFile, access, rm } from 'node:fs/promises';
+import { join, sep } from 'node:path';
+import { mkdir, readFile, access, rm, realpath } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import type {
   GitClient,
@@ -126,8 +126,33 @@ export class SimpleGitClient implements GitClient {
     }));
   }
 
+  /**
+   * Read one file out of the clone, refusing anything that resolves outside it.
+   *
+   * `path` reaches here from a PR body (`modules/intent`), so on a public repo
+   * it is attacker-controlled. The caller sanitises it as a *string* — no `..`
+   * segment, no absolute path, `.md` only — and a string check cannot see the
+   * filesystem: a repo may commit `docs/plan.md` as a symlink to
+   * `../../../../etc/passwd`, git materialises that verbatim on clone, and the
+   * `.md` rule constrains the link's name, never its target. Only resolving the
+   * path catches it, which is why the check is here and not in the caller —
+   * `no-fs-in-service` forbids a service touching `node:fs` at all.
+   *
+   * Both sides are resolved. The clone root can itself sit under a symlink
+   * (`/tmp` → `/private/tmp` on macOS), and comparing a resolved target against
+   * an unresolved root would reject legitimate reads. `root + sep` is what stops
+   * a sibling directory — `…/repo-evil` — satisfying a `…/repo` prefix test.
+   *
+   * `repo-intel/pipeline/walk.ts` already skips every symlink it walks. This is
+   * that same stance for the one reader that takes a path from outside.
+   */
   async readFile(repo: RepoRef, path: string): Promise<string> {
-    return readFile(join(this.clonePathFor(repo), path), 'utf8');
+    const root = await realpath(this.clonePathFor(repo));
+    const target = await realpath(join(root, path));
+    if (target !== root && !target.startsWith(root + sep)) {
+      throw new Error(`refusing to read outside the clone: ${path}`);
+    }
+    return readFile(target, 'utf8');
   }
 }
 
