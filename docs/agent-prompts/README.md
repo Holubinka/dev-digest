@@ -20,7 +20,14 @@ in the DB). The canonical, reviewable copies live next to this file:
 each one again as a template literal, and `pnpm db:seed` upserts from there — so a
 change made only in this folder and in the DB is reverted the next time anyone seeds
 a database. Update the seed constant in the same commit, escaping backticks and
-`${` for the literal. Nothing compares the three; the drift is silent.
+`${` for the literal.
+
+Two of the three are now compared for you: the `prompt-sync` CI gate
+(`scripts/prompt-sync.mjs`, runnable locally with `node scripts/prompt-sync.mjs`)
+fails when a markdown file here and its seed constant disagree. **The DB copy is
+still on you** — CI has no database, so nothing notices when a prompt is fixed in
+both files and never pushed to the agent. That push is also what versions the
+change, so it is not optional bookkeeping.
 
 ## How a prompt is assembled
 
@@ -170,4 +177,6 @@ model's `verdict`. Keep your severities honest and the gate behaves.
 - [ ] No JSON shape / markdown layout / alternate severity scale described in prose.
 - [ ] No "return at most N findings" quota.
 - [ ] File updated here, **the seed constant in `server/src/db/seed-prompts.ts`
-      updated to match**, and the prompt pushed to the agent (versioned).
+      updated to match** — `node scripts/prompt-sync.mjs` confirms it, and the
+      `prompt-sync` gate fails the PR if you skip it — and the prompt pushed to
+      the agent (versioned), which no gate can check for you.
