@@ -171,6 +171,35 @@ describe("IntentCard — degrading rather than crashing", () => {
     expect(riskIcon("  Security ")).toBe("Shield");
     expect(riskIcon("security")).not.toBe(RISK_ICON_FALLBACK);
   });
+
+  /**
+   * Every string here is verbatim model output taken from `pr_intent` on this
+   * workspace. The exact-match table this replaced resolved only two of them and
+   * gave the rest the same triangle — which is the whole defect, so the cases are
+   * the real phrases rather than the tidy keywords a table would like to receive.
+   */
+  it.each([
+    ["public API", "Code"],
+    ["client-server contract", "Code"],
+    ["performance", "Zap"],
+    ["tests", "FlaskConical"],
+    ["PR list grid layout", "Layers"],
+    ["Text overflow in findings cell", "Layers"],
+    ["Client-side conventions UI (new page, modals, shell integration)", "Layers"],
+    ["Conventions extraction pipeline (model hallucination, quote verification gates)", "Workflow"],
+    ["Feature models configuration", "Wrench"],
+  ])("maps the real phrase %j to %s", (phrase, icon) => {
+    expect(riskIcon(phrase)).toBe(icon);
+  });
+
+  it("lets an earlier rule win: a security phrase that also mentions the API", () => {
+    expect(riskIcon("auth bypass on the public API")).toBe("Shield");
+  });
+
+  it("does not match a keyword buried inside a longer word", () => {
+    // \b is what keeps `ui` out of "building" and `job` out of "jobless".
+    expect(riskIcon("building the sidebar")).toBe(RISK_ICON_FALLBACK);
+  });
 });
 
 describe("IntentCard — recompute", () => {
