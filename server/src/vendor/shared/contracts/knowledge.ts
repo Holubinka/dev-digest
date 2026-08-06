@@ -268,6 +268,20 @@ export const Agent = z.object({
 });
 export type Agent = z.infer<typeof Agent>;
 
+/**
+ * A row in the Agents list: an agent plus how many skills it binds.
+ *
+ * The mirror image of `SkillListItem.agent_count`, and derived the same way —
+ * counted from `agent_skills` on every read rather than stored. A binding moves
+ * in the agent's Skills tab, and a persisted counter would be a second source of
+ * truth to keep in step with the link table.
+ *
+ * `GET /agents/:id` still returns a plain `Agent`: only the card shows the
+ * count, and the card is always rendered from the list.
+ */
+export const AgentListItem = Agent.extend({ skill_count: z.number().int() });
+export type AgentListItem = z.infer<typeof AgentListItem>;
+
 export const AgentSkillLink = z.object({
   agent_id: z.string(),
   skill_id: z.string(),

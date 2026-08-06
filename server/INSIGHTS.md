@@ -66,6 +66,19 @@ CI never ran the job at all. Committed in `006fda4`.
 A gate whose config is untracked is indistinguishable from a passing gate. `git ls-files` on the
 config is part of trusting the result.
 
+### Adding `GROUP BY` to a list query throws away the order the UI was relying on
+
+Caught while writing the query on 2026-08-06, not in production. `AgentsRepository.list` was a
+plain `select().from(agents).where(...)` with no `ORDER BY`, and the Agents list looked stably
+ordered only because Postgres happened to return physical row order. Aggregating
+`countDistinct` for `skill_count` lets the planner hash-aggregate and emit the groups in any
+order, so the cards would reshuffle for no visible reason.
+
+State the order in the same commit that adds the aggregate:
+`.orderBy(asc(t.agents.createdAt), asc(t.agents.name))`. `createdAt` alone is not enough —
+`src/db/seed.ts` inserts several agents in one statement and `defaultNow()` gives them an
+identical timestamp, so the tie-break is load-bearing.
+
 ## Codebase Patterns
 
 ### A link table's foreign key proves existence, not tenancy
@@ -119,6 +132,25 @@ feeds it 250 astral characters.
 anything outside CRITICAL / WARNING / SUGGESTION instead of ranking it last, because the
 client maps severity to an icon through a lookup with no fallback (see
 `client/INSIGHTS.md`). A bad row costs one missing preview entry, never a broken page.
+
+### Two modules count `agent_skills` in opposite directions, and both need the same two joins
+
+`SkillsRepository.list` counts agents per skill (`agent_count`, since the Skills list shipped);
+`AgentsRepository.list` counts skills per agent (`skill_count`, 2026-08-06, for the Agents card
+badge). Both read `agent_skills` — a table the **agents** module owns both sides of — and each
+count only agrees with the list beside it if it repeats two non-obvious choices:
+
+- The far table's workspace test goes in the `leftJoin`, **not** the `WHERE`. In the `WHERE` it
+  drops every row with no bindings at all, which are exactly the rows the badge must report as 0.
+- Count the far table's id (`countDistinct(t.skills.id)`), not the link column. A foreign key
+  proves a skill id exists, not that this workspace can see it, and `linkedSkills`
+  (`modules/agents/repository.ts:224`) already re-checks tenancy before a body becomes a prompt
+  block. Counting `agent_skills.skill_id` would put a number on the card for a skill the Skills
+  tab never lists. `test/agents-skill-count.it.test.ts` writes such a link directly to the table
+  — the service refuses to create one — and asserts it is not counted.
+
+Change one direction and check the other: the two are read side by side in the UI, and
+`useSetAgentSkills` has to invalidate both query keys because one POST moves both numbers.
 
 ## Tool & Library Notes
 

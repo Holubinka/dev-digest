@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
-import type { Agent } from "@devdigest/shared";
+import type { AgentListItem } from "@devdigest/shared";
 import agentMessages from "../../../../../../messages/en/agents.json";
 import skillMessages from "../../../../../../messages/en/skills.json";
 import { ToastProvider } from "../../../../../lib/toast";
@@ -37,7 +37,9 @@ vi.mock("@/lib/hooks/skills", () => ({ useSkills: () => ({ data: [] }) }));
 
 import { AgentEditorView } from "./AgentEditorView";
 
-const AGENT: Agent = {
+/* Typed as the list row — `useAgents` feeds the AgentCards in the left column,
+   and an AgentListItem is a valid Agent for the `useAgent` detail mock too. */
+const AGENT: AgentListItem = {
   id: "ag1",
   name: "Test Quality Reviewer",
   description: "Reviews the tests, not the code",
@@ -50,6 +52,7 @@ const AGENT: Agent = {
   repo_intel: false,
   enabled: true,
   version: 1,
+  skill_count: 2,
 };
 
 function renderView() {
