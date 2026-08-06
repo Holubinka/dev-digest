@@ -72,6 +72,38 @@ const PULL: ReviewPull = {
 
 const REPO: ReviewRepo = { owner: 'acme', name: 'payments-api' };
 
+/**
+ * The run row is the cost record, so what it says about a FAILED run matters as
+ * much as what it says about a done one. `persistFailure` used to write a flat
+ * zero, which was right only for the failure it was written for — one before
+ * the LLM call. Run ce536de2 failed AFTER the engine returned, at insertReview
+ * on a NUL, and the row read `tokens_in: 0` over a real 167,330.
+ */
+function failingHarness(onComplete: (row: Record<string, unknown>) => void) {
+  const container = {
+    git: new MockGitClient(),
+    repoIntel: repoIntelSpy().facade,
+    tokenizer: { count: (s: string) => s.length },
+    config: { promptLogVerbose: false },
+    runBus,
+    llm: async () => new MockLLMProvider('openai', { structuredBySchema: { Review: REVIEW } }),
+    intentService: { derive: async () => ({ ok: false, reason: 'not under test' }) },
+  } as unknown as Container;
+
+  const repo = {
+    // Fails the way Postgres did: after the engine has spent everything.
+    insertReview: async () => {
+      throw new Error('invalid byte sequence for encoding "UTF8": 0x00');
+    },
+    completeAgentRun: async (_id: string, row: Record<string, unknown>) => onComplete(row),
+    saveRunTrace: async () => undefined,
+    getPrFiles: async () => [],
+  } as unknown as ReviewRepository;
+
+  const agents = { linkedSkills: async () => [] } as unknown as Container['agentsRepo'];
+  return new ReviewRunExecutor(container, repo, agents);
+}
+
 function harness(spy: ReturnType<typeof repoIntelSpy>) {
   const container = {
     git: new MockGitClient(),
@@ -179,5 +211,26 @@ describe('the enrichment report reaches only the runs that used it', () => {
     for (const runId of ['fan-a', 'fan-b']) {
       expect(linesFor(runId).some((m) => m.startsWith('Diff ready'))).toBe(true);
     }
+  });
+});
+
+describe('a run that fails after the engine still records what it spent', () => {
+  it('carries the engine\'s tokens and cost into the failed row', async () => {
+    const rows: Record<string, unknown>[] = [];
+    await run(failingHarness((r) => rows.push(r)), [
+      { agent: agent('a'), runId: 'cost-1' },
+    ]);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      status: 'failed',
+      // MockLLMProvider reports these; the point is that they survive the throw.
+      tokensIn: 100,
+      tokensOut: 50,
+      costUsd: 0.001,
+      // Nothing was stored, so the finding count stays honest at zero.
+      findingsCount: 0,
+    });
+    expect(String(rows[0]!.error)).toContain('invalid byte sequence');
   });
 });
