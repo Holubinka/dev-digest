@@ -61,6 +61,7 @@
     "cancel": "Cancel",
     "submit": "Create skill",
     "creating": "Creating…",
+    "createFailed": "Could not create the skill.",
     "createdToast": "Created “{name}”."
   }
 }

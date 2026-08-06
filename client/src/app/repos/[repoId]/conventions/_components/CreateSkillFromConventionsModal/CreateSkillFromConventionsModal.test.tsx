@@ -1,8 +1,9 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
-import { screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { screen, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import type { Skill } from "@devdigest/shared";
 import messages from "@/../messages/en/conventions.json";
 import skillsMessages from "@/../messages/en/skills.json";
+import { ApiError } from "@/lib/api";
 import { renderWithProviders } from "@/test/render";
 import { convention } from "@/test/conventions";
 
@@ -137,9 +138,35 @@ describe("CreateSkillFromConventionsModal", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
-  // NOT covered here on purpose: what the modal does when `POST /skills` fails.
-  // `submit` awaits `mutateAsync` with no catch and `onClick` does not await it,
-  // so a rejected save raises an unhandled rejection and tells the user nothing.
-  // A test asserting that would pin the defect in place; it needs a fix first.
+  it("keeps the user in the modal and says why when the save fails", async () => {
+    hooks.create.mockRejectedValue(new ApiError("a skill with that name exists", 409));
+    const { onClose } = renderModal();
+
+    fireEvent.click(screen.getByRole("button", { name: "Create skill" }));
+
+    // The server's own 409 is what the user can act on, so it is what is shown.
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("status")).getByText("a skill with that name exists"),
+      ).toBeInTheDocument(),
+    );
+    // A failed save is not a completed one: the edits stay on screen.
+    expect(onClose).not.toHaveBeenCalled();
+    expect(nav.push).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    // A transport failure carries no message worth showing, so the generic line
+    // stands in rather than leaking `socket hang up` at somebody.
+    cleanup();
+    hooks.create.mockRejectedValue(new Error("socket hang up"));
+    renderModal();
+    fireEvent.click(screen.getByRole("button", { name: "Create skill" }));
+
+    await waitFor(() => {
+      const toasts = screen.getByRole("status");
+      expect(within(toasts).getByText("Could not create the skill.")).toBeInTheDocument();
+      expect(within(toasts).queryByText("socket hang up")).not.toBeInTheDocument();
+    });
+  });
 
 });
