@@ -10,7 +10,6 @@ import type { ReviewRepository, FindingRow, PullRow, ReviewRow } from './reposit
 import { attachedSkills, skillBodiesFor, taskLine } from './helpers.js';
 import { buildPromptAssemblyLog, promptLogDetail } from './prompt-log.js';
 import { loadDiff } from './diff-loader.js';
-import { reviewableDiff } from './reviewable.js';
 import type {
   AgentRun,
   RepoIntelContext,
@@ -128,25 +127,9 @@ export class ReviewRunExecutor {
 
     let diff: UnifiedDiff;
     try {
-      const loaded = await runLog.step(
-        'Loading PR diff',
-        () => loadDiff(this.container, this.repo, workspaceId, pull, repo),
-        { kind: 'tool' },
-      );
-      // Filtered HERE, not inside `loadDiff`, so what was dropped reaches the
-      // Live Log and the trace. A silent filter is how a reviewer comes to
-      // believe it read a file it never saw.
-      const reviewable = reviewableDiff(loaded);
-      diff = reviewable.diff;
-      if (reviewable.dropped.length > 0) {
-        const byReason = new Map<string, number>();
-        for (const d of reviewable.dropped) byReason.set(d.reason, (byReason.get(d.reason) ?? 0) + 1);
-        const summary = [...byReason].map(([reason, n]) => `${n} ${reason}`).join(', ');
-        runLog.info(
-          `Diff: ${reviewable.dropped.length} file(s) left out of the prompt (${summary}) — ` +
-            reviewable.dropped.map((d) => d.path).join(', '),
-        );
-      }
+      diff = await runLog.step('Loading PR diff', () => loadDiff(this.container, this.repo, workspaceId, pull, repo), {
+        kind: 'tool',
+      });
     } catch (err) {
       runLog.error(`Failed to load PR diff: ${(err as Error).message}`);
       await failAll(`Failed to load PR diff: ${(err as Error).message}`);
