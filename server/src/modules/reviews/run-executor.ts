@@ -229,13 +229,18 @@ export class ReviewRunExecutor {
       `Starting review with agent "${run.agent.name}" (${run.agent.provider}/${run.agent.model})`,
     );
 
+    // Hoisted out of the `try` so the failure path can see it. Everything
+    // after `callEngine` returns can still throw — a NUL in the model's summary
+    // did exactly that — and a run that fails at persistence has still spent
+    // every token the engine reports here.
+    let outcome: EngineOutcome | undefined;
     try {
       const context = await this.gatherPromptContext(run, runLog);
-      const outcome = await this.callEngine(run, context, runLog);
+      outcome = await this.callEngine(run, context, runLog);
       this.logPromptAssembly(run, context.task, outcome, runLog);
       return await this.persistSuccess(run, outcome, start, runLog);
     } catch (err) {
-      await this.persistFailure(run, err, start, runLog);
+      await this.persistFailure(run, err, start, runLog, outcome);
       throw err;
     }
   }
@@ -508,27 +513,35 @@ export class ReviewRunExecutor {
     err: unknown,
     start: number,
     runLog: RunLogger,
+    outcome: EngineOutcome | undefined,
   ): Promise<void> {
     const cancelled = err instanceof RunCancelledError;
     const msg = cancelled ? 'Cancelled by user' : (err as Error).message;
     runLog.error(cancelled ? 'Run cancelled by user' : `Run failed: ${msg}`);
 
+    // What the engine actually spent, when it got far enough to report it.
+    // This used to be a flat zero, which was right only for the failure it was
+    // written for — one BEFORE the LLM call. A failure after it wrote `0` over
+    // a real 167k, so the row that exists to record the cost hid it. `findings`
+    // stays 0 either way: it counts findings STORED, and this path stored none.
+    const grounding = outcome?.grounding ?? '0/0 passed';
     const durationMs = Date.now() - start;
     await this.repo
       .completeAgentRun(run.runId, {
         status: cancelled ? 'cancelled' : 'failed',
         durationMs,
-        tokensIn: 0,
-        tokensOut: 0,
+        tokensIn: outcome?.tokensIn ?? 0,
+        tokensOut: outcome?.tokensOut ?? 0,
+        costUsd: outcome?.costUsd ?? null,
         findingsCount: 0,
-        grounding: '0/0 passed',
+        grounding,
         error: msg,
       })
       .catch(() => undefined);
     await this.repo
       .saveRunTrace(
         run.runId,
-        this.traceFromBuffer(run.runId, run.pull, run.agent, '0/0 passed', durationMs),
+        this.traceFromBuffer(run.runId, run.pull, run.agent, grounding, durationMs),
       )
       .catch(() => undefined);
     this.container.runBus.complete(run.runId);

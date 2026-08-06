@@ -3,6 +3,7 @@ import type { Db } from '../../../db/client.js';
 import * as t from '../../../db/schema.js';
 import type { Finding } from '@devdigest/shared';
 import type { FindingRow, PullRow } from '../../../db/rows.js';
+import { stripNul, toInt4 } from '../../../db/text.js';
 
 export type ReviewRow = typeof t.reviews.$inferSelect;
 
@@ -22,7 +23,19 @@ export async function insertReview(
     model: string | null;
   },
 ): Promise<ReviewRow> {
-  const [row] = await db.insert(t.reviews).values(values).returning();
+  // Two strings here are not server-controlled. `summary` is model output.
+  // `model` is NOT "a config string" as this comment first claimed: it is
+  // `z.string().min(1)` from POST/PUT /agents, with no charset constraint, so a
+  // workspace user who saves an agent whose slug holds a NUL would lose every
+  // review that agent produces. `verdict` is a zod enum and the ids are uuids.
+  const [row] = await db
+    .insert(t.reviews)
+    .values({
+      ...values,
+      summary: values.summary === null ? null : stripNul(values.summary),
+      model: values.model === null ? null : stripNul(values.model),
+    })
+    .returning();
   return row!;
 }
 
@@ -37,14 +50,19 @@ export async function insertFindings(
     .values(
       findings.map((f) => ({
         reviewId,
-        file: f.file,
-        startLine: f.start_line,
-        endLine: f.end_line,
+        // The four free-text fields. `severity`, `category` and `kind` are zod
+        // enums, so a NUL cannot reach them — the value would have failed to
+        // parse long before this.
+        file: stripNul(f.file),
+        // int4 columns, and the contract bounds these only with
+        // `z.number().int()`. See `toInt4` for why grounding does not catch it.
+        startLine: toInt4(f.start_line),
+        endLine: toInt4(f.end_line),
         severity: f.severity,
         category: f.category,
-        title: f.title,
-        rationale: f.rationale,
-        suggestion: f.suggestion ?? null,
+        title: stripNul(f.title),
+        rationale: stripNul(f.rationale),
+        suggestion: f.suggestion == null ? null : stripNul(f.suggestion),
         confidence: f.confidence,
         kind: f.kind ?? 'finding',
         trifectaComponents: f.trifecta_components ?? null,
