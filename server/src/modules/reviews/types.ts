@@ -52,12 +52,31 @@ export interface ReviewAgent {
 }
 
 /**
+ * Repo-intel enrichment for one PR.
+ *
+ * Derived once per batch, not once per agent: all three come from the repo
+ * index keyed on `(repoId, diff)`, and no agent is an input to any of them. Per
+ * agent they were not only three extra queries each but a consistency hazard —
+ * two agents reviewing the same PR could see different callers if the indexer
+ * wrote between their runs, which is the same reason `diff` is loaded once.
+ *
+ * The per-agent `repoIntel` flag still applies; it selects between this and
+ * nothing, rather than deciding whether to query.
+ */
+export interface RepoIntelContext {
+  callers: string | undefined;
+  repoMap: string | undefined;
+  /** Appended to the task line, so `''` rather than `undefined` — it concatenates. */
+  rankNote: string;
+}
+
+/**
  * Everything one agent's run needs.
  *
- * `executeRuns` resolves `diff` and `intentSection` once and hands the same pair
- * to every agent — the two fields that make this a struct rather than an
- * argument list, since a positional `(…, diff, intentSection, agent, …)` puts
- * three same-shaped values in a row and offers no way to notice they were
+ * `executeRuns` resolves `diff`, `intentSection` and `repoIntel` once and hands
+ * the same three to every agent — the fields that make this a struct rather
+ * than an argument list, since a positional `(…, diff, intentSection, agent, …)`
+ * puts three same-shaped values in a row and offers no way to notice they were
  * swapped.
  */
 export interface AgentRun {
@@ -67,6 +86,7 @@ export interface AgentRun {
   diff: UnifiedDiff;
   /** The rendered `## Intent` section, or undefined when derivation failed. */
   intentSection: string | undefined;
+  repoIntel: RepoIntelContext;
   agent: ReviewAgent;
   runId: string;
 }

@@ -1,5 +1,5 @@
 import type { Container } from '../../platform/container.js';
-import type { LLMProvider, Provider, Review, RunTrace, UnifiedDiff } from '@devdigest/shared';
+import type { LLMProvider, Review, RunTrace, UnifiedDiff } from '@devdigest/shared';
 import {
   reviewPullRequest,
   countBlockers,
@@ -9,11 +9,10 @@ import { RunLogger } from '../../platform/run-logger.js';
 import * as schema from '../../db/schema.js';
 import type { AgentRow } from '../../db/rows.js';
 import type { ReviewRepository, FindingRow, PullRow, ReviewRow } from './repository.js';
-import { REVIEW_STRATEGY } from './constants.js';
 import { attachedSkills, skillBodiesFor, taskLine } from './helpers.js';
 import { buildPromptAssemblyLog, promptLogDetail } from './prompt-log.js';
 import { loadDiff } from './diff-loader.js';
-import type { AgentRun, ReviewAgent, ReviewPull } from './types.js';
+import type { AgentRun, RepoIntelContext, ReviewAgent, ReviewPull } from './types.js';
 
 /** Thrown by a run when the user cancels it mid-flight (between map files). */
 export class RunCancelledError extends Error {
@@ -53,6 +52,9 @@ interface PromptContext {
   skills: string[];
   task: string;
 }
+
+/** What an agent that opted out of repo-intel gets, and what a failed batch resolves to. */
+const NO_REPO_INTEL: RepoIntelContext = { callers: undefined, repoMap: undefined, rankNote: '' };
 
 /**
  * Owns the background execution of queued agent runs (extracted from
@@ -154,6 +156,16 @@ export class ReviewRunExecutor {
       runLog.info(`Intent unavailable — ${derived.reason}; reviewing without it`);
     }
 
+    // Repo-intel is PRE-WORK too, for the same reason the diff is: it is keyed
+    // on the PR, not on the agent, so N agents were making 3N identical index
+    // queries and could disagree if the indexer wrote between two runs. Skipped
+    // entirely when no queued agent wants it — one agent asking is enough,
+    // since a second one opting out selects `NO_REPO_INTEL` rather than
+    // re-querying.
+    const repoIntel = jobs.some((j) => j.agent.repoIntel)
+      ? await this.buildRepoIntelContext(pull.repoId, diff, runLog)
+      : NO_REPO_INTEL;
+
     for (const { agent, runId } of jobs) {
       const agentStart = Date.now();
       logger?.info(
@@ -162,7 +174,7 @@ export class ReviewRunExecutor {
       );
       try {
         const outcome = await this.runOneAgent(
-          { workspaceId, pull, repo, diff, intentSection, agent, runId },
+          { workspaceId, pull, repo, diff, intentSection, repoIntel, agent, runId },
           runLog,
         );
         logger?.info(
@@ -226,38 +238,51 @@ export class ReviewRunExecutor {
    * by design.
    */
   private async gatherPromptContext(run: AgentRun, runLog: RunLogger): Promise<PromptContext> {
-    const { agent, pull, diff } = run;
+    const { agent, pull } = run;
 
     const llm = await runLog.step(
       `Resolving ${agent.provider} provider`,
-      () => this.container.llm(agent.provider as Provider),
+      () => this.container.llm(agent.provider),
       { kind: 'tool' },
     );
 
-    // Per-agent repo-intel toggle (Agent editor). When an agent opts out we
-    // skip all enrichment entirely so its prompt is identical to the
-    // repo-intel-off baseline — independent of the global REPO_INTEL_ENABLED
-    // flag, which still gates the facade internally.
-    const repoIntelOn = agent.repoIntel !== false;
-    if (!repoIntelOn) runLog.info('Repo intel disabled for this agent — skipping context enrichment');
-
-    // T1.3 — callers-in-prompt. Best-effort: when repo-intel is off the facade
-    // returns []; we omit the section and behavior is identical to the
-    // pre-T1.3 prompt (acceptance #10).
-    const callers = repoIntelOn
-      ? await this.buildCallersDigest(pull.repoId, diff, runLog)
-      : undefined;
-
-    // T3 — repo skeleton + "changed files are top-5%" framing. Both best-
-    // effort: when repo-intel is off / unindexed the facade degrades and the
-    // prompt is identical to the pre-T3 shape.
-    const repoMap = repoIntelOn ? await this.buildRepoMapDigest(pull.repoId, runLog) : undefined;
-    const rankNote = repoIntelOn ? await this.buildRankNote(pull.repoId, diff, runLog) : '';
+    // Per-agent repo-intel toggle (Agent editor). Opting out selects nothing
+    // rather than skipping a query — the enrichment was already resolved once
+    // for the batch — so this agent's prompt is identical to the repo-intel-off
+    // baseline, independent of the global REPO_INTEL_ENABLED flag, which still
+    // gates the facade internally.
+    const { callers, repoMap, rankNote } = agent.repoIntel ? run.repoIntel : NO_REPO_INTEL;
+    if (!agent.repoIntel) {
+      runLog.info('Repo intel disabled for this agent — skipping context enrichment');
+    }
 
     // L02 — the agent's linked, globally-enabled skill bodies, in binding order.
+    // The one enrichment that IS per-agent, so the one still resolved here.
     const skills = await this.buildSkillBodies(agent.id, runLog);
 
     return { llm, callers, repoMap, skills, task: taskLine(pull) + rankNote };
+  }
+
+  /**
+   * Resolve the repo-intel enrichment for one PR, once for the whole batch.
+   *
+   * Every part is best-effort: when repo-intel is off, unindexed, or erroring,
+   * the facade degrades and each builder returns nothing, so the prompt is
+   * byte-identical to the shape from before the feature that added it
+   * (acceptance #10).
+   */
+  private async buildRepoIntelContext(
+    repoId: string,
+    diff: UnifiedDiff,
+    runLog: RunLogger,
+  ): Promise<RepoIntelContext> {
+    return {
+      // T1.3 — callers-in-prompt.
+      callers: await this.buildCallersDigest(repoId, diff, runLog),
+      // T3 — repo skeleton, and the "changed files are top-5%" task framing.
+      repoMap: await this.buildRepoMapDigest(repoId, runLog),
+      rankNote: await this.buildRankNote(repoId, diff, runLog),
+    };
   }
 
   /**
@@ -281,9 +306,10 @@ export class ReviewRunExecutor {
       model: agent.model,
       diff,
       llm: context.llm,
-      // Per-agent review strategy (configured in the Agent editor); falls back
-      // to the studio default. single-pass = whole diff in one call.
-      strategy: agent.strategy ?? REVIEW_STRATEGY,
+      // Per-agent review strategy, configured in the Agent editor. The default
+      // is the column's (`single-pass`), not a constant here — see the schema
+      // for why it is not `auto`.
+      strategy: agent.strategy,
       // `length > 0` rather than truthiness: `[]` is truthy, and the point of
       // the guard is that an agent with nothing bound produces a prompt
       // byte-identical to the pre-skills shape.

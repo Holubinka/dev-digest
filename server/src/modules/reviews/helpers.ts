@@ -4,7 +4,7 @@
  */
 import type { Finding } from '@devdigest/shared';
 import { hasInjection } from '../../platform/skill-injection.js';
-import type { FindingRow, PullRow, ReviewRow } from './repository.js';
+import type { FindingRow, ReviewRow } from './repository.js';
 import type { ReviewPull } from './types.js';
 
 // reduceReviews + sliceDiff live in @devdigest/reviewer-core (pure engine logic
