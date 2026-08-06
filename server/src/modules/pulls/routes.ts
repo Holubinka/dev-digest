@@ -255,7 +255,9 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
           })),
         );
       }
-      await container.pullsRepo.updateDetail(pr.id, {
+      await container.db
+        .update(t.pullRequests)
+        .set({
         body: detail.body ?? null,
         // Cache the linked issue so a review run needs zero GitHub calls.
         linkedIssue: detail.linked_issue
@@ -271,7 +273,8 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
         additions: detail.additions,
         deletions: detail.deletions,
         filesCount: detail.files_count,
-      });
+        })
+        .where(eq(t.pullRequests.id, pr.id));
 
       return { ...detail, id: pr.id };
     } catch (err) {
