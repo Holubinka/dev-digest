@@ -2,7 +2,7 @@
 
 import React from "react";
 import { Markdown, SectionLabel } from "@devdigest/ui";
-import { usePrIntent, useRecomputeIntent } from "@/lib/hooks";
+import { usePrIntent, useRecomputeIntent } from "@/lib/hooks/core";
 import { IntentCard } from "../IntentCard";
 import { s } from "./styles";
 

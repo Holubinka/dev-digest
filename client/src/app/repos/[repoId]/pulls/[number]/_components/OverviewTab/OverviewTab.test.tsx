@@ -6,7 +6,11 @@ const hooks = vi.hoisted(() => ({
   useRecomputeIntent: vi.fn(),
 }));
 
-vi.mock("@/lib/hooks", () => ({
+// The specifier must be the one the component imports, not the barrel that
+// re-exports it: a mock registered under `@/lib/hooks` does not intercept a
+// component importing `@/lib/hooks/core` — Vitest keys the registry by
+// resolved module, and the two resolve to different files.
+vi.mock("@/lib/hooks/core", () => ({
   usePrIntent: hooks.usePrIntent,
   useRecomputeIntent: hooks.useRecomputeIntent,
 }));
