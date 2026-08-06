@@ -9,6 +9,9 @@ export const s = {
     marginBottom: 24,
     alignItems: "start",
   } satisfies CSSProperties,
+  /** No `whiteSpace: pre-wrap` here: `<Markdown>` owns block layout, and pre-wrap
+      turns every source newline inside a paragraph into a visible line break —
+      which is what made a GitHub PR body render as its own source. */
   descriptionBox: {
     border: "1px solid var(--border)",
     borderRadius: 8,
@@ -16,7 +19,5 @@ export const s = {
     padding: 18,
     fontSize: 14,
     color: "var(--text-secondary)",
-    whiteSpace: "pre-wrap",
-    lineHeight: 1.55,
   } satisfies CSSProperties,
 } as const;
