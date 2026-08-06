@@ -1,6 +1,10 @@
 import type { Container } from '../../platform/container.js';
 import type { LLMProvider, Provider, Review, RunTrace, UnifiedDiff } from '@devdigest/shared';
-import { reviewPullRequest, countBlockers } from '@devdigest/reviewer-core';
+import {
+  reviewPullRequest,
+  countBlockers,
+  type ReviewOutcome as EngineOutcome,
+} from '@devdigest/reviewer-core';
 import { RunLogger } from '../../platform/run-logger.js';
 import * as schema from '../../db/schema.js';
 import type { AgentRow } from '../../db/rows.js';
@@ -9,6 +13,7 @@ import { REVIEW_STRATEGY } from './constants.js';
 import { attachedSkills, skillBodiesFor, taskLine } from './helpers.js';
 import { buildPromptAssemblyLog, promptLogDetail } from './prompt-log.js';
 import { loadDiff } from './diff-loader.js';
+import type { AgentRun, ReviewAgent, ReviewPull } from './types.js';
 
 /** Thrown by a run when the user cancels it mid-flight (between map files). */
 export class RunCancelledError extends Error {
@@ -36,24 +41,6 @@ export type RunOutcome = {
 };
 
 /**
- * Everything one agent's run needs. `executeRuns` resolves `diff` and
- * `intentSection` once and hands the same pair to every agent — the two fields
- * that make this a struct rather than an argument list, since a positional
- * `(…, diff, intentSection, agent, …)` puts three same-shaped values in a row
- * and offers no way to notice they were swapped.
- */
-interface AgentRun {
-  workspaceId: string;
-  pull: PullRow;
-  repo: typeof schema.repos.$inferSelect;
-  diff: UnifiedDiff;
-  /** The rendered `## Intent` section, or undefined when derivation failed. */
-  intentSection: string | undefined;
-  agent: AgentRow;
-  runId: string;
-}
-
-/**
  * What has to be resolved before the engine can be called. Every field except
  * `llm` and `task` is best-effort: repo-intel off, unindexed or failing yields
  * `undefined`/`[]`, and the engine then omits that section, producing a prompt
@@ -66,8 +53,6 @@ interface PromptContext {
   skills: string[];
   task: string;
 }
-
-type EngineOutcome = Awaited<ReturnType<typeof reviewPullRequest>>;
 
 /**
  * Owns the background execution of queued agent runs (extracted from
@@ -629,8 +614,8 @@ export class ReviewRunExecutor {
    */
   private traceFromBuffer(
     runId: string,
-    pull: PullRow,
-    agent: AgentRow,
+    pull: ReviewPull,
+    agent: ReviewAgent,
     grounding: string,
     durationMs = 0,
   ): RunTrace {

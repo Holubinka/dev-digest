@@ -5,6 +5,7 @@
 import type { Finding } from '@devdigest/shared';
 import { hasInjection } from '../../platform/skill-injection.js';
 import type { FindingRow, PullRow, ReviewRow } from './repository.js';
+import type { ReviewPull } from './types.js';
 
 // reduceReviews + sliceDiff live in @devdigest/reviewer-core (pure engine logic
 // shared with the CI runner); re-exported here for backward-compatible imports.
@@ -132,7 +133,7 @@ export function skillBlock(name: string, body: string): string {
  * The TRUSTED part (ours) states the task and the non-negotiable rule: review
  * the whole diff and never withhold a security/correctness finding.
  */
-export function taskLine(pull: PullRow): string {
+export function taskLine(pull: ReviewPull): string {
   return (
     `Review pull request #${pull.number} "${pull.title}" by ${pull.author}. ` +
     `Report only the distinct, high-value findings you can defend, each citing an exact ` +
