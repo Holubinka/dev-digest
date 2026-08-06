@@ -25,7 +25,11 @@ export const agents = pgTable('agents', {
   model: text('model').notNull(),
   systemPrompt: text('system_prompt').notNull(),
   outputSchema: jsonb('output_schema'),
-  // Review execution strategy — whole diff in one call (default) vs per-file.
+  // Review execution strategy. `single-pass` sends the WHOLE diff in ONE call,
+  // and it is the default deliberately: `auto`/`map-reduce` make one call PER
+  // FILE, which is slow and fragile — any single file's transient 5xx fails the
+  // whole run — and unnecessary, because the diff already fits the context.
+  // This column IS the default; `modules/reviews` reads it and adds no fallback.
   strategy: text('strategy', { enum: ['single-pass', 'map-reduce', 'auto'] })
     .notNull()
     .default('single-pass'),
