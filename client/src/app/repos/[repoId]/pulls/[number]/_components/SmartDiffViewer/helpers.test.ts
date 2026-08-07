@@ -60,11 +60,18 @@ describe("findingsByFileLine", () => {
     expect(byFile.has("src/a.ts")).toBe(false);
   });
 
-  it("caps a runaway range at MAX_FINDING_LINE_SPAN", () => {
+  it("caps a runaway range at 200 lines", () => {
+    // Literals, for the reason spelled out in `server/test/smart-diff.test.ts`:
+    // an expectation computed from the constant under test passes whatever that
+    // constant becomes. The two sides of the wire must also agree on 200 — the
+    // server caps its `finding_lines` the same way.
+    expect(MAX_FINDING_LINE_SPAN).toBe(200);
+
     const byFile = findingsByFileLine([
       finding({ id: "f1", start_line: 1, end_line: 2_000_000_000 }),
     ]);
-    expect(byFile.get("src/a.ts")!.size).toBe(MAX_FINDING_LINE_SPAN);
+    expect(byFile.get("src/a.ts")!.size).toBe(200);
+    expect([...byFile.get("src/a.ts")!.keys()].at(-1)).toBe(200);
   });
 
   it("ignores a dismissed finding entirely", () => {

@@ -193,9 +193,16 @@ describe("SmartDiffViewer", () => {
     }
   });
 
-  it("opens a collapsed file before scrolling into it", () => {
+  it("opens a collapsed file and scrolls to the line, not merely opens it", () => {
+    // Asserting only that the file opened would leave the real risk untested:
+    // the scroll runs in an effect after the expanding commit, so if it fired
+    // in the click handler instead it would find nothing and silently no-op.
+    // Capturing `this` is what proves the target existed by the time it ran.
+    const scrolled: Element[] = [];
     const original = Element.prototype.scrollIntoView;
-    Element.prototype.scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = vi.fn(function (this: Element) {
+      scrolled.push(this);
+    });
     try {
       // Put the finding on the lock file, which starts collapsed.
       renderViewer({
@@ -203,7 +210,11 @@ describe("SmartDiffViewer", () => {
       });
       expect(screen.queryByText(/registry.npmjs.org/)).toBeNull();
       fireEvent.click(screen.getByTitle("Scroll to the first finding in this file"));
+
       expect(screen.queryByText(/registry.npmjs.org/)).toBeTruthy();
+      const target = document.getElementById(lineDomId("package-lock.json", 1204));
+      expect(target).not.toBeNull();
+      expect(scrolled).toEqual([target]);
     } finally {
       Element.prototype.scrollIntoView = original;
     }
@@ -351,5 +362,47 @@ describe("SmartDiffViewer chip anchoring when the range starts outside the hunk"
     expect(screen.getAllByText("blocker")).toHaveLength(1);
     const first = container.querySelector<HTMLElement>("[id$='-26']")!;
     expect(within(first).getByText("blocker")).toBeTruthy();
+  });
+});
+
+describe("SmartDiffViewer with two findings anchored on one line", () => {
+  it("renders both chips on that row, worst first", () => {
+    const { container } = renderViewer({
+      findings: [
+        finding({ id: "f-warn", severity: "WARNING", title: "Off-by-one on the limit" }),
+        finding({ id: "f-crit", severity: "CRITICAL", title: "Key never expires" }),
+      ],
+    });
+    const row = container.querySelector<HTMLElement>("[id$='-28']")!;
+    const labels = [...row.querySelectorAll("button")].map((b) => b.textContent);
+    expect(labels).toEqual(["blocker", "warning"]);
+  });
+
+  it("opens the right finding from each of them", () => {
+    const onOpenFinding = vi.fn();
+    renderViewer({
+      findings: [
+        finding({ id: "f-warn", severity: "WARNING" }),
+        finding({ id: "f-crit", severity: "CRITICAL" }),
+      ],
+      onOpenFinding,
+    });
+    fireEvent.click(screen.getByText("warning"));
+    expect(onOpenFinding).toHaveBeenLastCalledWith("f-warn");
+    fireEvent.click(screen.getByText("blocker"));
+    expect(onOpenFinding).toHaveBeenLastCalledWith("f-crit");
+  });
+
+  it("takes the gutter colour from the worse of the two", () => {
+    const { container } = renderViewer({
+      findings: [
+        finding({ id: "f-sugg", severity: "SUGGESTION" }),
+        finding({ id: "f-crit", severity: "CRITICAL" }),
+      ],
+    });
+    const both = container.querySelector<HTMLElement>("[id$='-28']")!;
+    const critOnly = renderViewer({ findings: [finding({ id: "x", severity: "CRITICAL" })] })
+      .container.querySelector<HTMLElement>("[id$='-28']")!;
+    expect(both.style.boxShadow).toBe(critOnly.style.boxShadow);
   });
 });

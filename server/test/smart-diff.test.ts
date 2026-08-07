@@ -95,7 +95,12 @@ describe('findingLinesByFile', () => {
     expect(lines.get('a.ts')).toEqual([3, 4, 9]);
   });
 
-  it('caps a range at MAX_FINDING_LINE_SPAN instead of expanding it', () => {
+  it('caps a range at 200 lines instead of expanding it', () => {
+    // Literals, not `MAX_FINDING_LINE_SPAN`: an expectation derived from the
+    // constant it is testing holds for every value of it, including a value
+    // that no longer bounds anything. Pin it once, then assert in numbers.
+    expect(MAX_FINDING_LINE_SPAN).toBe(200);
+
     // start_line/end_line are model-written and clamped by toInt4, not validated,
     // so the loop bound here is untrusted input. Timed, because the failure mode
     // is a hung event loop rather than a wrong value.
@@ -103,18 +108,16 @@ describe('findingLinesByFile', () => {
     const lines = findingLinesByFile([{ file: 'a.ts', startLine: 1, endLine: 2_147_483_647 }]);
     const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
 
-    expect(lines.get('a.ts')).toHaveLength(MAX_FINDING_LINE_SPAN);
+    expect(lines.get('a.ts')).toHaveLength(200);
     expect(lines.get('a.ts')![0]).toBe(1);
-    expect(lines.get('a.ts')!.at(-1)).toBe(MAX_FINDING_LINE_SPAN);
+    expect(lines.get('a.ts')!.at(-1)).toBe(200);
     expect(elapsedMs).toBeLessThan(100);
   });
 
   it('keeps a range that fits inside the cap whole', () => {
-    const lines = findingLinesByFile([
-      { file: 'a.ts', startLine: 10, endLine: 9 + MAX_FINDING_LINE_SPAN },
-    ]);
-    expect(lines.get('a.ts')).toHaveLength(MAX_FINDING_LINE_SPAN);
-    expect(lines.get('a.ts')!.at(-1)).toBe(9 + MAX_FINDING_LINE_SPAN);
+    const lines = findingLinesByFile([{ file: 'a.ts', startLine: 10, endLine: 209 }]);
+    expect(lines.get('a.ts')).toHaveLength(200);
+    expect(lines.get('a.ts')!.at(-1)).toBe(209);
   });
 
   it('drops a range whose end precedes its start instead of looping', () => {
@@ -212,6 +215,20 @@ describe('buildSmartDiff', () => {
       'src/a.ts',
       'src/b.ts',
     ]);
+  });
+
+  it('proposes nothing when every group is a single file, even though too_big', () => {
+    // A 500-line PR of one-file groups is still too big to review in a sitting,
+    // but "split this into three PRs of one file each" is not advice — so the
+    // flag is true and the list is empty. Both halves matter to the UI: the
+    // callout renders on `too_big`, the bullet list on `proposed_splits`.
+    const out = buildSmartDiff(
+      [file('src/a.ts', 401, 0), file('src/index.ts', 1, 0), file('package.json', 1, 0)],
+      new Map(),
+    );
+    expect(out.groups.map((g) => g.role)).toEqual(['core', 'wiring', 'boilerplate']);
+    expect(out.split_suggestion.too_big).toBe(true);
+    expect(out.split_suggestion.proposed_splits).toEqual([]);
   });
 
   it('answers an unimported PR with empty groups rather than throwing', () => {

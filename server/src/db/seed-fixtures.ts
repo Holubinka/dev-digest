@@ -342,7 +342,7 @@ const FIXTURE_PRS: FixturePr[] = [
     branch: 'feat/search-paging',
     body: 'Renames q to query, adds a limit, and returns items instead of results/total.',
     files: [
-      { path: 'src/modules/search/routes.ts', additions: 9, deletions: 4, patch: SEARCH_ROUTES },
+      { path: 'src/modules/search/routes.ts', additions: 7, deletions: 4, patch: SEARCH_ROUTES },
       { path: 'docs/api.md', additions: 1, deletions: 0, patch: SEARCH_DOCS },
     ],
   },

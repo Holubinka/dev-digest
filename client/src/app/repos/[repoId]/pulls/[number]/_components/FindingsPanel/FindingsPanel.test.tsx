@@ -162,6 +162,40 @@ describe("FindingsPanel jump-to-finding", () => {
     expect(screen.queryByText("Flaky guess")).not.toBeInTheDocument();
   });
 
+  it("follows a second chip without a remount", () => {
+    // The reader clicks a chip, reads the finding, goes back to the diff and
+    // clicks another. The panel never unmounts, so a target read only on mount
+    // would leave them on the first finding with no indication why.
+    const { rerender } = renderWithIntl(
+      <FindingsPanel findings={FINDINGS} prId="pr1" targetFindingId="f1" />,
+    );
+    expect(scrolled).toEqual([document.querySelector('[data-finding-id="f1"]')]);
+
+    rerender(
+      <NextIntlClientProvider locale="en" messages={{ prReview: messages }}>
+        <FindingsPanel findings={FINDINGS} prId="pr1" targetFindingId="f2" />
+      </NextIntlClientProvider>,
+    );
+    expect(scrolled.at(-1)).toBe(document.querySelector('[data-finding-id="f2"]'));
+    fireEvent.keyDown(window, { key: "a" });
+    expect(mutate).toHaveBeenCalledWith({ findingId: "f2", action: "accept", prId: "pr1" });
+  });
+
+  it("re-scrolls when the same finding is targeted again", () => {
+    // Clicking the same chip twice is a request to go back to it, not a no-op:
+    // the reader may have scrolled away in between.
+    const { rerender } = renderWithIntl(
+      <FindingsPanel findings={FINDINGS} prId="pr1" targetFindingId="f2" />,
+    );
+    const first = scrolled.length;
+    rerender(
+      <NextIntlClientProvider locale="en" messages={{ prReview: messages }}>
+        <FindingsPanel findings={[...FINDINGS]} prId="pr1" targetFindingId="f2" />
+      </NextIntlClientProvider>,
+    );
+    expect(scrolled.length).toBeGreaterThan(first);
+  });
+
   it("does nothing when the target belongs to another run", () => {
     renderWithIntl(<FindingsPanel findings={FINDINGS} prId="pr1" targetFindingId="elsewhere" />);
     expect(scrolled).toEqual([]);

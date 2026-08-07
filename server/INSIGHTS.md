@@ -499,6 +499,13 @@ Typecheck cannot see it, and no test asserts it. Anything summing them then disa
 diff it renders — `GET /pulls/:id/smart-diff` totals exactly these columns into
 `split_suggestion.total_lines`.
 
+**Corrected 2026-08-07.** Both halves of this are now enforced by
+`test/seed-fixtures.test.ts`, so the check below is no longer something to remember — it is a
+gate. Writing it immediately failed on `SEARCH_ROUTES`, which is how that fixture finally got
+its declaration corrected to `+7 -4`; the paragraph above describing it as "still wrong, left
+standing" is history, not the current state. The throwaway script it also describes is what the
+test was made from.
+
 **Fix.** After writing a fixture patch, count it rather than estimating. Two things must hold,
 and both were wrong on the first draft of PR #104:
 
