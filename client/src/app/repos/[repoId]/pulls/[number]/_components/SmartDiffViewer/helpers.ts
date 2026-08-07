@@ -6,6 +6,19 @@ import { MAX_FINDING_LINE_SPAN } from "./constants";
 const SEVERITY_RANK: Record<string, number> = { CRITICAL: 3, WARNING: 2, SUGGESTION: 1 };
 
 /**
+ * `Object.hasOwn`, not a bare index: `severity` is a plain `text` column, so
+ * `"constructor"`, `"toString"` and `"__proto__"` all reach here and all resolve
+ * to something truthy off `Object.prototype`. `?? 0` then does not fire, the
+ * comparator returns NaN, and the spec treats a NaN comparator result as +0 —
+ * so the bogus finding stays at index 0 and `gutterColours` takes ITS colour,
+ * painting a line that also carries a CRITICAL in muted grey. Same guard, same
+ * reason as `components/severity-badge/helpers.ts`.
+ */
+function rankOf(severity: string): number {
+  return Object.hasOwn(SEVERITY_RANK, severity) ? SEVERITY_RANK[severity]! : 0;
+}
+
+/**
  * Boilerplate is collapsed however small it is: the acceptance criterion is
  * about the role, not the size, and a two-line lock diff still deserves to stay
  * out of the way. Core and wiring fall through to the card's own size rule.
@@ -46,7 +59,7 @@ export function findingsByFileLine(
   }
   for (const lines of byFile.values()) {
     for (const list of lines.values()) {
-      list.sort((a, b) => (SEVERITY_RANK[b.severity] ?? 0) - (SEVERITY_RANK[a.severity] ?? 0));
+      list.sort((a, b) => rankOf(b.severity) - rankOf(a.severity));
     }
   }
   return byFile;

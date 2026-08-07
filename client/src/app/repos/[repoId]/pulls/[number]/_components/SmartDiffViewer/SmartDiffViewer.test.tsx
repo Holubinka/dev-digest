@@ -261,3 +261,34 @@ describe("SmartDiffViewer", () => {
     expect(screen.getByText(/Core logic — 2 files/)).toBeTruthy();
   });
 });
+
+/**
+ * `severity` is a plain `text` column with no enum constraint, so a value
+ * outside the contract can reach the chip. Two things must not happen: a
+ * missing i18n key (next-intl throws) and an `undefined` icon component (React's
+ * "Element type is invalid", which takes the route down — see INSIGHTS.md).
+ */
+describe("SmartDiffViewer with a severity outside the contract", () => {
+  const ROGUE = ["INFO", "high", "constructor", "__proto__", "toString", ""];
+
+  ROGUE.forEach((severity) => {
+    it(`renders a chip instead of throwing for ${JSON.stringify(severity)}`, () => {
+      expect(() =>
+        renderViewer({ findings: [finding({ id: "f-rogue", severity } as never)] }),
+      ).not.toThrow();
+      // Falls back to the warning chip rather than rendering nothing at all: the
+      // reader must still see that this line carries a finding.
+      expect(screen.getByText("warning")).toBeTruthy();
+    });
+  });
+
+  it("still opens the right finding from a fallback chip", () => {
+    const onOpenFinding = vi.fn();
+    renderViewer({
+      findings: [finding({ id: "f-rogue", severity: "INFO" } as never)],
+      onOpenFinding,
+    });
+    fireEvent.click(screen.getByText("warning"));
+    expect(onOpenFinding).toHaveBeenCalledWith("f-rogue");
+  });
+});
