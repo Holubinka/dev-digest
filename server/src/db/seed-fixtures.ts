@@ -307,6 +307,61 @@ const API_SNAP = `@@ -1,7 +1,14 @@
 +}
 +\`;`;
 
+// ---- PR #105: the small Smart Diff demo ------------------------------------
+//
+// #104 exercises all three roles at nine files, which is the right size for
+// testing the grouping and the wrong size for showing it: five agents over nine
+// files produce a column of near-identical chips on the same two lines.
+//
+// This one is deliberately thin — four files, one per role plus a second core
+// file, and exactly two planted defects of different character so the chips
+// differ from each other:
+//   - `subtotal` walks one past the end of the array (a plain bug);
+//   - `checkout` logs the whole card object (a leak, not a crash).
+// Run ONE agent against it and the screen stays readable.
+
+const CART_TOTAL_TS = `@@ -0,0 +1,15 @@
++export interface CartItem {
++  price: number;
++  qty: number;
++}
++
++/** Subtotal for the cart, before tax. */
++export function subtotal(items: CartItem[]): number {
++  let sum = 0;
++
++  for (let i = 0; i <= items.length; i += 1) {
++    sum += items[i].price * items[i].qty;
++  }
++
++  return sum;
++}`;
+
+const CART_CHECKOUT_TS = `@@ -22,5 +22,10 @@
+ export async function checkout(cart: Cart, card: Card) {
+   const total = subtotal(cart.items);
+-  logger.info('checkout started');
++  logger.info('checkout started', { cart, card });
++
++  if (total <= 0) {
++    throw new Error('empty cart');
++  }
++
+   return charge(card, total);
+ }`;
+
+const ROUTES_INDEX_TS = `@@ -1,2 +1,4 @@
+ export { cartRouter } from './cart';
+ export { authRouter } from './auth';
++export { subtotal } from '../cart/total';
++export { checkout } from '../cart/checkout';`;
+
+const PNPM_LOCK = `@@ -812,3 +812,3 @@
+   /decimal.js@10.4.3:
+-    resolution: {integrity: sha512-fD4b0AEwEbFsBFqSRoiUlN5EEUOEDQfhV5w9K5DjQhBFj0RmGT4dtSSFYFbDS0JVaHURvQXsO7QUgOtEbPWbkA==}
++    resolution: {integrity: sha512-VOxJmCcRxKGYzX2ItXwGKGjvvDlbjaP7dgsMOAIn0kfxCLQBK1qXpJa5mMOb0v4pcKPBW7iQTaZfNCZ3sO5FCA==}
+     dev: false`;
+
 interface FixturePr {
   number: number;
   title: string;
@@ -363,6 +418,20 @@ const FIXTURE_PRS: FixturePr[] = [
       { path: 'package.json', additions: 2, deletions: 1, patch: PACKAGE_JSON },
       { path: 'package-lock.json', additions: 11, deletions: 3, patch: PACKAGE_LOCK },
       { path: 'src/__snapshots__/api.test.ts.snap', additions: 7, deletions: 0, patch: API_SNAP },
+    ],
+  },
+  {
+    number: 105,
+    title: 'Add cart subtotal and wire it into checkout',
+    branch: 'feat/cart-subtotal',
+    body:
+      'Adds subtotal() for the cart, guards checkout against an empty one, and ' +
+      'exports both from the router barrel. Lock file refreshed.',
+    files: [
+      { path: 'src/cart/total.ts', additions: 15, deletions: 0, patch: CART_TOTAL_TS },
+      { path: 'src/cart/checkout.ts', additions: 6, deletions: 1, patch: CART_CHECKOUT_TS },
+      { path: 'src/routes/index.ts', additions: 2, deletions: 0, patch: ROUTES_INDEX_TS },
+      { path: 'pnpm-lock.yaml', additions: 1, deletions: 1, patch: PNPM_LOCK },
     ],
   },
 ];
