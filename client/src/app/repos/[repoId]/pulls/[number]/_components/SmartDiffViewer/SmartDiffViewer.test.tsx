@@ -292,3 +292,64 @@ describe("SmartDiffViewer with a severity outside the contract", () => {
     expect(onOpenFinding).toHaveBeenCalledWith("f-rogue");
   });
 });
+
+/**
+ * One finding, one chip — however many lines it spans.
+ *
+ * The gutter still marks the whole range, because that is how the reader sees
+ * how far the finding reaches. The CHIP is a control, and repeating the same
+ * control on every line of a block says "several problems" where there is one,
+ * and gives the reader several identical things to click.
+ */
+describe("SmartDiffViewer chip placement for a multi-line finding", () => {
+  const SPAN = finding({
+    id: "f-span",
+    severity: "CRITICAL",
+    title: "Forwards to a caller-supplied URL with the account token",
+    start_line: 28,
+    end_line: 30,
+  });
+
+  it("renders exactly one chip for a finding spanning three lines", () => {
+    renderViewer({ findings: [SPAN] });
+    expect(screen.getAllByText("blocker")).toHaveLength(1);
+  });
+
+  it("anchors that chip to the first line of the range", () => {
+    const { container } = renderViewer({ findings: [SPAN] });
+    const row = container.querySelector<HTMLElement>("[id$='-28']")!;
+    expect(within(row).getByText("blocker")).toBeTruthy();
+    const later = container.querySelector<HTMLElement>("[id$='-29']");
+    if (later) expect(within(later).queryByText("blocker")).toBeNull();
+  });
+
+  it("still marks every line of the range in the gutter", () => {
+    const { container } = renderViewer({ findings: [SPAN] });
+    const marked = [...container.querySelectorAll<HTMLElement>("[id^='diff-line-']")].filter(
+      (el) => el.style.boxShadow !== "",
+    );
+    expect(marked.length).toBeGreaterThan(1);
+  });
+
+  it("keeps one chip per finding when two of them overlap", () => {
+    renderViewer({
+      findings: [SPAN, finding({ id: "f-other", severity: "SUGGESTION", start_line: 29, end_line: 29 })],
+    });
+    expect(screen.getAllByText("blocker")).toHaveLength(1);
+    expect(screen.getAllByText("suggestion")).toHaveLength(1);
+  });
+});
+
+describe("SmartDiffViewer chip anchoring when the range starts outside the hunk", () => {
+  it("puts the chip on the first line the card actually draws", () => {
+    // The fixture hunk starts at 26. A finding citing 20-28 has most of its
+    // range off-screen; anchoring rigidly to start_line would render no chip at
+    // all, on a file that demonstrably has a finding.
+    const { container } = renderViewer({
+      findings: [finding({ id: "f-early", start_line: 20, end_line: 28 })],
+    });
+    expect(screen.getAllByText("blocker")).toHaveLength(1);
+    const first = container.querySelector<HTMLElement>("[id$='-26']")!;
+    expect(within(first).getByText("blocker")).toBeTruthy();
+  });
+});

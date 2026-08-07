@@ -64,6 +64,14 @@ export const s = {
     color: "var(--text-primary)",
     paddingRight: 12,
   } satisfies CSSProperties,
+  /** Container for a row's trailing adornments (Smart Diff's severity chips). */
+  lineRight: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    paddingRight: 12,
+    flexShrink: 0,
+  } satisfies CSSProperties,
 } as const;
 
 /**

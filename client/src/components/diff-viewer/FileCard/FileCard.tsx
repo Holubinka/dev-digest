@@ -30,6 +30,37 @@ function threadsForLine(ln: Line, matched: Map<string, CommentThread[]>): Commen
   return out;
 }
 
+/** One trailing item on a diff row, identified so it renders only once. */
+export interface LineAdornment {
+  key: string;
+  node: React.ReactNode;
+}
+
+/**
+ * Walk the rendered lines once, handing each its not-yet-rendered adornments.
+ *
+ * The `seen` set is why this is a function rather than a `.map()` inline: it has
+ * to be created fresh per pass and consumed in render order, so that the first
+ * line actually drawn for a given key is the one that gets it.
+ */
+function renderLines(
+  lines: Line[],
+  render: (ln: Line, i: number, adornments: LineAdornment[]) => React.ReactNode,
+  lineRight?: ReadonlyMap<number, readonly LineAdornment[]>,
+): React.ReactNode[] {
+  const seen = new Set<string>();
+  return lines.map((ln, i) => {
+    const listed = ln.newNo != null ? lineRight?.get(ln.newNo) : undefined;
+    const fresh: LineAdornment[] = [];
+    for (const a of listed ?? []) {
+      if (seen.has(a.key)) continue;
+      seen.add(a.key);
+      fresh.push(a);
+    }
+    return render(ln, i, fresh);
+  });
+}
+
 export interface FileCardProps {
   file: PrFile;
   commenting?: DiffCommentApi;
@@ -52,8 +83,16 @@ export interface FileCardProps {
   onOpenChange?: (open: boolean) => void;
   /** New-side line number → the colour marking it. */
   highlights?: ReadonlyMap<number, string>;
-  /** New-side line number → trailing content for that row (Smart Diff chips). */
-  lineRight?: ReadonlyMap<number, React.ReactNode>;
+  /**
+   * New-side line number → trailing content for that row (Smart Diff's chips).
+   *
+   * An adornment may be listed against every line it concerns, and this card
+   * renders each `key` ONCE, on the first of those lines it actually draws. So
+   * a caller describing a three-line finding lists it three times and gets one
+   * chip — and it lands on a rendered line even when the range starts outside
+   * the hunk. Deduplication is by key alone; the card knows nothing of findings.
+   */
+  lineRight?: ReadonlyMap<number, readonly LineAdornment[]>;
   /** Extra header content, right of the +/- stat. */
   right?: React.ReactNode;
   /** Extra header content, immediately after the path (Smart Diff's dot). */
@@ -125,22 +164,29 @@ export function FileCard({
           {lines.length === 0 ? (
             <div style={s.noDiff}>{t("diffViewer.noDiffText")}</div>
           ) : (
-            lines.map((ln, i) => {
-              const highlight = ln.newNo != null ? highlights?.get(ln.newNo) : undefined;
-              return (
-                <CodeLine
-                  key={i}
-                  ln={ln}
-                  path={file.path}
-                  threads={threadsForLine(ln, matched)}
-                  commenting={commenting}
-                  {...(highlight ? { highlightColor: highlight } : {})}
-                  {...(ln.newNo != null && lineRight?.has(ln.newNo)
-                    ? { right: lineRight.get(ln.newNo) }
-                    : {})}
-                />
-              );
-            })
+            renderLines(lines, (ln, i, adornments) => (
+              <CodeLine
+                key={i}
+                ln={ln}
+                path={file.path}
+                threads={threadsForLine(ln, matched)}
+                commenting={commenting}
+                {...(ln.newNo != null && highlights?.has(ln.newNo)
+                  ? { highlightColor: highlights.get(ln.newNo)! }
+                  : {})}
+                {...(adornments.length > 0
+                  ? {
+                      right: (
+                        <span style={s.lineRight}>
+                          {adornments.map((a) => (
+                            <React.Fragment key={a.key}>{a.node}</React.Fragment>
+                          ))}
+                        </span>
+                      ),
+                    }
+                  : {})}
+              />
+            ), lineRight)
           )}
           {commenting && commenting.showComments && <OutdatedComments threads={outdated} />}
         </div>

@@ -14,7 +14,12 @@ import React from "react";
 import { useTranslations } from "next-intl";
 import { Badge } from "@devdigest/ui";
 import type { FindingRecord, PrFile, SmartDiff } from "@devdigest/shared";
-import { FileCard, lineDomId, type DiffCommentApi } from "@/components/diff-viewer";
+import {
+  FileCard,
+  lineDomId,
+  type DiffCommentApi,
+  type LineAdornment,
+} from "@/components/diff-viewer";
 import { severityColor } from "@/components/severity-badge";
 import {
   defaultOpenFor,
@@ -119,32 +124,41 @@ export function SmartDiffViewer({
             };
             const lines = cited.get(entry.path);
             const summary = lines ? fileFindingSummary(lines) : null;
-            const chips = new Map<number, React.ReactNode>();
+            // Every line the finding covers is listed, and FileCard draws each
+            // key once — on the first line it actually renders. So a finding
+            // spanning a block gets ONE chip rather than the same control
+            // repeated down the block, and the chip still appears when the
+            // range starts above the hunk. The gutter keeps marking every line,
+            // which is what shows how far the finding reaches.
+            const chips = new Map<number, LineAdornment[]>();
             if (lines) {
               for (const [line, list] of lines) {
                 chips.set(
                   line,
-                  <span style={s.chipRow}>
-                    {list.map((f) => {
-                      const colour = severityColor(f.severity);
-                      const chip = chipFor(f.severity);
-                      const label = t(chip.key);
-                      return (
+                  list.map((f) => {
+                    const chip = chipFor(f.severity);
+                    const label = t(chip.key);
+                    return {
+                      key: f.id,
+                      node: (
                         <button
-                          key={f.id}
                           type="button"
                           style={s.bareButton}
                           title={t("smartDiff.jumpToFinding")}
                           aria-label={`${label}: ${f.title}`}
                           onClick={() => onOpenFinding?.(f.id)}
                         >
-                          <Badge color={colour} bg="transparent" icon={chip.icon}>
+                          <Badge
+                            color={severityColor(f.severity)}
+                            bg="transparent"
+                            icon={chip.icon}
+                          >
                             {label}
                           </Badge>
                         </button>
-                      );
-                    })}
-                  </span>,
+                      ),
+                    };
+                  }),
                 );
               }
             }

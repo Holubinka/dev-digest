@@ -23,13 +23,6 @@ export const s = {
     background: "var(--crit)",
     flexShrink: 0,
   } satisfies CSSProperties,
-  chipRow: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 6,
-    paddingRight: 12,
-    flexShrink: 0,
-  } satisfies CSSProperties,
   bareButton: {
     background: "none",
     border: "none",
