@@ -4,7 +4,6 @@ import React from "react";
 import { Markdown, SectionLabel } from "@devdigest/ui";
 import { usePrIntent, useRecomputeIntent } from "@/lib/hooks/core";
 import { IntentCard } from "../IntentCard";
-import { PrBriefCard } from "../PrBriefCard";
 import { s } from "./styles";
 
 interface OverviewTabProps {
@@ -19,8 +18,6 @@ export function OverviewTab({ prBody, prId }: OverviewTabProps) {
 
   return (
     <>
-      <PrBriefCard prId={prId} />
-
       <div style={s.cardRow}>
         <IntentCard
           intent={intent}

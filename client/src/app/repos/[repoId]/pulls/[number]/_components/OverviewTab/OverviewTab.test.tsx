@@ -19,11 +19,6 @@ vi.mock("@/lib/hooks/core", () => ({
 vi.mock("../IntentCard", () => ({
   IntentCard: () => <div data-testid="intent-card" />,
 }));
-// Same reason: PR BRIEF has its own test, reads next-intl and fetches reviews.
-vi.mock("../PrBriefCard", () => ({
-  PrBriefCard: () => <div data-testid="pr-brief-card" />,
-}));
-
 import { OverviewTab } from "./OverviewTab";
 
 beforeEach(() => {
