@@ -425,6 +425,43 @@ schema` when the fallback answered and `OPENROUTER_API_KEY is not configured` wh
 did. Asserting only that the review survived cannot distinguish the two, which is how the
 original omission survived review.
 
+### A fixture patch's `additions`/`deletions` are unchecked, and one of them is already wrong
+
+**Symptom.** `db/seed-fixtures.ts` declares each file's `additions`/`deletions` next to a
+hand-written unified-diff string. Nothing verifies the two agree. `SEARCH_ROUTES` (PR #102)
+declares `+9 -4` over a patch containing 7 added lines — checked 2026-08-06, still wrong,
+left standing because correcting it changes an unrelated fixture's stored numbers.
+
+**Cause.** The numbers are inserted straight into `pr_files` and never derived from the patch.
+Typecheck cannot see it, and no test asserts it. Anything summing them then disagrees with the
+diff it renders — `GET /pulls/:id/smart-diff` totals exactly these columns into
+`split_suggestion.total_lines`.
+
+**Fix.** After writing a fixture patch, count it rather than estimating. Two things must hold,
+and both were wrong on the first draft of PR #104:
+
+- `additions` = lines starting `+`, `deletions` = lines starting `-`;
+- the hunk header `@@ -a,b +c,d @@` needs `b = context + deletions` and `d = context + additions`.
+  `parsePatch` (client) only reads `a` and `c`, so wrong lengths render fine and stay wrong.
+
+A throwaway script that regex-extracts the patch constants and compares both is a two-minute
+job and caught nine mismatches at once. Note that its extraction regex must consume `\X` as a
+unit — `API_SNAP` contains escaped backticks, and a lazy `` `([\s\S]*?)` `` stops at the first
+one and silently reports the patch as empty.
+
+### An integration test can fail once under full-suite load and pass alone
+
+**Symptom.** `test/reviews-skills.it.test.ts` failed on `GET /runs/:id/trace` → 404 during
+`vitest run .it.test` (2026-08-06), then passed on its own and passed on an immediate re-run of
+the whole suite. 96 tests, 103s of test time inside a 14s wall clock — heavy contention.
+
+**Cause.** Not diagnosed. The trace is written after the run completes, so a wait that clears on
+run status can outrun the trace insert when everything is competing for the same Postgres.
+
+**Fix.** Before believing an integration failure is yours, re-run that file alone, and re-run the
+suite. Stashing the branch (`git stash -u`) and running the file on a clean tree separates "my
+change broke it" from "the suite is loaded" in one command — that is what settled this one.
+
 ## Session Notes
 
 ### 2026-08-03

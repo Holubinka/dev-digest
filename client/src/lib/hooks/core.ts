@@ -16,6 +16,7 @@ import type {
   PrMeta,
   PrDetail,
   IntentRecord,
+  SmartDiff,
   SpecFile,
   IndexStatus,
 } from "../types";
@@ -116,6 +117,22 @@ export function usePullDetail(prId: string | number | null | undefined) {
   return useQuery({
     queryKey: ["pull", prId],
     queryFn: () => api.get<PrDetail>(`/pulls/${prId}`),
+    enabled: prId != null,
+  });
+}
+
+// ---- Smart Diff (GET /pulls/:id/smart-diff) ----
+
+/**
+ * The reviewer-ordered file list. Derived server-side from `pr_files` and the
+ * PR's findings on every request — no model call, so it needs no "recompute"
+ * mutation and is safe to refetch. Invalidate it when a review finishes, which
+ * is the only thing that changes the answer (`pulls/[number]/page.tsx`).
+ */
+export function useSmartDiff(prId: string | null | undefined) {
+  return useQuery({
+    queryKey: ["smart-diff", prId],
+    queryFn: () => api.get<SmartDiff>(`/pulls/${prId}/smart-diff`),
     enabled: prId != null,
   });
 }

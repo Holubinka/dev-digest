@@ -66,6 +66,14 @@ export const s = {
   } satisfies CSSProperties,
 } as const;
 
+/**
+ * Gutter marker for a line a finding cites, in that finding's severity colour.
+ * Spread AFTER `lineRowFor(kind)` so it survives the add/del tint.
+ */
+export function lineHighlightFor(color: string): CSSProperties {
+  return { boxShadow: `inset 3px 0 0 ${color}`, scrollMarginTop: 80 };
+}
+
 /** Chevron rotates 90deg when the file card is open. */
 export function chevronFor(open: boolean): CSSProperties {
   return {

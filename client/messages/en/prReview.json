@@ -58,14 +58,27 @@
     "blockers": " · {count} blockers"
   },
   "smartDiff": {
-    "coreLabel": "Core",
+    "coreLabel": "Core logic",
     "wiringLabel": "Wiring",
     "boilerplateLabel": "Boilerplate",
+    "coreHint": "The substance of the change — review closely",
+    "wiringHint": "Hooks the core into the app",
+    "boilerplateHint": "Generated / mechanical — skim",
     "largeTitle": "This PR is large ({lines} changed lines)",
     "largeBody": "Consider splitting it into smaller, focused PRs for easier review:",
     "filesCount": "{count} files",
     "findingLines": "{count} finding-lines",
-    "groupedByRole": "Smart Diff · grouped by role"
+    "findingsCount": "{count} findings",
+    "jumpToLine": "Scroll to the first finding in this file",
+    "groupedByRole": "Smart Diff · grouped by role",
+    "reviewerOrdered": "Reviewer-ordered diff",
+    "smartOrder": "Smart order",
+    "originalOrder": "Original order",
+    "chipCritical": "blocker",
+    "chipWarning": "warning",
+    "chipSuggestion": "suggestion",
+    "jumpToFinding": "Open this finding in Agent runs",
+    "fileHasFindings": "This file has findings"
   },
   "list": {
     "breadcrumb": "Pull Requests",
@@ -120,5 +133,11 @@
     "deleteRun": "Delete run",
     "findingsInRun": "{count} finding(s) in this run",
     "blockersHint": "{count} finding(s) trip this agent’s CI gate"
+  },
+  "diffTab": {
+    "filesChanged": "Files changed · {count} files",
+    "totals": "{count} files · ",
+    "showComments": "Show comments",
+    "hideComments": "Hide comments"
   }
 }
