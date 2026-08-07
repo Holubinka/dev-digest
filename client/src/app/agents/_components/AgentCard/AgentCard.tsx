@@ -1,11 +1,15 @@
 /* AgentCard — model chip, skills count, enabled toggle. Stats are an A5 mount;
-   we render the provider/model + skill count here. */
+   we render the provider/model + skill count here.
+
+   The count comes off the row (`AgentListItem`, from `GET /agents`) rather than
+   from a prop: as an optional prop neither list passed it, so the badge only
+   ever appeared in its own unit test. */
 "use client";
 
 import React from "react";
 import { useTranslations } from "next-intl";
 import { Icon, Badge, Toggle } from "@devdigest/ui";
-import type { Agent } from "@devdigest/shared";
+import type { AgentListItem } from "@devdigest/shared";
 import { useDeleteAgent } from "../../../../lib/hooks/agents";
 import { modelColor } from "./helpers";
 import { s } from "./styles";
@@ -13,13 +17,11 @@ import { s } from "./styles";
 export function AgentCard({
   ag,
   active,
-  skillCount,
   onClick,
   onToggle,
 }: {
-  ag: Agent;
+  ag: AgentListItem;
   active?: boolean;
-  skillCount?: number;
   onClick?: () => void;
   onToggle?: (enabled: boolean) => void;
 }) {
@@ -63,11 +65,9 @@ export function AgentCard({
         <span className="mono" style={s.modelChip(color)}>
           {ag.model}
         </span>
-        {skillCount != null && (
-          <Badge color="var(--text-secondary)" icon="Sparkles">
-            {t("card.skillCount", { count: skillCount })}
-          </Badge>
-        )}
+        <Badge color="var(--text-secondary)" icon="Sparkles">
+          {t("card.skillCount", { count: ag.skill_count })}
+        </Badge>
       </div>
     </div>
   );

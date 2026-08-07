@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 /**
- * Generate server/src/db/seed-skills.ts from the canonical bodies in docs/skills/.
+ * Generate everything downstream of the canonical skill bodies in docs/skills/:
  *
- * The two copies exist for the same reason agent prompts have two: the markdown
- * is what a person reads and reviews, the TypeScript is what `pnpm db:seed`
- * inserts. Generating one from the other means they cannot drift the way the
- * prompt pair can.
+ *   server/src/db/seed-skills.ts               — what `pnpm db:seed` inserts
+ *   plugins/api-contract-reviewer/skills/**    — what Claude Code installs
+ *
+ * The copies exist for the same reason agent prompts have two: the markdown is
+ * what a person reads and reviews, the other forms are what a machine consumes.
+ * Generating them from one list means they cannot drift the way the prompt pair
+ * can, and the list below is the only place a skill's name and description live.
  *
  * Run after editing any body:  node scripts/sync-seed-skills.mjs
  */
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -65,17 +68,65 @@ const SKILLS = [
     description:
       "Check that a route's schema, its DTO mapping and both copies of its shared contract moved together.",
   },
+  {
+    constant: "RESPONSE_SCHEMA_CONTRACT",
+    file: "response-schema-contract.md",
+    name: "Response schema contract",
+    type: "rubric",
+    description:
+      "Say what a caller receives before and after the diff: fields, optionality, nullability, narrowed types.",
+  },
+  {
+    constant: "SEMVER_DISCIPLINE",
+    file: "semver-discipline.md",
+    name: "Semver discipline",
+    type: "convention",
+    description:
+      "For each versioned surface the diff breaks, check that the version marker moved with it.",
+  },
+  {
+    // Not seeded: this one is imported from its raw URL by hand, so the import
+    // path is walked by a person. It still ships in the plugin.
+    seed: false,
+    file: "deprecation-policy.md",
+    name: "Deprecation policy",
+    type: "convention",
+    description:
+      "Check that a removed or renamed public thing survived one release, marked and dated, before it went.",
+  },
 ];
+
+/** Which agent the plugin says these skills are for. */
+const PLUGIN = {
+  dir: "plugins/api-contract-reviewer",
+  files: [
+    "breaking-change-taxonomy.md",
+    "response-schema-contract.md",
+    "route-signature-checklist.md",
+    "semver-discipline.md",
+    "deprecation-policy.md",
+  ],
+};
 
 const escape = (body) =>
   body.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$\{/g, "\\${");
 
-const bodies = SKILLS.map((skill) => {
-  const body = readFileSync(join(root, "docs/skills", skill.file), "utf8").trimEnd();
-  return `/** Mirrors docs/skills/${skill.file}. */\nexport const ${skill.constant} = \`${escape(body)}\`;`;
-}).join("\n\n");
+/** The body as it lives in docs/, with any frontmatter block removed. */
+const readBody = (file) => {
+  const raw = readFileSync(join(root, "docs/skills", file), "utf8").trimEnd();
+  return raw.startsWith("---\n") ? raw.slice(raw.indexOf("\n---", 4) + 5).trimStart() : raw;
+};
 
-const entries = SKILLS.map(
+const seeded = SKILLS.filter((s) => s.seed !== false);
+
+const bodies = seeded
+  .map(
+    (skill) =>
+      `/** Mirrors docs/skills/${skill.file}. */\nexport const ${skill.constant} = \`${escape(readBody(skill.file))}\`;`,
+  )
+  .join("\n\n");
+
+const entries = seeded.map(
   (skill) => `  {
     name: ${JSON.stringify(skill.name)},
     description: ${JSON.stringify(skill.description)},
@@ -101,9 +152,10 @@ export interface SeedSkill {
 /**
  * The skills a fresh workspace starts with, in binding order.
  *
- * "Flakiness patterns" is deliberately absent: it ships as an archive under
- * docs/skills/flakiness-patterns/ and is imported by hand, so the import path is
- * exercised by a person rather than asserted by a fixture.
+ * Two are deliberately absent, one per import path: "Flakiness patterns" ships
+ * as an archive under docs/skills/flakiness-patterns/, and "Deprecation policy"
+ * as a single markdown file imported from its raw URL. Both are walked by a
+ * person rather than asserted by a fixture.
  */
 export const SEED_SKILLS: SeedSkill[] = [
 ${entries}
@@ -111,4 +163,33 @@ ${entries}
 `;
 
 writeFileSync(join(root, "server/src/db/seed-skills.ts"), file);
-console.log(`wrote server/src/db/seed-skills.ts (${SKILLS.length} skills)`);
+console.log(`wrote server/src/db/seed-skills.ts (${seeded.length} skills)`);
+
+// ---------------------------------------------------------------------------
+// The Claude Code plugin: the same bodies, as SKILL.md files with frontmatter.
+// Regenerated wholesale so a skill removed from the list above leaves nothing
+// behind in the package someone else installs.
+// ---------------------------------------------------------------------------
+
+const slug = (file) => file.replace(/\.md$/, "");
+const byFile = new Map(SKILLS.map((s) => [s.file, s]));
+
+const skillsDir = join(root, PLUGIN.dir, "skills");
+rmSync(skillsDir, { recursive: true, force: true });
+
+for (const file of PLUGIN.files) {
+  const skill = byFile.get(file);
+  if (!skill) throw new Error(`${file} is in PLUGIN.files but not in SKILLS`);
+  const dir = join(skillsDir, slug(file));
+  mkdirSync(dir, { recursive: true });
+  const frontmatter = [
+    "---",
+    `name: ${slug(file)}`,
+    `description: ${JSON.stringify(skill.description)}`,
+    "---",
+    "",
+    "",
+  ].join("\n");
+  writeFileSync(join(dir, "SKILL.md"), `${frontmatter}${readBody(file)}\n`);
+}
+console.log(`wrote ${PLUGIN.dir}/skills (${PLUGIN.files.length} skills)`);

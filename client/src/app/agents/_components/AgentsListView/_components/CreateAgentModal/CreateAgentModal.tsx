@@ -4,7 +4,7 @@ import React from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Button, Modal, FormField, TextInput, SelectInput, Textarea } from "@devdigest/ui";
-import type { Provider } from "@devdigest/shared";
+import type { Agent, Provider } from "@devdigest/shared";
 import { useCreateAgent } from "../../../../../../lib/hooks/agents";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER, MODAL_WIDTH, PROVIDER_OPTIONS } from "./constants";
 import { s } from "./styles";
@@ -20,14 +20,23 @@ export function CreateAgentModal({ onClose }: { onClose: () => void }) {
   const [model, setModel] = React.useState(DEFAULT_MODEL);
   const [systemPrompt, setSystemPrompt] = React.useState(t("create.defaultSystemPrompt"));
 
+  /** Catch without reporting: the `MutationCache` in `lib/providers.tsx` already
+   *  toasts a failed mutation, so a second message here would be the same
+   *  sentence twice. The catch exists because `onClick` cannot await this, and
+   *  the early return keeps the modal open on the system prompt typed into it. */
   const submit = async () => {
-    const agent = await create.mutateAsync({
-      name: name.trim() || t("create.defaultName"),
-      description,
-      provider,
-      model,
-      system_prompt: systemPrompt,
-    });
+    let agent: Agent;
+    try {
+      agent = await create.mutateAsync({
+        name: name.trim() || t("create.defaultName"),
+        description,
+        provider,
+        model,
+        system_prompt: systemPrompt,
+      });
+    } catch {
+      return;
+    }
     onClose();
     router.push(`/agents/${agent.id}?tab=config`);
   };

@@ -32,6 +32,7 @@ If a test wouldn't catch a class of regression we care about, we don't write it.
 | reviewer-core | `reviewer-core/` | unit (engine) | vitest | `reviewer-core.yml` | no |
 | e2e web | `e2e/` | browser e2e (deterministic) | agent-browser + `run.ts` | `e2e-web.yml` | yes (stack) |
 | shared-sync | `server/` + `client/` | consistency gate (not a test) | `diff -r` | `shared-sync.yml` | no |
+| prompt-sync | `docs/agent-prompts/` + `server/` | consistency gate (not a test) | `scripts/prompt-sync.mjs` | `prompt-sync.yml` | no |
 | pr-self-review | `scripts/pr-self-review/` | script tests (plain Bash) | `test/run.sh` | `pr-self-review.yml` | no |
 
 ## What each suite covers
@@ -66,6 +67,16 @@ a vendored copy changes. It fires on content changes and on added or deleted
 files. `server/src/vendor/shared/` is the source of truth (`reviewer-core`
 aliases it), but read the diff before overwriting — the copies have drifted in
 both directions before.
+
+**prompt-sync** — the same shape of gate for reviewer prompts. Each one exists
+three times: the markdown in `docs/agent-prompts/`, a template literal in
+`server/src/db/seed-prompts.ts` that `pnpm db:seed` upserts, and
+`agents.system_prompt` in the database. A prompt improved in the doc and pushed
+to a running agent but not mirrored into the seed constant is reverted the next
+time anyone seeds — it survives until a fresh clone, then vanishes. The gate
+compares the first two (`node scripts/prompt-sync.mjs`, no dependencies). It
+cannot compare the third: CI has no database, so the DB copy stays a manual
+`PUT /agents/:id`, which is also what versions the change into `agent_versions`.
 
 **pr-self-review** — the six Bash scripts behind the pre-push gate (see the root
 `README.md`): scope the branch, run the deterministic gates, filter against the

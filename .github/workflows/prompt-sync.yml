@@ -1,0 +1,53 @@
+# prompt-sync gate — a reviewer prompt's two file copies must stay equal.
+#
+# Every reviewer prompt exists three times: the markdown in docs/agent-prompts/
+# that people read and review, the template literal in
+# server/src/db/seed-prompts.ts that `pnpm db:seed` upserts, and
+# agents.system_prompt in the database, which is what the model actually gets.
+# Nothing in the type system connects them, so a prompt improved in the doc and
+# pushed to a running agent but not mirrored into the seed constant is reverted
+# the next time anyone seeds a database — it survives until a fresh clone.
+#
+# This gate compares the first two. It deliberately does NOT check the DB copy:
+# CI has no database and no agents, so that one stays a manual
+# `PUT /agents/:id`, and docs/agent-prompts/README.md says so.
+#
+# No dependencies and no build — it reads two files and compares strings, the
+# same shape as the shared-sync gate.
+name: prompt-sync
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/agent-prompts/**'
+      - 'server/src/db/seed-prompts.ts'
+      - 'scripts/prompt-sync.mjs'
+      - '.github/workflows/prompt-sync.yml'
+  pull_request:
+    paths:
+      - 'docs/agent-prompts/**'
+      - 'server/src/db/seed-prompts.ts'
+      - 'scripts/prompt-sync.mjs'
+      - '.github/workflows/prompt-sync.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prompt-sync-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    name: prompt copies match
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Compare docs/agent-prompts against the seed constants
+        run: node scripts/prompt-sync.mjs

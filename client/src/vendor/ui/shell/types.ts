@@ -34,6 +34,9 @@ export interface ShellContext {
   onRemoveRepo?: (id: string) => void;
   onRefresh?: () => void;
   prCount?: number;
+  /** Below the shell breakpoint the sidebar is an overlay drawer; this is it. */
+  sidebarOpen?: boolean;
+  onToggleSidebar?: () => void;
 }
 
 export interface Crumb {

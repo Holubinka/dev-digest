@@ -220,6 +220,31 @@ The regression lives in `_components/FindingsTab/FindingsTab.test.tsx`: two runs
 `severity="CRITICAL"` to force both open, one `keyDown`, assert `toHaveBeenCalledTimes(1)`.
 A `FindingsPanel`-only test cannot catch this — the bug needs two panels.
 
+### The optional-prop bug shipped a second time, and the colocated test is why it survived
+
+**Symptom.** The Agents list card showed no skills badge at all. Reported by a course
+reviewer on 2026-08-06, not by the suite: `AgentCard.test.tsx` had been green throughout,
+asserting `3 skills` renders.
+
+**Cause.** `AgentCard` declared `skillCount?: number` and gated the badge on
+`skillCount != null`. Neither `AgentsListView` nor `AgentEditorView` passed it, and
+`GET /agents` never counted `agent_skills` in the first place, so there was nothing to pass.
+Same class as the `running` prop above (2026-08-01) — a required-in-spirit prop with a
+default is invisible to `tsc` — plus the part that entry does not cover: the test supplied
+`skillCount={3}` itself, so it proved the badge *can* render and never that anything renders
+it. A test that constructs an input no real caller produces reads as coverage and is not.
+
+**Fix.** Delete the prop and take the number off the row — `ag: AgentListItem` with a
+required `skill_count`, badge rendered unconditionally. Every call site is then a compile
+error until the data actually flows, which is how `AgentsListView.tsx` and the
+`AgentEditorView` test fixture were found. When a card renders a count, put the count in the
+row contract, not in a prop.
+
+Rendering unconditionally also means 0 and 1 now reach the message, and
+`messages/en/agents.json` said `"{count} skills"` — so it needed ICU plural
+(`{count, plural, =0 {No skills} one {# skill} other {# skills}}`). Any count that used to be
+hidden behind a truthiness check has the same latent "1 skills".
+
 ## Codebase Patterns
 
 ### Run-level data reaches the PR-detail subtree by joining in `FindingsTab`, not by widening `ReviewRecord`
@@ -393,6 +418,17 @@ retyping an apostrophe at the same time makes the diff impossible to check, and 
 is already split between `'` (here) and `’` (`prReview.json`).
 
 Brand names stay literal — the `AppShell` crumb is `"DevDigest"` in every locale.
+
+### A second route consuming a `_components/` folder is the promotion signal
+
+The Conventions screen needed the skill body editor and the skill-type list, both of which
+lived under `app/skills/_components/`. Importing them across routes typechecks and lints
+cleanly, so nothing stops you — `/pr-self-review` did, citing `frontend-architecture`'s
+promotion rule. `SkillBodyEditor` moved to `components/skill-body-editor/` and `TYPE_VALUES`
+to `components/skill-type/values.ts`, with all five importers repointed in the same commit.
+The same argument moved `renderWithProviders` out of `test/skills.tsx` into `test/render.tsx`:
+a QueryClient/next-intl/Toast wrapper was never about skills, and a second domain importing
+it from a first domain's fixture is the same violation wearing test clothes.
 
 ### A cross-tab jump needs one URL write, not one per key
 

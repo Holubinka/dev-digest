@@ -12,6 +12,8 @@ import { activeKeyFor, toShellRepo } from "../helpers";
 
 interface ShellContextOptions {
   onOpenCommandPalette: () => void;
+  sidebarOpen: boolean;
+  onToggleSidebar: () => void;
 }
 
 /**
@@ -19,7 +21,11 @@ interface ShellContextOptions {
  * list/active repo (mapped to the shell shape), theme, PR count, and the repo
  * selection / add / removal actions.
  */
-export function useShellContext({ onOpenCommandPalette }: ShellContextOptions): ShellContext {
+export function useShellContext({
+  onOpenCommandPalette,
+  sidebarOpen,
+  onToggleSidebar,
+}: ShellContextOptions): ShellContext {
   const t = useTranslations("shell");
   const pathname = usePathname() ?? "/";
   const router = useRouter();
@@ -67,6 +73,8 @@ export function useShellContext({ onOpenCommandPalette }: ShellContextOptions): 
       theme,
       onToggleTheme: toggle,
       onOpenCommandPalette,
+      sidebarOpen,
+      onToggleSidebar,
       onSelectRepo,
       onAddRepo,
       onRemoveRepo,
@@ -82,6 +90,8 @@ export function useShellContext({ onOpenCommandPalette }: ShellContextOptions): 
       theme,
       toggle,
       onOpenCommandPalette,
+      sidebarOpen,
+      onToggleSidebar,
       onSelectRepo,
       onAddRepo,
       onRemoveRepo,

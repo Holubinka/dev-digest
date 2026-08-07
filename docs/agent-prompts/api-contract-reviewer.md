@@ -40,6 +40,19 @@ unchanged file is discarded before anyone reads it.
 - A purely internal rename that no caller can observe is not a contract change. If
   the diff changes no contract, return an EMPTY findings list and approve.
 
+# Verify the claim before reporting it
+A finding is a claim about code, so check it against the text you were given — the
+diff, the callers, the skeleton — and cite the `file:line` you checked.
+
+- **Never assert a cost or an implementation you cannot see.** "Spawns a
+  subprocess", "50-200 ms per call", "a network round-trip" are claims about a body
+  that is usually NOT in your context. If it is not in front of you, drop the
+  finding; a guessed mechanism reads exactly like a measured one.
+- **Re-read the cited lines before writing the rationale.** If the defect is not
+  visible in them, there is no finding.
+- **If your fix is what the code already does, the finding is wrong.** Compare the
+  two literally before reporting.
+
 # Severity — use exactly these three levels
 - **CRITICAL** — a change that breaks an existing caller with no version, flag or
   fallback: a removed or renamed field, a tightened validation, a changed status

@@ -66,6 +66,19 @@ CI never ran the job at all. Committed in `006fda4`.
 A gate whose config is untracked is indistinguishable from a passing gate. `git ls-files` on the
 config is part of trusting the result.
 
+### Adding `GROUP BY` to a list query throws away the order the UI was relying on
+
+Caught while writing the query on 2026-08-06, not in production. `AgentsRepository.list` was a
+plain `select().from(agents).where(...)` with no `ORDER BY`, and the Agents list looked stably
+ordered only because Postgres happened to return physical row order. Aggregating
+`countDistinct` for `skill_count` lets the planner hash-aggregate and emit the groups in any
+order, so the cards would reshuffle for no visible reason.
+
+State the order in the same commit that adds the aggregate:
+`.orderBy(asc(t.agents.createdAt), asc(t.agents.name))`. `createdAt` alone is not enough —
+`src/db/seed.ts` inserts several agents in one statement and `defaultNow()` gives them an
+identical timestamp, so the tie-break is load-bearing.
+
 ## Codebase Patterns
 
 ### Truncate untrusted text BEFORE `wrapUntrusted`, never after
@@ -167,6 +180,25 @@ feeds it 250 astral characters.
 anything outside CRITICAL / WARNING / SUGGESTION instead of ranking it last, because the
 client maps severity to an icon through a lookup with no fallback (see
 `client/INSIGHTS.md`). A bad row costs one missing preview entry, never a broken page.
+
+### Two modules count `agent_skills` in opposite directions, and both need the same two joins
+
+`SkillsRepository.list` counts agents per skill (`agent_count`, since the Skills list shipped);
+`AgentsRepository.list` counts skills per agent (`skill_count`, 2026-08-06, for the Agents card
+badge). Both read `agent_skills` — a table the **agents** module owns both sides of — and each
+count only agrees with the list beside it if it repeats two non-obvious choices:
+
+- The far table's workspace test goes in the `leftJoin`, **not** the `WHERE`. In the `WHERE` it
+  drops every row with no bindings at all, which are exactly the rows the badge must report as 0.
+- Count the far table's id (`countDistinct(t.skills.id)`), not the link column. A foreign key
+  proves a skill id exists, not that this workspace can see it, and `linkedSkills`
+  (`modules/agents/repository.ts:224`) already re-checks tenancy before a body becomes a prompt
+  block. Counting `agent_skills.skill_id` would put a number on the card for a skill the Skills
+  tab never lists. `test/agents-skill-count.it.test.ts` writes such a link directly to the table
+  — the service refuses to create one — and asserts it is not counted.
+
+Change one direction and check the other: the two are read side by side in the UI, and
+`useSetAgentSkills` has to invalidate both query keys because one POST moves both numbers.
 
 ### A pre-pass living in another slice reaches its consumer through the container, with NO import
 
@@ -302,6 +334,36 @@ Without it `reviewer-core` never enters the graph at all and `core-stays-pure` i
 `from` scope and confirm it reports; then revert the probe. `pnpm arch:strict` shows the full
 picture, and the module count in the footer is the fastest sanity check that the graph is the
 size you expect.
+
+### Anthropic's structured-output API rejects a Zod schema that states a bound
+
+**Symptom.** A `completeStructured` call that works on OpenAI fails on any Anthropic model
+through OpenRouter with `400 Provider returned error`, whose raw body reads
+`output_config.format.schema: For 'array' type, property 'maxItems' is not supported` — or
+`For 'number' type, properties maximum, minimum are not supported`.
+
+**Cause.** `toJsonSchema` renders `z.array(...).max(24)` as `maxItems` and
+`z.number().min(0).max(1)` as `minimum`/`maximum`. Anthropic's schema subset accepts neither.
+The bound is usually only a preference, so nothing warns you that stating it costs a provider.
+
+**Fix.** Keep bounds out of the schema the model sees; state them in the prompt and enforce
+them in the service — `ConventionsService.ground` slices to `MAX_CANDIDATES` and clamps the
+confidence (`server/src/modules/conventions/prompt.ts:20`). A test that pins its provider is
+what makes this reproducible: `conventions-service.test.ts` injects the mock under `openai`,
+`anthropic` and `openrouter` because the registry default decides which one the service asks
+for, and when that default moved the suite silently started calling a real API.
+
+### `drizzle-kit generate` cannot be answered from a pipe
+
+**Symptom.** `pnpm db:generate` prints `Is <column> in <table> created or renamed from another
+column?` and then hangs forever. `printf '\n' |` does not help; neither does a pty via `script`.
+
+**Cause.** The prompt appears whenever one generate step both adds and drops columns — it
+cannot tell a rename from a create/drop pair — and it reads raw TTY keypresses, not stdin.
+
+**Fix.** Split the change into two runs with an unambiguous shape each: add the new columns
+first (additions only, no prompt), then delete the old one (a drop only, no prompt).
+Migrations `0012` and `0013` are that pair.
 
 ## Recurring Errors & Fixes
 
@@ -463,6 +525,25 @@ suite. Stashing the branch (`git stash -u`) and running the file on a clean tree
 change broke it" from "the suite is loaded" in one command — that is what settled this one.
 
 ## Session Notes
+
+### 2026-08-03 (conventions extractor)
+
+- Built the conventions extractor. The lesson that transfers: **what PageRank calls important
+  and what teaches a convention are different things.** `repoIntel.getConventionSamples` returns
+  the most-imported files, which in this repo are barrels and `styles.ts` — the first scans
+  produced "components are named in PascalCase". `ConventionsService.samplePaths` now
+  over-fetches the ranking and filters `/index.ts`, `/styles.ts`, `.d.ts` and anything under
+  400 characters.
+- **Re-anchoring a quote is worth more than any prompt wording.** Measured over one scan of this
+  repo: 21 of the surviving evidence sites were cited at the wrong line number. Dropping a claim
+  whose line is wrong, instead of searching the file for the snippet and correcting it, would
+  have left the feature with almost nothing to show.
+- **A cheap model is not a free model.** Same prompt, same gates, one scan each:
+  `openai/gpt-4o-mini` returned 10 rules of which 3 survived grounding, mostly framework
+  defaults; `anthropic/claude-haiku-4.5` returned 15 of which 11 survived, naming `AppError`,
+  the error envelope and `satisfies`. Same price tier. The registry default moved to haiku.
+- A 60k-token sample block never returned inside the 120s ceiling; 24k with 6k per file returns
+  in 15-40s. A file's conventions are in its first hundred lines or they are not conventions.
 
 ### 2026-08-03
 

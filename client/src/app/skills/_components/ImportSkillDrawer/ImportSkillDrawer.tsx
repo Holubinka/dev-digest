@@ -23,8 +23,8 @@ import {
   useImportSkillUrl,
 } from "../../../../lib/hooks/skills";
 import { useToast } from "../../../../lib/toast";
-import { TYPE_VALUES } from "../constants";
-import { SkillBodyEditor } from "../SkillBodyEditor";
+import { TYPE_VALUES } from "@/components/skill-type";
+import { SkillBodyEditor } from "@/components/skill-body-editor";
 import { s } from "./styles";
 
 export function ImportSkillDrawer({
@@ -63,19 +63,50 @@ export function ImportSkillDrawer({
     if (file) importFile.mutate(file, { onSuccess: accept });
   };
 
+  /**
+   * A refused import needs saying HERE, not only in a toast.
+   *
+   * The `MutationCache` in `lib/providers.tsx` already toasts the server's
+   * message, so no `onError` belongs on the mutations — a second one would be
+   * the same sentence twice. But that toast is gone in four seconds and leaves
+   * the drawer showing an upload box with no clue why nothing happened, and the
+   * reasons here are ones the user has to act on: an oversized archive, a
+   * non-Markdown body, a URL the SSRF guard refused. So the message is rendered
+   * from the mutation's own error state, beside the control that caused it,
+   * where it stays until the next attempt.
+   */
+  const failure = (error: unknown) => (
+    <div style={s.failure} role="alert">
+      <Icon.XCircle size={16} style={s.failureIcon} />
+      <span style={s.failureText}>
+        {error instanceof Error ? error.message : t("import.readFailed")}
+      </span>
+    </div>
+  );
+
+  /** Catch without reporting: the `MutationCache` in `lib/providers.tsx` already
+   *  toasts a failed mutation, so a second message here would be the same
+   *  sentence twice. The catch exists because `onClick` cannot await this. The
+   *  early return matters more here than elsewhere — the preview is persisted
+   *  nowhere, so closing on a failure would lose the import and every edit. */
   const save = async () => {
     if (!draft) return;
-    const skill = await create.mutateAsync({
-      name,
-      description,
-      type,
-      body,
-      // The server pins `enabled` false for any non-manual source; sending it
-      // here states the intent rather than relying on that alone.
-      source: draft.source,
-      enabled: false,
-      evidence_files: draft.evidence_files,
-    });
+    let skill: Skill;
+    try {
+      skill = await create.mutateAsync({
+        name,
+        description,
+        type,
+        body,
+        // The server pins `enabled` false for any non-manual source; sending it
+        // here states the intent rather than relying on that alone.
+        source: draft.source,
+        enabled: false,
+        evidence_files: draft.evidence_files,
+      });
+    } catch {
+      return;
+    }
     toast.success(t("import.savedToast", { name: skill.name }));
     onClose();
     router.push(`/skills/${skill.id}?tab=config`);
@@ -154,6 +185,7 @@ export function ImportSkillDrawer({
                   onChange={(e) => readFile(e.target.files?.[0])}
                 />
                 <p style={s.hint}>{t("file.hint")}</p>
+                {importFile.isError && failure(importFile.error)}
               </div>
             ) : (
               <div style={s.urlPane}>
@@ -176,6 +208,7 @@ export function ImportSkillDrawer({
                     {importUrl.isPending ? t("url.fetching") : t("url.fetch")}
                   </Button>
                 </div>
+                {importUrl.isError && failure(importUrl.error)}
               </div>
             )}
           </>

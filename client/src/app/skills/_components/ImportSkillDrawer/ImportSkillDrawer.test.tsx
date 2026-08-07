@@ -152,4 +152,76 @@ describe("ImportSkillDrawer", () => {
     const sent = JSON.parse(String((fetchMock.mock.calls[0]![1] as RequestInit).body));
     expect(sent).toEqual({ url: "https://example.com/s.md" });
   });
+
+  /**
+   * A refused import has to say so beside the control, not only in a toast the
+   * `MutationCache` shows for four seconds — the reasons are ones the user acts
+   * on, and the drawer otherwise sits there looking untouched.
+   */
+  it("says why a file was refused, and stays on the upload box", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 413,
+      statusText: "Payload Too Large",
+      json: async () => ({ error: { message: "archive is larger than 2 MB" } }),
+    });
+    renderDrawer();
+    fireEvent.change(screen.getByLabelText("Choose a file"), {
+      target: { files: [new File(["zip bytes"], "pack.zip", { type: "application/zip" })] },
+    });
+
+    expect(await screen.findByText("archive is larger than 2 MB")).toBeInTheDocument();
+    // No preview means no save button — the drawer did not half-open.
+    expect(screen.queryByText("Save as disabled")).not.toBeInTheDocument();
+    expect(screen.getByText("Choose a file")).toBeInTheDocument();
+  });
+
+  it("says why a URL was refused, on the tab that asked for it", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 400,
+      statusText: "Bad Request",
+      json: async () => ({ error: { message: "refusing to fetch a private address" } }),
+    });
+    renderDrawer();
+    fireEvent.click(screen.getByText("From URL"));
+    fireEvent.change(screen.getByPlaceholderText("https://example.com/skills/flakiness.md"), {
+      target: { value: "http://169.254.169.254/latest/meta-data" },
+    });
+    fireEvent.click(screen.getByText("Fetch"));
+
+    expect(await screen.findByText("refusing to fetch a private address")).toBeInTheDocument();
+    expect(screen.queryByText("Save as disabled")).not.toBeInTheDocument();
+  });
+
+  /**
+   * The message is not this drawer's job — `lib/providers.tsx` gives the
+   * `QueryClient` a `MutationCache.onError` that toasts every failed mutation,
+   * and a second `toast.error` here would print the same sentence twice. What it
+   * owes is to catch at all — `onClick` cannot await `save`, so a failure used
+   * to be an unhandled rejection — and to stay open, which matters more here
+   * than anywhere: the preview is persisted nowhere, so closing would lose the
+   * whole import.
+   */
+  it("keeps the preview when the save fails, because nothing else holds it", async () => {
+    await uploadSkillZip();
+    fireEvent.change(screen.getByDisplayValue("Flakiness patterns"), {
+      target: { value: "Renamed before the failure" },
+    });
+    // Only the save fails; the preview already succeeded.
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 409,
+      statusText: "Conflict",
+      json: async () => ({ error: { message: "a skill with that name exists" } }),
+    });
+
+    fireEvent.click(screen.getByText("Save as disabled"));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(nav.push).not.toHaveBeenCalled();
+    expect(screen.getByDisplayValue("Renamed before the failure")).toBeInTheDocument();
+    expect(screen.getByText("Save as disabled")).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 0));
+  });
 });

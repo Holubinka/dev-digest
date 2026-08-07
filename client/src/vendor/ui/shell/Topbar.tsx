@@ -19,6 +19,9 @@ export function Topbar({ ctx, crumb = [] }: { ctx: ShellContext; crumb?: Crumb[]
         padding: "0 24px",
       }}
     >
+      <span className="dd-nav-toggle">
+        <IconBtn icon="Menu" label="Open navigation" onClick={ctx.onToggleSidebar} />
+      </span>
       <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
         {crumb.map((c, i) => {
           const last = i === crumb.length - 1;
@@ -46,13 +49,14 @@ export function Topbar({ ctx, crumb = [] }: { ctx: ShellContext; crumb?: Crumb[]
         })}
       </div>
       <button
+        className="dd-topbar-search"
+        aria-label="Search or jump to…"
         onClick={ctx.onOpenCommandPalette}
         style={{
           marginLeft: "auto",
           display: "flex",
           alignItems: "center",
           gap: 10,
-          width: 260,
           padding: "8px 14px",
           borderRadius: 7,
           border: "1px solid var(--border)",
@@ -62,8 +66,12 @@ export function Topbar({ ctx, crumb = [] }: { ctx: ShellContext; crumb?: Crumb[]
         }}
       >
         <Icon.Search size={14} />
-        <span style={{ flex: 1, textAlign: "left" }}>Search or jump to…</span>
-        <Kbd>⌘K</Kbd>
+        <span className="dd-topbar-search-label" style={{ flex: 1, textAlign: "left" }}>
+          Search or jump to…
+        </span>
+        <span className="dd-topbar-search-label">
+          <Kbd>⌘K</Kbd>
+        </span>
       </button>
       {ctx.onToggleTheme && (
         <IconBtn

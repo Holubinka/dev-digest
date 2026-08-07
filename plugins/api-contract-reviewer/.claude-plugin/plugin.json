@@ -1,0 +1,19 @@
+{
+  "name": "api-contract-reviewer",
+  "version": "1.0.0",
+  "description": "Five review skills for changes to a published contract: how bad the break is, what the reply's shape became, whether a route's three places moved together, whether the version marker moved, and whether the old thing survived one release.",
+  "author": {
+    "name": "Vitalii Holubinka"
+  },
+  "homepage": "https://github.com/Holubinka/dev-digest",
+  "license": "MIT",
+  "keywords": [
+    "code-review",
+    "api",
+    "breaking-change",
+    "semver",
+    "deprecation",
+    "contracts"
+  ],
+  "skills": "./skills/"
+}
