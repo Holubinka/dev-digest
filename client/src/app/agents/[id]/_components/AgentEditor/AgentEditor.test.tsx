@@ -18,7 +18,7 @@ vi.mock("@/lib/hooks/agents", () => ({
 }));
 vi.mock("@/lib/hooks/skills", () => ({
   useSkills: () => ({
-    data: [skill({ id: "sk1", name: "uncovered-branch-rubric", description: "", version: 1, agent_count: 1 })],
+    data: [skill({ id: "sk1", name: "uncovered-branch-rubric", description: "", version: 1, agents: 1 })],
   }),
 }));
 

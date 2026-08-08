@@ -82,7 +82,7 @@ export type SkillInjectionMatch = z.infer<typeof SkillInjectionMatch>;
  * the text.
  */
 export const SkillListItem = Skill.omit({ body: true }).extend({
-  agent_count: z.number().int(),
+  agents: z.number().int(),
   injection: z.array(SkillInjectionMatch),
 });
 export type SkillListItem = z.infer<typeof SkillListItem>;

@@ -15,7 +15,7 @@ import { SkillsList } from "./SkillsList";
 import { skill } from "../../../../test/skills";
 
 const listSkill = (name: string, over: Partial<SkillListItem> = {}) =>
-  skill({ id: name, name, description: "", agent_count: 1, version: 1, ...over });
+  skill({ id: name, name, description: "", agents: 1, version: 1, ...over });
 
 const ALL = [
   listSkill("uncovered-branch-rubric"),

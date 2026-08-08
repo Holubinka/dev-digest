@@ -37,7 +37,7 @@ vi.mock("../../../../lib/hooks/skills", () => ({
 import { SkillsView } from "./SkillsView";
 import { skill } from "../../../../test/skills";
 
-const SKILL = skill({ description: "List every branch.", version: 1, agent_count: 1 });
+const SKILL = skill({ description: "List every branch.", version: 1, agents: 1 });
 
 function renderView(selectedId?: string) {
   return render(

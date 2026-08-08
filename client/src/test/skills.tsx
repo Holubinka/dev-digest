@@ -16,7 +16,7 @@ export function skill(over: Partial<SkillListItem> = {}): SkillListItem {
     enabled: true,
     version: 3,
     evidence_files: null,
-    agent_count: 2,
+    agents: 2,
     injection: [],
     ...over,
   };

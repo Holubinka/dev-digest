@@ -11,7 +11,7 @@ const skill = (id: string): SkillListItem => ({
   enabled: true,
   version: 1,
   evidence_files: null,
-  agent_count: 0,
+  agents: 0,
   injection: [],
 });
 

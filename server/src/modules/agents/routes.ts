@@ -61,7 +61,7 @@ const SetSkillsBody = z
   .object({
     skill_ids: z.array(z.string().uuid()).optional(),
     skill_id: z.string().uuid().optional(),
-    order: z.number().int().optional(),
+    order: z.number().int(),
   })
   .refine((b) => b.skill_ids !== undefined || b.skill_id !== undefined, {
     message: 'Provide skill_ids (set/reorder) or skill_id (link one)',

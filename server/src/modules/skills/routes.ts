@@ -10,7 +10,7 @@ import { SkillsService } from './service.js';
 
 /**
  * Skills module.
- *   GET    /skills                        → list (workspace-scoped, agent_count, NO body)
+ *   GET    /skills                        → list (workspace-scoped, agents, NO body)
  *   GET    /skills/:id                    → one skill, body included
  *   POST   /skills                        → create (also the confirm step of an import)
  *   PUT    /skills/:id                    → update / toggle enabled (body edits version)

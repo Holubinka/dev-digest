@@ -53,12 +53,12 @@ describe('toSkillListItemDto', () => {
   it('carries the binding count alongside the skill', () => {
     expect(toSkillListItemDto({ skill: ROW, agentCount: 2 })).toMatchObject({
       id: 'sk-1',
-      agent_count: 2,
+      agents: 2,
     });
   });
 
   it('keeps a skill nobody has bound at zero', () => {
-    expect(toSkillListItemDto({ skill: ROW, agentCount: 0 }).agent_count).toBe(0);
+    expect(toSkillListItemDto({ skill: ROW, agentCount: 0 }).agents).toBe(0);
   });
 });
 

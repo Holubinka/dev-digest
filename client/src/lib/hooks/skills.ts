@@ -20,7 +20,7 @@ export function useSkills() {
   });
 }
 
-/** Returns the list shape, so a detail view has `agent_count` and `injection` too. */
+/** Returns the list shape, so a detail view has `agents` and `injection` too. */
 export function useSkill(id: string | null | undefined) {
   return useQuery({
     queryKey: ["skill", id],
@@ -78,7 +78,7 @@ export function useUpdateSkill() {
       qc.invalidateQueries({ queryKey: ["skill-versions", data.id] });
       qc.invalidateQueries({ queryKey: ["skill-stats", data.id] });
       // Refetch rather than write the response in: PUT returns the plain Skill,
-      // without the agent_count and injection the detail view reads.
+      // without the agents and injection the detail view reads.
       qc.invalidateQueries({ queryKey: ["skill", data.id] });
     },
   });
