@@ -19,7 +19,6 @@ vi.mock("@/lib/hooks/core", () => ({
 vi.mock("../IntentCard", () => ({
   IntentCard: () => <div data-testid="intent-card" />,
 }));
-
 import { OverviewTab } from "./OverviewTab";
 
 beforeEach(() => {

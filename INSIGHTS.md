@@ -586,6 +586,31 @@ sections (the diff was 82% of that prompt), never for deciding whether something
 window or what it will cost. `agent_runs.tokens_in` is the only authoritative figure, and it
 arrives after the call, not before it.
 
+### A course lesson's contract, response type and i18n keys often already exist — grep before designing
+
+Smart Diff (2026-08-06) was planned as "define the contract, then build it". Nothing needed
+defining. `vendor/shared/contracts/brief.ts:118-151` already held `SmartDiffRole`,
+`SmartDiffFile`, `SmartDiffGroup`, `ProposedSplit` and `SmartDiff`; `contracts/review-api.ts:63`
+already aliased `SmartDiffResponse`; `client/src/lib/types.ts` already re-exported the type; and
+`client/messages/en/prReview.json:60-68` already held every label the UI needed
+(`coreLabel`/`wiringLabel`/`boilerplateLabel`, `largeTitle`, `largeBody`, `filesCount`,
+`findingLines`, `groupedByRole`). All of it dates to the initial squash commit `587c46a` and had
+never been touched — `git blame -L118,151` returns one commit for all 34 lines.
+
+The scaffolding is deliberate and `client/AGENTS.md` says so ("Keys already exist for screens
+that later course lessons build"), but it is easy to miss because nothing imports it: a
+`grep -r SmartDiff src` finds the contract and one round-trip assertion in
+`server/test/contracts.test.ts`, and nothing else. So before designing a shape for a lesson
+feature, grep `vendor/shared/contracts/` and `client/messages/en/` for its name. Designing a
+second shape and then discovering the first is how a vendored contract acquires a near-duplicate.
+
+Two traps in the scaffolding itself. `PrBrief` (`brief.ts:154`) composes `intent`, `blast`,
+`risks` and `history` but **not** `smart_diff`, despite the file's own header comment listing
+Smart Diff among the things "composed into PrBrief" — the comment is aspirational, the code is
+not. And `SmartDiffFile` carries `pseudocode_summary`, which cannot be filled without a model
+call; Smart Diff is specified to make none, so it is written `null` on purpose
+(`modules/smart-diff/helpers.ts`), not left as a TODO.
+
 ## Tool & Library Notes
 
 ### GitHub's "Download ZIP" flattens the `CLAUDE.md` symlinks into 9-byte text files

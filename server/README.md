@@ -67,6 +67,7 @@ flowchart TB
     repos["repos<br/>/repos"]
     pulls["pulls<br/>/pulls/:id · /pulls/:id/comments"]
     intent["intent<br/>/pulls/:id/intent"]
+    smartDiff["smart-diff<br/>/pulls/:id/smart-diff"]
     polling["polling<br/>/repos/:id/poll"]
   end
   subgraph Review["Review & runs"]

@@ -8,6 +8,18 @@ export interface Line {
   newNo?: number;
 }
 
+/**
+ * DOM id for one rendered NEW-side line, so a finding badge can scroll to it.
+ *
+ * One function rather than a format repeated at both ends: `CodeLine` stamps the
+ * id and `SmartDiffViewer`'s finding badge looks it up, and an id built
+ * differently in the two places fails silently — `getElementById` just returns
+ * null and the page sits still.
+ */
+export function lineDomId(path: string, line: number): string {
+  return `diff-line-${encodeURIComponent(path)}-${line}`;
+}
+
 /** Parse unified-diff patch text into renderable lines with old/new line numbers. */
 export function parsePatch(patch: string | null | undefined): Line[] {
   if (!patch) return [];

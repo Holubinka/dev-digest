@@ -58,15 +58,26 @@ export default function PRDetailPage() {
   const invalidateRunHistory = () => {
     if (prId) qc.invalidateQueries({ queryKey: ["pr-runs", prId] });
   };
+  // A finished run is the only thing that changes a Smart Diff. Without this the
+  // finding badges wait for a manual reload.
+  const invalidateSmartDiff = () => {
+    if (prId) qc.invalidateQueries({ queryKey: ["smart-diff", prId] });
+  };
 
   const tab = search.get("tab") ?? "overview";
   const traceRunId = search.get("trace");
-  const setParam = (key: string, val: string | null) => {
+  // Several keys at once, because one router.replace per key races: each builds
+  // its params from the same stale `search`, so the last write wins and the
+  // others are lost. Jumping to a finding sets three.
+  const setParams = (entries: Record<string, string | null>) => {
     const sp = new URLSearchParams(search.toString());
-    if (val == null) sp.delete(key);
-    else sp.set(key, val);
+    for (const [key, val] of Object.entries(entries)) {
+      if (val == null) sp.delete(key);
+      else sp.set(key, val);
+    }
     router.replace(`/repos/${repoId}/pulls/${number}${sp.toString() ? `?${sp.toString()}` : ""}`);
   };
+  const setParam = (key: string, val: string | null) => setParams({ [key]: val });
   const setTab = (t: string) => setParam("tab", t);
   // The severity filter rides in the URL like ?tab and ?trace, so a filtered
   // view survives a reload and can be handed to someone else. An unknown value
@@ -74,6 +85,15 @@ export default function PRDetailPage() {
   const sevParam = search.get("sev");
   const severity = isSeverityLevel(sevParam) ? sevParam : null;
   const setSeverity = (next: SeverityLevel | null) => setParam("sev", next);
+  // Set by a Smart Diff severity chip: which finding the Agent runs tab should
+  // open and scroll to. The severity filter is cleared along with it, or the
+  // target could land behind a filter that hides it.
+  const targetFindingId = search.get("finding");
+  const openFinding = (id: string) => setParams({ tab: "findings", finding: id, sev: null });
+  // Risk order is the default: GitHub's order is what Smart Diff exists to fix.
+  // Only the explicit opt-out is written, so the URL stays clean until asked.
+  const smartOrder = search.get("diffOrder") !== "original";
+  const setSmartOrder = (next: boolean) => setParam("diffOrder", next ? null : "original");
 
   // Reviews come newest-first; each is its own run (grouped into accordions).
   const runs = reviews ?? [];
@@ -157,6 +177,7 @@ export default function PRDetailPage() {
             headSha={pr.head_sha}
             severity={severity}
             onSeverityChange={setSeverity}
+            targetFindingId={targetFindingId}
             cancelMutation={cancel}
             onOpenTrace={(id) => setParam("trace", id)}
             onDelete={(id) => {
@@ -166,6 +187,7 @@ export default function PRDetailPage() {
             onRunDone={() => {
               invalidateActiveRuns();
               invalidateRunHistory();
+              invalidateSmartDiff();
               refetchReviews();
             }}
           />
@@ -176,7 +198,11 @@ export default function PRDetailPage() {
             prId={prId}
             filesCount={pr.files_count}
             files={pr.files}
+            findings={allFindings}
             canComment={pr.status === "open"}
+            onOpenFinding={openFinding}
+            smartOrder={smartOrder}
+            onSmartOrderChange={setSmartOrder}
           />
         )}
       </div>

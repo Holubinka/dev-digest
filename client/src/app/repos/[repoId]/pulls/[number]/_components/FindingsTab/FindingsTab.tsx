@@ -26,6 +26,8 @@ interface FindingsTabProps {
   /** Severity the findings lists are narrowed to; null shows every level. */
   severity: SeverityLevel | null;
   onSeverityChange: (next: SeverityLevel | null) => void;
+  /** Finding to open and scroll to — set by a Smart Diff chip in the diff tab. */
+  targetFindingId?: string | null;
   onOpenTrace: (id: string) => void;
   onDelete: (id: string) => void;
   onRunDone: () => void;
@@ -44,6 +46,7 @@ export function FindingsTab({
   headSha,
   severity,
   onSeverityChange,
+  targetFindingId = null,
   onOpenTrace,
   onDelete,
   onRunDone,
@@ -216,6 +219,7 @@ export function FindingsTab({
                 headSha={headSha}
                 targetRunId={target?.runId ?? null}
                 targetNonce={target?.n ?? 0}
+                targetFindingId={targetFindingId}
                 severity={severity}
                 active={review.id === activeReviewId}
                 onActivate={() => setActiveId(review.id)}

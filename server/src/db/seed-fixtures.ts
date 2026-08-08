@@ -135,6 +135,178 @@ const SEARCH_DOCS = `@@ -10,8 +10,9 @@
  Returns { results, total }.
  `;
 
+// ---- PR #104: the Smart Diff fixture --------------------------------------
+//
+// Nine files spanning all three Smart Diff roles, so the grouping, the collapsed
+// lock file and the finding badges are all reproducible from `pnpm db:seed`.
+// Every planted defect sits on an ADDED line, for the grounding reason above.
+//
+// The key in CONFIG_TS has never been a credential — it is there because a
+// hardcoded secret is the finding this fixture exists to provoke. Keep the
+// underscored words in it: an unbroken alphanumeric run after `sk_live_` matches
+// Stripe's own detector, and GitHub push protection then refuses the push with
+// "secret detected in server/src/db/seed-fixtures.ts". It still reads as a
+// credential assigned in config, which is all the reviewer needs to see.
+
+const RATELIMIT_TS = `@@ -0,0 +1,32 @@
++import type { NextFunction, Request, Response } from 'express';
++import { redis } from '../redis';
++import { config } from '../config';
++
++/** Bucket key for the caller: the API key when present, the socket address otherwise. */
++export function bucketKey(req: Request): string {
++  const apiKey = req.header('x-api-key');
++  return 'ratelimit:' + (apiKey ?? req.ip);
++}
++
++function limitFor(req: Request): number {
++  return req.header('x-api-key') ? config.rateLimit.authed : config.rateLimit.anonymous;
++}
++
++export async function rateLimit(req: Request, res: Response, next: NextFunction) {
++  const key = bucketKey(req);
++  const count = await redis.incr(key);
++  if (count === 1) {
++    await redis.expire(key, 3600);
++  }
++
++  if (count > limitFor(req)) {
++    res.setHeader('Retry-After', '3600');
++    return res.status(429).end();
++  }
++
++  return next();
++}
++
++export async function resetBucket(req: Request): Promise<void> {
++  await redis.del(bucketKey(req));
++}`;
+
+const WEBHOOKS_TS = `@@ -58,7 +58,19 @@
+ export async function webhookHandler(req: Request, res: Response) {
+   const account = await db.accounts.find(req.body.accountId);
+   if (!account) {
+     return res.status(404).end();
+   }
+-  return res.status(202).end();
++
++  const target = req.body.callback_url;
++  const token = account.apiToken;
++  await fetch(target, {
++    method: 'POST',
++    headers: {
++      Authorization: 'Bearer ' + token,
++      'content-type': 'application/json',
++    },
++    body: JSON.stringify(req.body.event),
++  });
++
++  return res.status(202).end();
+ }`;
+
+const USERS_TS = `@@ -41,4 +41,10 @@
+ export async function listUsers(req: Request, res: Response) {
+   const users = await db.users.findMany();
+-  return res.json(users);
++  const result = [];
++  for (const user of users) {
++    const orders = await db.orders.findMany({ where: { userId: user.id } });
++    result.push({ ...user, orderCount: orders.length });
++  }
++
++  return res.json(result);
+ }`;
+
+const PUBLIC_INDEX_TS = `@@ -1,2 +1,8 @@
+ export { webhookHandler } from './webhooks';
+ export { healthHandler } from './health';
++export { rateLimit, resetBucket } from '../../middleware/ratelimit';
++
++export const PUBLIC_ROUTES = [
++  '/public/webhooks',
++  '/public/health',
++] as const;`;
+
+const SERVER_TS = `@@ -12,4 +12,10 @@
+ const app = express();
+
+ app.use(express.json());
++app.use('/public', rateLimit);
++
++app.get('/internal/ratelimit/reset', async (req, res) => {
++  await resetBucket(req);
++  res.status(204).end();
++});
+ app.use('/public', publicRouter);`;
+
+const CONFIG_TS = `@@ -8,4 +8,9 @@
+ export const config = {
+   port: Number(process.env.PORT ?? 3000),
++  stripeKey: 'sk_live_EXAMPLE_ONLY_NOT_A_REAL_KEY',
+   redisUrl: process.env.REDIS_URL,
++  rateLimit: {
++    anonymous: 60,
++    authed: 1000,
++  },
+ };`;
+
+const PACKAGE_JSON = `@@ -14,4 +14,5 @@
+   "dependencies": {
+     "express": "^4.19.2",
+-    "ioredis": "^5.3.2"
++    "ioredis": "^5.4.1",
++    "undici": "^6.19.8"
+   },`;
+
+const PACKAGE_LOCK = `@@ -1204,20 +1204,28 @@
+     "node_modules/ioredis": {
+-      "version": "5.3.2",
+-      "resolved": "https://registry.npmjs.org/ioredis/-/ioredis-5.3.2.tgz",
+-      "integrity": "sha512-1DKMMzlIHM02eBBVOFQ1+AolGjs6+xEcM4PDL7NqOS6szq7H9jSaEkIUH6/a5Hl241LzW6JLSiAbNvTQjUupUA==",
++      "version": "5.4.1",
++      "resolved": "https://registry.npmjs.org/ioredis/-/ioredis-5.4.1.tgz",
++      "integrity": "sha512-2YZsvl7jopIa1gaePkeMtd9rAcSjOOjPtpcLlOeusyO+XH2SverbQVpNvBcEMt7fVKcp6vFbUYVAQU7HTAlBOA==",
+       "dependencies": {
+         "@ioredis/commands": "^1.1.1",
+         "cluster-key-slot": "^1.1.0",
+         "debug": "^4.3.4",
+         "denque": "^2.1.0",
+         "lodash.defaults": "^4.2.0",
+         "lodash.isarguments": "^3.1.0",
+         "redis-errors": "^1.2.0",
+         "redis-parser": "^3.0.0",
+         "standard-as-callback": "^2.1.0"
+       },
+       "engines": {
+         "node": ">=12.22.0"
+       }
+     },
++    "node_modules/undici": {
++      "version": "6.19.8",
++      "resolved": "https://registry.npmjs.org/undici/-/undici-6.19.8.tgz",
++      "integrity": "sha512-U8uCCl2x9TK3WANvmBavymRzxbfFYG+tAu+fgx3zxQy3qdagQqBLwJVrdyO1TBfUXvfKveMKJZhpvUYoOjM+4g==",
++      "engines": {
++        "node": ">=18.17"
++      }
++    },
+     "node_modules/redis-errors": {`;
+
+const API_SNAP = `@@ -1,7 +1,14 @@
+ // Vitest Snapshot v1
+
+ exports[\`public api > GET /public/health 1\`] = \`
+ {
+   "status": "ok",
+ }
+ \`;
++
++exports[\`public api > POST /public/webhooks over the limit 1\`] = \`
++{
++  "retryAfter": 3600,
++  "status": 429,
++}
++\`;`;
+
 interface FixturePr {
   number: number;
   title: string;
@@ -170,8 +342,27 @@ const FIXTURE_PRS: FixturePr[] = [
     branch: 'feat/search-paging',
     body: 'Renames q to query, adds a limit, and returns items instead of results/total.',
     files: [
-      { path: 'src/modules/search/routes.ts', additions: 9, deletions: 4, patch: SEARCH_ROUTES },
+      { path: 'src/modules/search/routes.ts', additions: 7, deletions: 4, patch: SEARCH_ROUTES },
       { path: 'docs/api.md', additions: 1, deletions: 0, patch: SEARCH_DOCS },
+    ],
+  },
+  {
+    number: 104,
+    title: 'Add rate limiting to public API endpoints',
+    branch: 'feat/rate-limit-public',
+    body:
+      'Adds a Redis token bucket in front of /public, wires it into the server, and ' +
+      'bumps ioredis. Includes the webhook forwarding marketing asked for.',
+    files: [
+      { path: 'src/middleware/ratelimit.ts', additions: 32, deletions: 0, patch: RATELIMIT_TS },
+      { path: 'src/api/public/webhooks.ts', additions: 13, deletions: 1, patch: WEBHOOKS_TS },
+      { path: 'src/api/users.ts', additions: 7, deletions: 1, patch: USERS_TS },
+      { path: 'src/api/public/index.ts', additions: 6, deletions: 0, patch: PUBLIC_INDEX_TS },
+      { path: 'src/server.ts', additions: 6, deletions: 0, patch: SERVER_TS },
+      { path: 'src/config.ts', additions: 5, deletions: 0, patch: CONFIG_TS },
+      { path: 'package.json', additions: 2, deletions: 1, patch: PACKAGE_JSON },
+      { path: 'package-lock.json', additions: 11, deletions: 3, patch: PACKAGE_LOCK },
+      { path: 'src/__snapshots__/api.test.ts.snap', additions: 7, deletions: 0, patch: API_SNAP },
     ],
   },
 ];
