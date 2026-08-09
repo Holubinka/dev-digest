@@ -29,9 +29,17 @@ reviewer-core engine, so the loop is usable before a PR exists.
 
 **Follow-up, 2026-08-09 — the toggle was built after all,** at the user's request once the rest
 had shipped. It lives in `client/src/app/repos/[repoId]/pulls/[number]/_components/BlastRadiusCard/`:
-a `tree | graph` control in the card header whose `graph` half opens a capped `MermaidDiagram` of
-the same `BlastRadiusView` in a modal (`toMermaid.ts`), with no new request and no new contract.
-The bullet above is left standing — it was the decision at the time.
+a `tree | graph` control in the card header whose `graph` half opens a capped drawing of the same
+`BlastRadiusView` in a modal, with no new request and no new contract. The bullet above is left
+standing — it was the decision at the time.
+
+It was drawn with mermaid first and then rebuilt on `react-force-graph-2d`, which the user asked
+for by name after seeing a reference design: coloured circles, labels beneath them and a legend.
+`toMermaid.ts` became `toGraph.ts` — the same selection, caps and ordering, returning `{nodes,
+links}` instead of a chart string — and the label-escaping tests went with the parser, since a
+canvas paints text rather than reading it. The library is loaded in an effect rather than through
+`next/dynamic`: it touches `window` at module scope, and `next/dynamic` does not forward a ref to
+what it loads, which is the only way to reach the link and charge forces this graph needs.
 
 ## What already exists
 

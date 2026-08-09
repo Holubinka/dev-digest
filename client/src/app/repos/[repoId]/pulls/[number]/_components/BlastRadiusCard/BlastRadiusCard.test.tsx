@@ -8,11 +8,25 @@ import { githubBlobUrl } from "@/lib/github-urls";
 import type { BlastRadiusView, BlastSymbol } from "@/lib/types";
 import messages from "@/../messages/en/blast.json";
 /* The live answer for PR #12, saved verbatim on 2026-08-09 — see the header of
-   `toMermaid.test.ts`. The graph is capped and the tree is not, so the sentence
+   `toGraph.test.ts`. The graph is capped and the tree is not, so the sentence
    the modal prints is only worth asserting against a payload big enough to be
    capped: 30 symbols, 20 call sites, 38 endpoints. */
 import liveFixture from "./blast-pr12.fixture.json";
 import { BlastRadiusCard } from "./BlastRadiusCard";
+
+/* `react-force-graph-2d` paints onto a `<canvas>`, which jsdom does not
+   implement — mounting the real one throws before any assertion runs. Only the
+   drawing is replaced: what the graph CONTAINS is decided by `toGraph` and
+   asserted directly in `toGraph.test.ts`, with no mock in sight. */
+vi.mock("react-force-graph-2d", () => ({
+  default: ({ graphData }: { graphData: { nodes: unknown[]; links: unknown[] } }) => (
+    <div
+      data-testid="force-graph"
+      data-nodes={graphData.nodes.length}
+      data-links={graphData.links.length}
+    />
+  ),
+}));
 
 /* The boundary mocked here is `fetch`, not the hooks: that way one file covers
    both step 11 (the query key, the two URLs, the `setQueryData` write) and step
@@ -395,10 +409,10 @@ describe("BlastRadiusCard — tree | graph", () => {
   });
 
   /**
-   * `MermaidDiagram` renders nothing at all when a chart will not parse, so an
-   * empty modal is indistinguishable from a broken one. Symbols with nothing
-   * downstream must therefore say so in words rather than be handed to mermaid
-   * as a chart with no edges.
+   * A force layout given no links draws nothing and says nothing — an empty
+   * canvas is indistinguishable from one that failed to start. Symbols with
+   * nothing downstream must therefore say so in words rather than be handed to
+   * the simulation as a graph with no edges.
    */
   it("says there is nothing to graph instead of opening an empty modal", async () => {
     serve({

@@ -23,6 +23,11 @@
   "graph": {
     "empty": "No downstream callers to graph.",
     "ariaLabel": "Blast radius graph",
-    "showing": "Showing {symbols} of {symbolTotal} changed symbols with callers, {callers} of {callerTotal} call sites and {endpoints} of {endpointTotal} endpoints."
+    "showing": "Showing {symbols} of {symbolTotal} changed symbols with callers, {callers} of {callerTotal} call sites and {endpoints} of {endpointTotal} endpoints.",
+    "legend": {
+      "symbol": "Changed symbol",
+      "caller": "Caller",
+      "endpoint": "Endpoint"
+    }
   }
 }

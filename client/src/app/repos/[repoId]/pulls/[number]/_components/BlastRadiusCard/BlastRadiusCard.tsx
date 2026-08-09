@@ -3,12 +3,12 @@
 import React from "react";
 import { useTranslations } from "next-intl";
 import { Badge, Button, Icon, Modal, MonoLink, SectionLabel, Skeleton } from "@devdigest/ui";
-import { MermaidDiagram } from "@/components/mermaid-diagram";
 import { githubBlobUrl } from "@/lib/github-urls";
 import { useBlastRadius, useExplainBlast } from "@/lib/hooks/blast";
 import type { BlastRadiusView, BlastSymbol } from "@/lib/types";
+import { BlastGraph } from "./BlastGraph";
 import { s } from "./styles";
-import { toMermaid } from "./toMermaid";
+import { toGraph } from "./toGraph";
 
 /**
  * The abbreviated form git itself prints. `String.slice` is safe here and only
@@ -217,7 +217,9 @@ function ViewToggle({
  */
 function GraphModal({ view, onClose }: { view: BlastRadiusView; onClose: () => void }) {
   const t = useTranslations("blast");
-  const { chart, shown, total } = toMermaid(view);
+  const graph = toGraph(view);
+  const empty = graph.nodes.length === 0;
+  const { shown, total } = graph;
 
   return (
     <Modal
@@ -227,7 +229,7 @@ function GraphModal({ view, onClose }: { view: BlastRadiusView; onClose: () => v
       // has to say what it left out. A map missing half its roads and not
       // saying so is worse than no map.
       subtitle={
-        chart === ""
+        empty
           ? undefined
           : t("graph.showing", {
               symbols: shown.symbols,
@@ -241,16 +243,7 @@ function GraphModal({ view, onClose }: { view: BlastRadiusView; onClose: () => v
       onClose={onClose}
     >
       <div style={s.graphBody}>
-        {chart === "" ? (
-          <p style={s.note}>{t("graph.empty")}</p>
-        ) : (
-          // `role="img"` with a name, because the SVG mermaid injects is a
-          // picture: its text nodes are laid out by position, and reading them
-          // in DOM order says nothing true about the graph.
-          <div role="img" aria-label={t("graph.ariaLabel")}>
-            <MermaidDiagram chart={chart} />
-          </div>
-        )}
+        {empty ? <p style={s.note}>{t("graph.empty")}</p> : <BlastGraph graph={graph} />}
       </div>
     </Modal>
   );

@@ -61,6 +61,42 @@ export const s = {
   /** The modal body has no padding of its own (`vendor/ui/kit/Modal.tsx:60`). */
   graphBody: { padding: "16px 24px 22px" } satisfies CSSProperties,
 
+  /** Positioned, so the legend can sit over the canvas rather than under it. */
+  graphCanvas: {
+    position: "relative",
+    borderRadius: 8,
+    border: "1px solid var(--border)",
+    background: "var(--bg-elevated)",
+    overflow: "hidden",
+  } satisfies CSSProperties,
+
+  /** Bottom-left, which is where the reference design puts it. */
+  legend: {
+    position: "absolute",
+    left: 14,
+    bottom: 12,
+    display: "flex",
+    flexDirection: "column",
+    gap: 5,
+    margin: 0,
+    padding: 0,
+    listStyle: "none",
+    fontSize: 12,
+    color: "var(--text-secondary)",
+    pointerEvents: "none",
+  } satisfies CSSProperties,
+  legendItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+  } satisfies CSSProperties,
+  legendDot: {
+    width: 9,
+    height: 9,
+    borderRadius: "50%",
+    flexShrink: 0,
+  } satisfies CSSProperties,
+
   /** `partial` / `degraded` is its own visible state, never a shorter list. */
   banner: {
     display: "flex",
