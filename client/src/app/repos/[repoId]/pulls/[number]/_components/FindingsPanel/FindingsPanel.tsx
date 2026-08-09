@@ -20,11 +20,14 @@ export function FindingsPanel({
   headSha,
   severity = null,
   active = true,
+  targetFindingId = null,
 }: {
   findings: FindingRecord[];
   prId: string;
   repoFullName?: string | null;
   headSha?: string | null;
+  /** A finding to reveal, focus and scroll to — set by a Smart Diff chip. */
+  targetFindingId?: string | null;
   /** Set from the PR-level severity bar — show only findings at this level. */
   severity?: SeverityLevel | null;
   /**
@@ -49,6 +52,28 @@ export function FindingsPanel({
   React.useEffect(() => {
     setFocusIdx((i) => Math.min(i, Math.max(0, shown.length - 1)));
   }, [shown.length]);
+
+  // A low-confidence target would be filtered out of its own arrival, so lift
+  // the filter on ARRIVAL — keyed on the incoming id, not on a value derived
+  // from `hideLow` itself. Keyed the other way it is not a one-shot: turning the
+  // filter back on re-hides the target, which re-fires the lift, and the switch
+  // is inert for the rest of the visit because `?finding=` is never cleared.
+  React.useEffect(() => {
+    if (targetFindingId) setHideLow(false);
+  }, [targetFindingId]);
+
+  // Focus and scroll to the targeted finding. `data-finding-id` is already on
+  // every card (FindingCard.tsx) — this only has to find it, and only once the
+  // accordion above has opened, which is why it keys off `shown`.
+  React.useEffect(() => {
+    if (!targetFindingId) return;
+    const idx = shown.findIndex((f) => f.id === targetFindingId);
+    if (idx < 0) return;
+    setFocusIdx(idx);
+    document
+      .querySelector(`[data-finding-id="${CSS.escape(targetFindingId)}"]`)
+      ?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [targetFindingId, shown]);
 
   // j/k navigation + a/d shortcuts on the focused finding (keyboard).
   React.useEffect(() => {
@@ -85,7 +110,7 @@ export function FindingsPanel({
               key={f.id}
               f={f}
               focused={i === focusIdx}
-              defaultExpanded={i === 0}
+              defaultExpanded={i === 0 || f.id === targetFindingId}
               pending={action.isPending}
               repoFullName={repoFullName}
               headSha={headSha}

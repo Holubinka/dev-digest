@@ -159,3 +159,43 @@ describe("FindingsTab keyboard shortcuts across several open runs", () => {
     expect(mutate).toHaveBeenCalledWith({ findingId: "a1", action: "accept", prId: "pr1" });
   });
 });
+
+/**
+ * The far end of a Smart Diff severity chip. `client/INSIGHTS.md` names three
+ * obligations for that jump; `FindingsPanel.test.tsx` covers two of them (the
+ * card expands, hide-low lifts). This is the third: the run holding the target
+ * has to open, or the reader lands on a closed accordion with nothing to see.
+ */
+describe("FindingsTab cross-tab jump to a finding", () => {
+  // FindingsPanel scrolls the card it reveals, and jsdom has no scrollIntoView.
+  const original = Element.prototype.scrollIntoView;
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+  afterEach(() => {
+    Element.prototype.scrollIntoView = original;
+  });
+
+  it("leaves a second run collapsed when nothing targets it", () => {
+    // The baseline the next test moves: only the first run opens by default.
+    renderTab();
+    expect(document.querySelector('[data-finding-id="b1"]')).toBeNull();
+  });
+
+  it("opens the run that holds the targeted finding", () => {
+    renderTab({ targetFindingId: "b1" });
+    expect(document.querySelector('[data-finding-id="b1"]')).not.toBeNull();
+  });
+
+  it("leaves the other runs' default state alone", () => {
+    // Targeting the second run must not collapse the first, which is open
+    // because it is first — two separate reasons to be open.
+    renderTab({ targetFindingId: "b1" });
+    expect(document.querySelector('[data-finding-id="a1"]')).not.toBeNull();
+  });
+
+  it("opens nothing when the id belongs to no run on this PR", () => {
+    renderTab({ targetFindingId: "not-here" });
+    expect(document.querySelector('[data-finding-id="b1"]')).toBeNull();
+  });
+});

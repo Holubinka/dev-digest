@@ -106,6 +106,103 @@ describe("FindingsPanel (smoke)", () => {
 });
 
 /**
+ * Arriving from a Smart Diff severity chip: the diff tab hands a finding id up
+ * to the page, which puts it in `?finding=` and switches to Agent runs. This is
+ * the far end of that trip.
+ */
+describe("FindingsPanel jump-to-finding", () => {
+  const scrolled: Element[] = [];
+  const original = Element.prototype.scrollIntoView;
+
+  beforeEach(() => {
+    scrolled.length = 0;
+    Element.prototype.scrollIntoView = vi.fn(function (this: Element) {
+      scrolled.push(this);
+    });
+  });
+  afterEach(() => {
+    Element.prototype.scrollIntoView = original;
+  });
+
+  it("scrolls to the targeted finding's card, not to the first one", () => {
+    renderWithIntl(<FindingsPanel findings={FINDINGS} prId="pr1" targetFindingId="f2" />);
+    const target = document.querySelector('[data-finding-id="f2"]');
+    expect(target).not.toBeNull();
+    expect(scrolled).toEqual([target]);
+  });
+
+  it("focuses the targeted card so the shortcuts act on it", () => {
+    renderWithIntl(<FindingsPanel findings={FINDINGS} prId="pr1" targetFindingId="f2" />);
+    fireEvent.keyDown(window, { key: "a" });
+    expect(mutate).toHaveBeenCalledWith({ findingId: "f2", action: "accept", prId: "pr1" });
+  });
+
+  it("expands the targeted card even when it is not the first", () => {
+    renderWithIntl(<FindingsPanel findings={FINDINGS} prId="pr1" targetFindingId="f2" />);
+    expect(screen.getByText("The loop queries once per user.")).toBeInTheDocument();
+  });
+
+  it("lifts hide-low-confidence on arrival rather than scrolling to a hidden card", () => {
+    // f3 sits under the 0.5 confidence cut, so "Hide low confidence" would drop
+    // it from the list it is being navigated to.
+    const low: FindingRecord = { ...FINDINGS[1]!, id: "f3", title: "Flaky guess", confidence: 0.2 };
+    renderWithIntl(<FindingsPanel findings={[...FINDINGS, low]} prId="pr1" targetFindingId="f3" />);
+    expect(screen.getByText("Flaky guess")).toBeInTheDocument();
+  });
+
+  it("leaves the filter usable after the jump — the lift is a one-shot", () => {
+    // Keyed on `hideLow` instead of on the arriving id, the effect re-fires the
+    // moment the reader turns the filter back on, and the switch is dead for the
+    // rest of the visit: `?finding=` is never cleared.
+    const low: FindingRecord = { ...FINDINGS[1]!, id: "f3", title: "Flaky guess", confidence: 0.2 };
+    renderWithIntl(<FindingsPanel findings={[...FINDINGS, low]} prId="pr1" targetFindingId="f3" />);
+    expect(screen.getByText("Flaky guess")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("switch"));
+    expect(screen.queryByText("Flaky guess")).not.toBeInTheDocument();
+  });
+
+  it("follows a second chip without a remount", () => {
+    // The reader clicks a chip, reads the finding, goes back to the diff and
+    // clicks another. The panel never unmounts, so a target read only on mount
+    // would leave them on the first finding with no indication why.
+    const { rerender } = renderWithIntl(
+      <FindingsPanel findings={FINDINGS} prId="pr1" targetFindingId="f1" />,
+    );
+    expect(scrolled).toEqual([document.querySelector('[data-finding-id="f1"]')]);
+
+    rerender(
+      <NextIntlClientProvider locale="en" messages={{ prReview: messages }}>
+        <FindingsPanel findings={FINDINGS} prId="pr1" targetFindingId="f2" />
+      </NextIntlClientProvider>,
+    );
+    expect(scrolled.at(-1)).toBe(document.querySelector('[data-finding-id="f2"]'));
+    fireEvent.keyDown(window, { key: "a" });
+    expect(mutate).toHaveBeenCalledWith({ findingId: "f2", action: "accept", prId: "pr1" });
+  });
+
+  it("re-scrolls when the same finding is targeted again", () => {
+    // Clicking the same chip twice is a request to go back to it, not a no-op:
+    // the reader may have scrolled away in between.
+    const { rerender } = renderWithIntl(
+      <FindingsPanel findings={FINDINGS} prId="pr1" targetFindingId="f2" />,
+    );
+    const first = scrolled.length;
+    rerender(
+      <NextIntlClientProvider locale="en" messages={{ prReview: messages }}>
+        <FindingsPanel findings={[...FINDINGS]} prId="pr1" targetFindingId="f2" />
+      </NextIntlClientProvider>,
+    );
+    expect(scrolled.length).toBeGreaterThan(first);
+  });
+
+  it("does nothing when the target belongs to another run", () => {
+    renderWithIntl(<FindingsPanel findings={FINDINGS} prId="pr1" targetFindingId="elsewhere" />);
+    expect(scrolled).toEqual([]);
+  });
+});
+
+/**
  * The shortcut listener is bound to `window`, so every mounted panel used to
  * answer the same keypress. `active` makes exactly one of them respond —
  * FindingsTab picks it. See FindingsTab.test.tsx for the multi-run regression.

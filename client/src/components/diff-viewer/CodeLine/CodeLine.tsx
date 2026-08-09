@@ -4,8 +4,8 @@
 
 import React from "react";
 import { commentTargetFor, type CommentThread, type DiffCommentApi, cs } from "../comments";
-import { type Line } from "../helpers";
-import { s, lineRowFor, lineSignFor } from "../styles";
+import { lineDomId, type Line } from "../helpers";
+import { s, lineHighlightFor, lineRowFor, lineSignFor } from "../styles";
 import { CommentThreadView } from "../CommentThreadView";
 import { InlineComposer } from "../InlineComposer";
 
@@ -14,11 +14,17 @@ export function CodeLine({
   path,
   threads,
   commenting,
+  highlightColor,
+  right,
 }: {
   ln: Line;
   path: string;
   threads: CommentThread[];
   commenting?: DiffCommentApi;
+  /** Set when a finding cites this line: its severity colour marks the gutter. */
+  highlightColor?: string;
+  /** Trailing content for this row — Smart Diff puts its severity chips here. */
+  right?: React.ReactNode;
 }) {
   const [hover, setHover] = React.useState(false);
   const [composing, setComposing] = React.useState(false);
@@ -41,7 +47,13 @@ export function CodeLine({
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
     >
-      <div style={lineRowFor(ln.kind)}>
+      <div
+        {...(ln.newNo != null ? { id: lineDomId(path, ln.newNo) } : {})}
+        style={{
+          ...lineRowFor(ln.kind),
+          ...(highlightColor ? lineHighlightFor(highlightColor) : null),
+        }}
+      >
         <span className="mono tnum" style={{ ...s.lineNo, position: "relative" }}>
           {showAdd && target && (
             <button
@@ -62,6 +74,7 @@ export function CodeLine({
         <span className="mono" style={s.lineText}>
           {ln.text || " "}
         </span>
+        {right}
       </div>
 
       {commenting &&

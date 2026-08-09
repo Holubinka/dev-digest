@@ -33,6 +33,7 @@ export function ReviewRunAccordion({
   headSha,
   targetRunId = null,
   targetNonce = 0,
+  targetFindingId = null,
   severity = null,
   active = true,
   onActivate,
@@ -48,6 +49,8 @@ export function ReviewRunAccordion({
    *  (driven from the Timeline: clicking an agent name navigates here). */
   targetRunId?: string | null;
   targetNonce?: number;
+  /** A finding to reveal (from a Smart Diff chip). Only the run holding it acts. */
+  targetFindingId?: string | null;
   /** PR-level severity filter — narrows this run's findings list. */
   severity?: SeverityLevel | null;
   /** Whether this run's findings list owns the j/k/a/d shortcuts. */
@@ -70,8 +73,15 @@ export function ReviewRunAccordion({
   React.useEffect(() => {
     if (severity) setOpen(true);
   }, [severity]);
-  const del = useDeleteReview(prId);
   const findings = review.findings;
+  // Open the run that holds the targeted finding, but do NOT scroll here: the
+  // panel below scrolls the card itself, and two smooth scrolls at once land
+  // wherever the second one wins.
+  const holdsTarget = !!targetFindingId && findings.some((f) => f.id === targetFindingId);
+  React.useEffect(() => {
+    if (holdsTarget) setOpen(true);
+  }, [holdsTarget]);
+  const del = useDeleteReview(prId);
   const blockers = findings.filter((f) => f.severity === "CRITICAL" && !f.dismissed_at).length;
   const verdictColor = review.verdict ? VERDICT_COLOR[review.verdict] ?? "var(--text-muted)" : "var(--text-muted)";
 
@@ -180,6 +190,7 @@ export function ReviewRunAccordion({
             headSha={headSha}
             severity={severity}
             active={active}
+            targetFindingId={holdsTarget ? targetFindingId : null}
           />
         </div>
       )}

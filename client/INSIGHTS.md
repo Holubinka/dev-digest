@@ -457,6 +457,60 @@ The same argument moved `renderWithProviders` out of `test/skills.tsx` into `tes
 a QueryClient/next-intl/Toast wrapper was never about skills, and a second domain importing
 it from a first domain's fixture is the same violation wearing test clothes.
 
+### A cross-tab jump needs one URL write, not one per key
+
+A Smart Diff severity chip sends the reader to that finding in the Agent runs tab. That is
+three query params at once — `tab=findings`, `finding=<id>`, and `sev=null` to clear a filter
+that could hide the target. The page had `setParam(key, val)`, and calling it three times
+does NOT work: each call builds its params from the same captured `search`, so three
+`router.replace` calls race and the last one wins while the other two vanish. `setParams`
+takes a record and writes once (`pulls/[number]/page.tsx`).
+
+Downstream, revealing the finding is three separate obligations, and missing any one leaves
+the reader staring at the wrong thing:
+
+- the accordion holding it must open (`ReviewRunAccordion`, keyed off `findings.some(...)`);
+- the card must expand — `defaultExpanded={i === 0 || f.id === targetFindingId}`;
+- `hideLow` must lift if the target is under the confidence cut, or the panel scrolls to a
+  card it just filtered out.
+
+Only the panel scrolls. The accordion already scrolls itself for the Timeline's
+`targetRunId`, and letting both fire means two smooth scrolls racing to different offsets —
+so the accordion opens silently when the target is a finding rather than a run.
+
+The anchor was already there: `FindingCard` has carried `data-finding-id` since A2. Reach it
+with `CSS.escape` rather than interpolating an id straight into a selector.
+
+### Controlled state is right only while something outside genuinely opens the card
+
+`FileCard` owns its `open`. Smart Diff needed `open` + `onOpenChange` on it, then briefly did
+not, then needed them again — and the round trip is the lesson, not the outcome.
+
+The badge in a file header scrolls the diff to that file's first cited line. A collapsed card
+has no such line in the DOM, so the PARENT must expand it first, which a card owning its own
+state cannot be told to do. When the design moved to severity chips that jump to the Agent runs
+tab instead, nothing outside needed to open a card any more — and the controlled plumbing stayed
+behind as a `Record<path, boolean>` that only mirrored state the card already held. Deleting it
+cost nothing and no test changed. Restoring the badge brought the real requirement back.
+
+Two things worth keeping either way. `defaultOpen` alone covers "start collapsed however small
+the diff is" — that needs no controlled mode, and Smart Diff uses it for boilerplate. And the
+viewer stores EXPLICIT toggles only, falling back to a role default for any path it has not
+seen: a full open-state map would re-collapse whatever the reviewer opened on every refetch.
+
+Scrolling is a two-step, and the second cannot be inlined into the click handler:
+
+1. click → `setToggled({...,[path]: true})` **and** `setPending({path, line})`;
+2. `useEffect` on `pending` → `getElementById(lineDomId(path, line))?.scrollIntoView(...)`.
+
+Calling `scrollIntoView` in the handler finds nothing, because the element renders in the commit
+the handler schedules. The id format is a shared helper (`lineDomId`) because producer and
+consumer disagreeing does not throw — `getElementById` returns `null` and the page sits still.
+The badge does need `e.stopPropagation()`: it sits INSIDE the header whose own `onClick` toggles
+the card. A chip on a diff LINE does not, because the file body is a sibling of that header
+rather than a descendant — a `stopPropagation` there stops nothing, and the test asserting it
+could never fail.
+
 ## Tool & Library Notes
 
 ### `@testing-library/user-event` is not installed here — every test uses `fireEvent`
