@@ -125,7 +125,15 @@ interface HarnessOptions {
 
 function harness(opts: HarnessOptions = {}) {
   const calls = { indexState: 0, blastRadius: 0, downstream: 0, llmResolved: 0 };
-  const llm = new MockLLMProvider('openai', { completionText: 'One paragraph about the change.' });
+  // Structured, not free text: `OpenRouterProvider` implements only
+  // `completeStructured`, so that is the call the service has to make and the
+  // one the double has to answer.
+  const llm = new MockLLMProvider('openai', {
+    structuredBySchema: { BlastSummary: {
+      summary:
+        'One paragraph about the change: ReviewService is reached from twenty-one call sites.',
+    } },
+  });
 
   const container: BlastContainer = {
     settingsRepo: { value: async () => null },
@@ -158,7 +166,8 @@ function harness(opts: HarnessOptions = {}) {
   return { service: new BlastService(container, repo), calls, llm };
 }
 
-const completions = (llm: MockLLMProvider) => llm.calls.filter((c) => c.method === 'complete');
+const completions = (llm: MockLLMProvider) =>
+  llm.calls.filter((c) => c.method === 'completeStructured');
 
 describe('BlastService.getBlast — callers', () => {
   it('groups callers by the symbol they reach', async () => {
@@ -497,7 +506,9 @@ describe('BlastService — LLM spend', () => {
 
     const out = (await service.summarize(WS, PR))!;
 
-    expect(out.summary).toBe('One paragraph about the change.');
+    expect(out.summary).toBe(
+      'One paragraph about the change: ReviewService is reached from twenty-one call sites.',
+    );
     expect(calls.llmResolved).toBe(1);
     expect(completions(llm)).toHaveLength(1);
     expect(llm.calls).toHaveLength(1);

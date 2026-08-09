@@ -44,8 +44,14 @@ const callerFile = (i: number) => `server/src/callers/caller-${String(i).padStar
 
 /** `risk_brief` defaults to openai/gpt-4.1, so the mock is registered under `openai`. */
 async function appWith() {
+  // The summary asks for structured output, because `OpenRouterProvider`
+  // implements only `completeStructured` — so the double answers that call.
   const llm = new MockLLMProvider('openai', {
-    completionText: 'ReviewService is called from 21 places, two of which serve HTTP routes.',
+    structuredBySchema: {
+      BlastSummary: {
+        summary: 'ReviewService is called from 21 places, two of which serve HTTP routes.',
+      },
+    },
   });
   const app = await buildApp({
     config: config(),
@@ -345,7 +351,10 @@ d('07 blast routes (Testcontainers pg)', () => {
 
     expect(llm.calls).toHaveLength(1);
     const req = llm.calls[0]!.req as { model: string; messages: { content: string }[] };
-    expect(llm.calls[0]!.method).toBe('complete');
+    // Pinned deliberately: `LLMProvider` declares `complete` too, but
+    // `OpenRouterProvider` throws for it, so a route that calls it answers 500
+    // for any workspace pointing this feature at OpenRouter.
+    expect(llm.calls[0]!.method).toBe('completeStructured');
     expect(req.model).toBe('gpt-4.1');
     expect(req.messages[1]!.content).toContain('ReviewService');
     expect(req.messages[1]!.content).toContain('21 caller(s)');
