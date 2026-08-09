@@ -78,6 +78,10 @@ install_if_needed server
 # reviewer-core's RAW source is imported by the API at runtime (tsconfig alias);
 # without its deps the API crashes at boot with ERR_MODULE_NOT_FOUND. It uses npm.
 [ -d reviewer-core/node_modules ] || { log "installing deps in reviewer-core"; (cd reviewer-core && npm ci); }
+# mcp/ is deliberately NOT built here. It is a developer tool, not part of the running
+# app: nothing in this stack imports it, and the API, the web app and the tests are all
+# fine without it. Build it yourself when you want it — `cd mcp && npm ci && npm run
+# build` — so this script stays about the application. Do not add it back.
 
 # --- migrate + seed ----------------------------------------------------------
 log "applying migrations"

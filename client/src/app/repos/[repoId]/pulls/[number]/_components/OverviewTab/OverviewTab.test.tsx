@@ -14,10 +14,19 @@ vi.mock("@/lib/hooks/core", () => ({
   usePrIntent: hooks.usePrIntent,
   useRecomputeIntent: hooks.useRecomputeIntent,
 }));
-// The INTENT card has its own test and wants next-intl. What is under test here
-// is the Description beside it.
+// Both cards in the row have their own tests and want providers this file does
+// not supply — next-intl for either, plus a QueryClient for BLAST RADIUS, which
+// owns its data. What is under test here is the Description beside them.
 vi.mock("../IntentCard", () => ({
   IntentCard: () => <div data-testid="intent-card" />,
+}));
+// The stand-in records `prId`: the card is useless without it, and a prop the
+// parent never passes is invisible to `tsc` when it has a default
+// (`client/INSIGHTS.md:163-249`).
+vi.mock("../BlastRadiusCard", () => ({
+  BlastRadiusCard: ({ prId }: { prId: string | null }) => (
+    <div data-testid="blast-radius-card" data-pr-id={String(prId)} />
+  ),
 }));
 
 import { OverviewTab } from "./OverviewTab";
@@ -65,5 +74,11 @@ describe("OverviewTab — description", () => {
 
     expect(screen.queryByText("Description")).not.toBeInTheDocument();
     expect(screen.getByTestId("intent-card")).toBeInTheDocument();
+  });
+
+  it("fills the second card slot with BLAST RADIUS, wired to the PR", () => {
+    render(<OverviewTab prBody={null} prId="pr-1" />);
+
+    expect(screen.getByTestId("blast-radius-card")).toHaveAttribute("data-pr-id", "pr-1");
   });
 });

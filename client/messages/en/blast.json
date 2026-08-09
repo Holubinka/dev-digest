@@ -1,4 +1,11 @@
 {
+  "title": "Blast radius",
+  "failed": "Could not load the blast radius.",
+  "unavailable": "No blast radius for this pull request yet.",
+  "explain": "Explain",
+  "explaining": "Explaining…",
+  "explainFailed": "The explanation could not be generated.",
+  "truncated": "Showing the top {shown} of {count} callers by rank.",
   "stat": {
     "symbols": "symbols",
     "callers": "callers",
@@ -9,7 +16,8 @@
     "tree": "tree",
     "graph": "graph"
   },
-  "callerCount": "{count} callers",
+  "staleIndex": "Line numbers come from indexed commit {sha}, not the pull request head, so links open that commit.",
+  "callerCount": "{count, plural, one {# caller} other {# callers}}",
   "noDownstream": "{count} changed symbol(s), no downstream callers found.",
   "graph": {
     "empty": "No downstream callers to graph.",

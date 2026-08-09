@@ -245,6 +245,15 @@ Rendering unconditionally also means 0 and 1 now reach the message, and
 (`{count, plural, =0 {No skills} one {# skill} other {# skills}}`). Any count that used to be
 hidden behind a truthiness check has the same latent "1 skills".
 
+**2026-08-09 — it happened again, and the test is why.** `messages/en/blast.json` shipped
+`"callerCount": "{count} callers"`, so a symbol with one caller read "1 callers". The entry
+above did not prevent it, because the guard everyone writes is an assertion on the plural
+branch: `BlastRadiusCard.test.tsx` asserted `getByText("2 callers")`, which a hard-coded
+`"{count} callers"` satisfies forever. **Assert BOTH branches or the test proves nothing** —
+`getByText("1 caller")` plus `queryByText("1 callers")` being absent. Cheapest sweep for the
+remaining ones: `grep -n '{count}' client/messages/en/*.json` and read each hit for whether 1
+can reach it.
+
 ## Codebase Patterns
 
 ### Run-level data reaches the PR-detail subtree by joining in `FindingsTab`, not by widening `ReviewRecord`
@@ -514,6 +523,24 @@ was read early. So the check to run on a new query-backed component is: **write 
 disabled query renders, and confirm that state is one you would want to show.** If it is not,
 reorder.
 
+### jsdom toggles `<details>` on a summary click but does not hide the closed content
+
+**Symptom.** A disclosure test looks like it proves the callers are on screen — `getByRole
+("link", …)` finds them whether the `<details>` is open or closed, so the assertion cannot
+fail on a card that ships collapsed.
+
+**Cause.** Probed on 2026-08-09 while writing `BlastRadiusCard.test.tsx`: jsdom implements the
+summary activation behaviour (`summary.click()` flips `details.open` to `true`), but its
+default stylesheet does not implement the content-hiding half —
+`getComputedStyle(childOfClosedDetails).display` is `"block"`. Testing Library's visibility
+filter therefore has nothing to filter on.
+
+**Fix.** Use `<details>` freely — it is the cheapest accessible disclosure here and needs no
+`useState` — but do not write a test that claims a row is *visible* or *hidden* through it.
+Assert what the row contains and let the open/closed default be a design decision, checked in
+a browser. `BlastRadiusCard` opens the first symbol that has callers so the card shows a real
+call site without a click.
+
 ## Recurring Errors & Fixes
 
 ### `pnpm typecheck` fails on routes that do not exist on the branch you are standing on
@@ -716,6 +743,21 @@ vendored copies), `TraceBody.tsx`, and `messages/en/runs.json` under `trace.prom
 `PROMPT_COLORS` entry in the drawer's `constants.ts`. Render in the order `assemblePrompt`
 pushes the sections (`reviewer-core/src/prompt.ts:125-148`), and pin that order in
 `RunTraceDrawer.test.tsx` — an out-of-order block is a lie about what the model read.
+
+### A fixture built by spreading `FIXTURE.array[0]` passes `pnpm test` and fails `pnpm typecheck`
+
+**Symptom.** Three `TS2322: Type 'string | undefined' is not assignable to type 'string'` on
+test-file lines like `symbols: [{ ...VIEW.symbols[0], caller_count: 0 }]`, while the same file
+was green under `pnpm exec vitest run`. Hit on 2026-08-09 in `BlastRadiusCard.test.tsx`.
+
+**Cause.** `client/tsconfig.json` sets `noUncheckedIndexedAccess`, so `VIEW.symbols[0]` is
+`BlastSymbol | undefined`; spreading it makes **every** field optional again, and the object no
+longer satisfies the array's element type. Vitest never typechecks, so only `tsc` sees it —
+the same split that lets a vitest alias and a tsconfig path drift apart.
+
+**Fix.** Hoist the element into its own annotated constant (`const SYMBOL: BlastSymbol = {…}`)
+and build both the fixture and its variants from that. Do not reach for `!` or a cast: the
+annotation is what keeps the fixture honest when the contract gains a field.
 
 ## Session Notes
 

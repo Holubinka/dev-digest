@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react";
 
 export const s = {
-  /** INTENT + the reserved BLAST RADIUS slot. Cut once, so nothing is re-cut later. */
+  /** INTENT + BLAST RADIUS, side by side. Both columns are filled. */
   cardRow: {
     display: "grid",
     gridTemplateColumns: "1fr 1fr",

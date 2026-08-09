@@ -33,6 +33,8 @@ import type {
   BlastCallerRow,
   BlastChangedSymbol,
   BlastResult,
+  DegradedReason,
+  DownstreamFile,
   FileRankRow,
   IndexResult,
   IndexState,
@@ -48,6 +50,7 @@ import {
   INDEX_JOB_KIND,
   INDEXER_VERSION,
   MAX_CALLERS_PER_SYMBOL,
+  MAX_DOWNSTREAM_DEPTH,
   REFRESH_JOB_KIND,
   RESYNC_JOB_KIND,
   SUPPORTED_EXT,
@@ -185,23 +188,26 @@ export class RepoIntelService implements RepoIntel {
    * ALWAYS works. If `repo_index_state` exists and has a row, returns it.
    * Otherwise synthesises a degraded row so callers can branch on `degraded`
    * without ever hitting a thrown error.
+   *
+   * The flag is checked FIRST, exactly as `getRepoMap` does it, and for a
+   * stronger reason than symmetry: this method is what other slices GATE on.
+   * `blast/service.ts` calls it before `getBlastRadius` precisely so the facade's
+   * clone-reading fallback is never reached on an HTTP request — and answering
+   * `full` from a stale row while `getBlastRadius` is separately refusing to
+   * serve from the index (line 225) opened the gate onto that fallback, which
+   * runs `codeIndex.symbols` and `readClone` synchronously inside the request.
+   *
+   * It also makes the contract at `platform/config.ts:60-64` true rather than
+   * nearly true: with the flag off, EVERY facade method returns its degraded
+   * result, this one included.
    */
   async getIndexState(repoId: string): Promise<IndexState> {
+    if (!this.container.config.repoIntelEnabled) {
+      return degradedIndexState(repoId, 'flag_off');
+    }
     const persisted = await this.repo.tryGetIndexState(repoId);
     if (persisted) return persisted;
-    return {
-      repoId,
-      status: 'degraded',
-      filesIndexed: 0,
-      filesSkipped: 0,
-      durationMs: 0,
-      reason: 'no_data',
-      lastIndexedSha: '',
-      indexerVersion: INDEXER_VERSION,
-      updatedAt: new Date(0),
-      degraded: true,
-      degradedReason: 'no_data',
-    };
+    return degradedIndexState(repoId, 'no_data');
   }
 
   // -------------------------------------------------------------------------
@@ -254,7 +260,7 @@ export class RepoIntelService implements RepoIntel {
       const key = `${s.name}:${s.path}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      changedSymbols.push({ file: s.path, name: s.name, kind: s.kind });
+      changedSymbols.push({ file: s.path, name: s.name, kind: s.kind, line: s.line });
     }
 
     const callerRows: BlastCallerRow[] = [];
@@ -294,9 +300,23 @@ export class RepoIntelService implements RepoIntel {
       }
     }
 
+    // The SAME per-symbol cap the persistent path applies, and for the same
+    // reason: `callers` goes out over the wire to the card and to MCP, and
+    // `contracts/blast.ts` promises `caller_count` is the PRE-cap number. Leave
+    // this path uncapped and a consumer deriving `truncated` from
+    // `callers.length` gets `false` by construction while an unbounded array
+    // ships — the contract cannot lie on one path and not the other.
+    //
+    // What the ordering degenerates to here: every row has `rank: 0`, so the
+    // `rank DESC` key is inert and the order collapses to file ASC then line ASC.
+    // Deterministic, but alphabetical — NOT by importance, so the 20 kept are the
+    // first 20 filenames, not the 20 that matter most. That is the honest cost of
+    // a path with no persistent rank, and it is why this path is the fallback.
+    const capped = capCallersPerSymbol(callerRows, MAX_CALLERS_PER_SYMBOL);
     return {
       changedSymbols,
-      callers: callerRows,
+      callers: capped.callers,
+      callerCounts: capped.counts,
       impactedEndpoints: [...endpoints],
       degraded: true,
       reason: 'no_data',
@@ -330,7 +350,7 @@ export class RepoIntelService implements RepoIntel {
       const key = `${s.name}:${s.path}`;
       if (!seenSym.has(key)) {
         seenSym.add(key);
-        changedSymbols.push({ file: s.path, name: s.name, kind: s.kind });
+        changedSymbols.push({ file: s.path, name: s.name, kind: s.kind, line: s.line ?? 0 });
       }
       nameSet.add(s.name);
     }
@@ -369,7 +389,6 @@ export class RepoIntelService implements RepoIntel {
         rank: c.rank,
       });
     }
-    callers.sort((a, b) => b.rank - a.rank);
 
     // Precomputed facts per caller file (endpoints + crons), so consumers can
     // attribute them to the changed symbol whose callers live in that file.
@@ -381,13 +400,33 @@ export class RepoIntelService implements RepoIntel {
       for (const e of f.endpoints) endpoints.add(e);
     }
 
+    const capped = capCallersPerSymbol(callers, MAX_CALLERS_PER_SYMBOL);
     return {
       changedSymbols,
-      callers: callers.slice(0, MAX_CALLERS_PER_SYMBOL),
+      callers: capped.callers,
+      callerCounts: capped.counts,
       impactedEndpoints: [...endpoints],
       factsByFile,
       degraded: false,
     };
+  }
+
+  /**
+   * Who breaks if these files change — the reverse of the import graph, walked
+   * breadth-first and capped at MAX_DOWNSTREAM_DEPTH hops.
+   *
+   * Postgres only: one indexed `(repo_id, to_file)` read per level plus a single
+   * `file_facts` read. Nothing here reads the clone or parses an AST, which is
+   * what makes it safe on the request path.
+   */
+  async getDownstream(
+    repoId: string,
+    files: string[],
+    maxDepth: number,
+  ): Promise<DownstreamFile[]> {
+    if (!this.container.config.repoIntelEnabled) return [];
+    if (files.length === 0) return [];
+    return collectDownstream(this.repo, repoId, files, maxDepth);
   }
 
   /**
@@ -706,6 +745,29 @@ export class RepoIntelService implements RepoIntel {
 const CRITICAL_PATH_ROOTS = 5;
 
 /**
+ * The degraded `IndexState` every caller can branch on without a null check.
+ *
+ * `lastIndexedSha` is the empty string rather than undefined so the row stays
+ * JSON-safe, and `updatedAt` is the epoch rather than `new Date()` so nothing
+ * downstream reads a synthesised row as freshly indexed.
+ */
+function degradedIndexState(repoId: string, reason: DegradedReason): IndexState {
+  return {
+    repoId,
+    status: 'degraded',
+    filesIndexed: 0,
+    filesSkipped: 0,
+    durationMs: 0,
+    reason,
+    lastIndexedSha: '',
+    indexerVersion: INDEXER_VERSION,
+    updatedAt: new Date(0),
+    degraded: true,
+    degradedReason: reason,
+  };
+}
+
+/**
  * Path kinds excluded from rank-driven file samples (conventions/onboarding):
  * tests, configs, declaration files, migrations, generated dirs. Substring
  * match on the repo-relative path (kept deliberately simple + deterministic).
@@ -730,6 +792,107 @@ const JUNK_PATH_PATTERNS = [
 function isJunkPath(path: string): boolean {
   const lower = path.toLowerCase();
   return JUNK_PATH_PATTERNS.some((p) => lower.includes(p));
+}
+
+/**
+ * The two reads the downstream walk needs. Narrow on purpose: a test fakes it
+ * with an object literal over a hand-built edge set, no Db and no container.
+ */
+type DownstreamReads = Pick<RepoIntelRepository, 'getDependents' | 'getFileFacts'>;
+
+/**
+ * Breadth-first walk UP the import graph — dependents, not dependencies.
+ *
+ * `files` seed depth 0 and are never emitted; a node first reached at depth d is
+ * emitted at d and never revisited, so a diamond yields the SMALLEST depth. The
+ * loop stops after `maxDepth` levels (clamped to MAX_DOWNSTREAM_DEPTH), so a node
+ * reachable only at depth 3 is simply absent — it is not emitted with a clamped
+ * depth, which would claim an import hop that does not exist.
+ *
+ * Facts are fetched once for the whole result rather than per level; a file the
+ * indexer recorded no endpoint or cron for keeps empty arrays.
+ */
+export async function collectDownstream(
+  repo: DownstreamReads,
+  repoId: string,
+  files: string[],
+  maxDepth: number,
+): Promise<DownstreamFile[]> {
+  const depthLimit = Math.min(Math.max(Math.trunc(maxDepth), 0), MAX_DOWNSTREAM_DEPTH);
+  const seen = new Set(files);
+  const found: Array<{ file: string; depth: number }> = [];
+
+  let frontier = [...seen];
+  for (let depth = 1; depth <= depthLimit && frontier.length > 0; depth += 1) {
+    const next: string[] = [];
+    for (const file of await repo.getDependents(repoId, frontier)) {
+      if (seen.has(file)) continue;
+      seen.add(file);
+      found.push({ file, depth });
+      next.push(file);
+    }
+    frontier = next;
+  }
+  if (found.length === 0) return [];
+
+  const facts = await repo.getFileFacts(
+    repoId,
+    found.map((f) => f.file),
+  );
+  const byFile = new Map(facts.map((f) => [f.filePath, f]));
+  return found.map(({ file, depth }) => ({
+    file,
+    depth,
+    endpoints: byFile.get(file)?.endpoints ?? [],
+    crons: byFile.get(file)?.crons ?? [],
+  }));
+}
+
+/**
+ * Cap the caller fan-out PER CHANGED SYMBOL — which is what
+ * MAX_CALLERS_PER_SYMBOL is named for. The previous `slice(0, N)` ran over the
+ * FLAT list, so a PR touching five symbols showed four callers each.
+ *
+ * Returns the counts BEFORE the cap alongside the capped rows. That second
+ * return value is not decoration: the cap happens here, so this is the last
+ * place that knows a symbol had 47 callers. A consumer handed only the capped
+ * array can compute `truncated` from `callers.length` and will get `false` every
+ * time, because the array it is measuring is the one this function truncated.
+ *
+ * The whole order is stated here because `getResolvedCallers` has no ORDER BY:
+ * an unordered input would silently keep a different 20 between two identical
+ * requests. Within a group: rank DESC, then file ASC, then line ASC — total,
+ * because (file, line) is unique per group after the dedup above. Groups are
+ * flattened in `viaSymbol` order for the same reason. String comparison is by
+ * code unit, not `localeCompare`, whose result depends on the host locale.
+ *
+ * Exported for the test that proves the count survives the cap; nothing outside
+ * this file calls it in production.
+ */
+export function capCallersPerSymbol(
+  callers: BlastCallerRow[],
+  max: number,
+): { callers: BlastCallerRow[]; counts: Record<string, number> } {
+  const groups = new Map<string, BlastCallerRow[]>();
+  for (const c of callers) {
+    const group = groups.get(c.viaSymbol);
+    if (group) group.push(c);
+    else groups.set(c.viaSymbol, [c]);
+  }
+
+  const out: BlastCallerRow[] = [];
+  const counts: Record<string, number> = {};
+  for (const [viaSymbol, group] of [...groups.entries()].sort(([a], [b]) => cmpText(a, b))) {
+    counts[viaSymbol] = group.length;
+    group.sort((a, b) => b.rank - a.rank || cmpText(a.file, b.file) || a.line - b.line);
+    out.push(...group.slice(0, max));
+  }
+  return { callers: out, counts };
+}
+
+/** Code-unit string order — deterministic across hosts, unlike localeCompare. */
+function cmpText(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 /** Enclosing top-level (bare-name) symbol for a line, from persistent rows. */

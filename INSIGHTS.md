@@ -354,6 +354,53 @@ is the wrong probe, because a lone surrogate only becomes `�` after a UTF-8 ro
 JS string. Applies to every cap in the repo: `truncateChars` (`modules/pulls/status.ts`),
 `MAX_INTENT_CHARS` and `MAX_PR_DESCRIPTION_CHARS` (`reviewer-core/src/prompt.ts`).
 
+### A synchronous route that fans out to every enabled agent outruns the MCP client's 120s ceiling
+
+**Symptom.** Measured 2026-08-09. `devdigest review` on a **193-character** working-tree diff
+took **1 minute 35 seconds** end to end. The five seeded agents are all enabled, so
+`POST /reviews/diff` with `{all: true}` made five sequential `deepseek-v4-flash` calls, each
+about 18s. `mcp/src/config.ts` `DEFAULT_RUN_TIMEOUT_MS` is 120 000, and `cli.ts` passes it as
+the `ApiClient` timeout — so this run finished with 25 seconds of margin on a diff that could
+not be smaller.
+
+**Cause.** Two independent decisions compose badly. The route holds the HTTP connection open
+for the whole review (there is no `agent_runs` row to poll, by design — nothing is persisted),
+and the agent count is a property of the workspace, not of the request. Cost scales the same
+way: an earlier probe on a 180k-character diff logged `costUsd 0.017` and `tokensIn 121991`
+**per agent**.
+
+**Fix.** None applied — this is the shape spec 07 step 15 specifies. Know that when the ceiling
+is hit the caller sees `Cannot reach the DevDigest API at http://localhost:3001`, which is
+`ApiClient`'s abort path and reads as "the server is down" when the server is in fact still
+running and still spending. Before widening the CLI, either give it an agent argument or raise
+`DEVDIGEST_MCP_RUN_TIMEOUT_MS`; measure with `time node mcp/dist/cli.js review` rather than
+guessing, because the number is `enabled agents × provider latency` and neither is in the code.
+
+### A line number is only meaningful together with the commit it was measured at
+
+**Symptom.** `GET /pulls/:id/blast` reported `ReviewService`'s caller at
+`server/src/app.ts:81` and the card linked
+`https://github.com/Holubinka/dev-digest/blob/<pr head sha>/server/src/app.ts#L81`. The link
+opened, the file existed, the line existed — and it was a comment. The real call site was line
+83. Nothing was undefined, nothing 404'd, no test failed.
+
+**Cause.** Two commits were in play and the code used the wrong one. Every line in the payload
+comes from `symbols` / `references`, which the indexer wrote against
+`repo_index_state.last_indexed_sha` (`66727c85`, 2026-07-28). The link was built from
+`pull_requests.head_sha` (`de50d5c3`), and
+`git diff --stat de50d5c3 66727c8 -- server/src/app.ts` shows ten deleted lines between them.
+The index refreshes on its own schedule while a PR keeps moving, so the two commits are
+routinely different and the drift is silent: the URL is well-formed either way.
+
+**Fix.** `contracts/blast.ts` `BlastRadiusView` now carries `head_sha` (the PR's identity),
+`link_sha` (`last_indexed_sha` — what the lines mean, and what links are built from) and
+`index_matches_head`. `link_sha` is nullable and a null must NOT fall back to the head: with no
+commit at which the lines are true, plain text beats a link onto the wrong line. Generalised —
+any payload mixing "what the user is looking at" with "what a background job measured" needs
+both ids on the wire, because the consumer cannot tell them apart and will pick the one it
+already has. Verify empirically, never by reading: take a reported `file:line` and run
+`git show <sha>:<path> | sed -n '<line>p'` at each candidate commit.
+
 ## Codebase Patterns
 
 ### The two `docker-compose.yml` files are byte-identical duplicates
@@ -585,6 +632,46 @@ Consequence worth carrying: `tokens_approx` is for *attributing* a prompt's bulk
 sections (the diff was 82% of that prompt), never for deciding whether something fits a context
 window or what it will cost. `agent_runs.tokens_in` is the only authoritative figure, and it
 arrives after the call, not before it.
+
+### `scripts/dev.sh` bootstraps the application, and `mcp/` is not part of it
+
+`mcp/` was briefly built by `dev.sh`, on the reasoning that `.mcp.json` launches
+`node mcp/dist/index.js` and a missing `dist/` means no MCP server. That was reverted the same
+day (2026-08-08) once the question was asked properly: **nothing in the running stack imports
+`mcp/`.** The API, the web app and every test are complete without it, unlike `reviewer-core`,
+whose raw source the API imports at runtime — which is why *that* package's install genuinely
+belongs in this script. `mcp/` is a developer tool, and it is built by hand:
+`cd mcp && npm ci && npm run build`.
+
+Two things are worth keeping from the reverted version, for the next package that does earn a
+build step here:
+
+- **It must be non-fatal.** `dev.sh` runs under `set -euo pipefail` (line 13). A bare
+  `(cd pkg && npm run build)` means one type error in an auxiliary package stops the whole stack
+  *before* `db:migrate`, and the student sees `tsc` output instead of a working app. Wrap it in
+  `|| warn "…"`. Only `server/` and `client/` may abort this script.
+- **It must be unconditional,** not `[ -f pkg/dist/x.js ] ||` like the `node_modules` checks
+  above it. A stale `dist/` compiled from an older `src/` is served silently and reads as a code
+  change that did not take effect.
+
+The general rule this settles: a package belongs in `dev.sh` when the application cannot run
+without it, not when a developer might want it.
+
+### A diff with no `@@` hunks makes the grounding gate drop every finding, silently
+
+`groundFindings` builds its line index from `diff.files[].hunks`
+(`reviewer-core/src/grounding.ts:24-39`), so a `UnifiedDiff` whose files carry zero hunks has an
+empty index and **every line-anchored finding fails the gate**. The caller does not see an
+error: it sees a paid, confident-looking review with `0 findings` and `grounding: "0/0 passed"`.
+Verified 2026-08-09 against the live API — a `--name-only`-shaped body parses into one file with
+no hunks and reaches the model.
+
+That is why `POST /reviews/diff` refuses such a body with a 422 **before** calling the provider
+(`server/src/modules/reviews/diff-review.ts` `assertReviewable`) rather than trusting
+`parseUnifiedDiff` to have produced something reviewable. Any future caller that builds a
+`UnifiedDiff` by hand — a synthetic diff assembled from `pr_files` patches is the existing one
+(`reviews/diff-loader.ts`) — owes the same check: `diff.files.reduce((n, f) => n + f.hunks.length, 0) > 0`.
+`files.length > 0` is not enough, and neither the type system nor any test catches the difference.
 
 ## Tool & Library Notes
 
@@ -1012,6 +1099,26 @@ prove the test discriminates by breaking the implementation on purpose before tr
 The companion assertion — one test asserting the sentinels ARE present in the un-redacted input —
 is what turns a silently-vacuous suite into a failing one.
 
+### A new `vendor/shared` contract file fails in the barrel, not in the file you wrote
+
+**Symptom.** On 2026-08-09 `contracts/blast.ts` was added with the export names its spec
+listed. `tsc` reported nothing in the new file and instead:
+`src/vendor/shared/index.ts(23,1): error TS2308: Module './contracts/brief.js' has already
+exported a member named 'BlastCaller'.`
+
+**Cause.** `vendor/shared/index.ts` is twelve `export *` lines. Two star-exports of the same
+name is TS2308 — it is not a silent shadow and it is not reported at the definition, so the
+name that has to change is in a file the error message never mentions. `contracts/brief.ts`
+already owns `BlastRadius`, `BlastCaller` and `ChangedSymbol`, all of them generic enough to
+be the first name a second blast-flavoured contract reaches for.
+
+**Fix.** Before adding a contract file, grep the sibling contracts for every name you intend
+to export: `grep -rn "export const <Name>\b" server/src/vendor/shared/contracts/`. Where one
+collides, qualify the new one by what distinguishes it rather than renaming the old — here
+`BlastRadiusView` and `BlastViewCaller`, because the `brief.ts` pair is the LLM-facing
+`PrBrief` payload and carries no line numbers. Both copies are then mirrored and re-checked
+with `diff -r server/src/vendor/shared client/src/vendor/shared`.
+
 ## Session Notes
 
 ### 2026-07-27
@@ -1215,6 +1322,15 @@ is what turns a silently-vacuous suite into a failing one.
   which is exactly the defect `server/INSIGHTS.md` records for `slice`. Left alone because the
   prompt-log plan did not ask for it and `reviewer-core/test/prompt.test.ts:74` pins the current
   `length === 4000`; fixing it means changing both the cut and that assertion.
+- `specs/07-blast-radius.md` caps callers two independent times and the second can never fire.
+  Step 3 makes `repo-intel`'s `getBlastRadius` return at most `MAX_CALLERS_PER_SYMBOL` (20) per
+  `viaSymbol`; step 7 then asks `blast/helpers.ts` `toView` to set `caller_count` to the count
+  **before** the 20 cap and `truncated` accordingly. Since `toView` only ever sees the already
+  capped list, in production `caller_count` maxes out at 20 and `truncated` is always `false` —
+  the plan's own test proves the branch only because it feeds `toView` a fake with 21. Either
+  `BlastResult` grows a per-symbol total or the cap moves entirely into `toView`. Implemented as
+  specified on 2026-08-09 and raised rather than redesigned, because the two halves belong to
+  different steps and different agents.
 - **Resolved 2026-08-05,** the four body defects above, all found by the agents themselves on
   their first dispatch: `test-writer` step 2 now judges the mutation by the runner's output rather
   than by whether `tsc` would accept it; `plan-verifier` Rule 3 now admits a document's declared

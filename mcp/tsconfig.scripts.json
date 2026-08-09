@@ -1,0 +1,13 @@
+// `tsconfig.json` sets `rootDir: "src"` so the build emits `dist/index.js`, the path
+// `.mcp.json` points at. That rootDir also makes it impossible to add `scripts/` to the
+// same project — tsc rejects any input outside the root. This config type-checks the
+// scripts (and, through their imports, `src/`) without emitting anything, so a helper
+// that drifts from the code it drives fails `npm run typecheck` instead of at runtime.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["scripts/**/*.ts", "src/**/*.ts"]
+}

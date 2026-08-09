@@ -3,6 +3,7 @@
 import React from "react";
 import { Markdown, SectionLabel } from "@devdigest/ui";
 import { usePrIntent, useRecomputeIntent } from "@/lib/hooks/core";
+import { BlastRadiusCard } from "../BlastRadiusCard";
 import { IntentCard } from "../IntentCard";
 import { s } from "./styles";
 
@@ -26,9 +27,7 @@ export function OverviewTab({ prBody, prId }: OverviewTabProps) {
           onRecompute={() => recompute.mutate()}
           recomputing={recompute.isPending}
         />
-        {/* BLAST RADIUS slot — reserved so the row is cut once, and rendering
-            nothing until that card exists. No border, no placeholder copy. */}
-        <div aria-hidden />
+        <BlastRadiusCard prId={prId} />
       </div>
 
       {prBody && (

@@ -1,6 +1,6 @@
 # Testing & CI strategy
 
-DevDigest is four independent packages (no workspace), so testing is organised
+DevDigest is five independent packages (no workspace), so testing is organised
 as **one suite per package**, each with its own CI workflow, runner, and path
 filter. A package's suite runs only when that package (or a package it depends
 on at type-check time) changes.
@@ -31,6 +31,7 @@ If a test wouldn't catch a class of regression we care about, we don't write it.
 | server-integration | `server/` | integration (real Postgres) | vitest | `server-integration.yml` | **yes** |
 | reviewer-core | `reviewer-core/` | unit (engine) | vitest | `reviewer-core.yml` | no |
 | e2e web | `e2e/` | browser e2e (deterministic) | agent-browser + `run.ts` | `e2e-web.yml` | yes (stack) |
+| mcp | `mcp/` | unit (hermetic, stubbed `fetch`) | vitest | none — **run by hand** | no |
 | shared-sync | `server/` + `client/` | consistency gate (not a test) | `diff -r` | `shared-sync.yml` | no |
 | prompt-sync | `docs/agent-prompts/` + `server/` | consistency gate (not a test) | `scripts/prompt-sync.mjs` | `prompt-sync.yml` | no |
 | pr-self-review | `scripts/pr-self-review/` | script tests (plain Bash) | `test/run.sh` | `pr-self-review.yml` | no |
@@ -58,6 +59,27 @@ and a `run` with a stubbed model → grounded findings. No DB / GitHub / FS.
 **e2e web** — see `e2e/README.md`. Deterministic agent-browser flows over the
 main journeys (boot → PR list → PR detail; agents) against a real seeded stack.
 No `chat`, no model key.
+
+**mcp** — hermetic vitest over the MCP server's pure parts: the projections and
+their finding ordering, the resolvers, the error texts, the run-wait ceiling, and
+each tool handler against a stubbed `fetch`. **No `*.it.test.ts`** — `mcp/` has no
+database, so the suffix rule has nothing to select. **Nothing in `e2e/`** either:
+that suite drives the web UI and MCP has no browser surface.
+
+`run_agent_on_pr` is deliberately in **no suite**. It is the one tool that writes,
+and a real run makes live provider calls that cost real money — an out-of-process
+HTTP client cannot override the server's LLM the way an in-process test can
+(`server/INSIGHTS.md` §"An integration test that starts a review makes LIVE
+OpenRouter calls unless `secrets` is overridden"). It is exercised by hand, once,
+against a running stack. `mcp/scripts/smoke.ts` covers the read-only tools the same
+way — manual, no LLM cost.
+
+There is **no `mcp.yml` workflow and no Track A gate**: `scripts/pr-self-review/scope.sh`
+maps only `client/*`, `server/*` and `reviewer-core/*` into `.packages`
+(`scope.sh:209-213`), so a change confined to `mcp/` triggers nothing. That is
+deliberate for now — teaching the pre-push gate a fourth package means editing scripts
+that have their own Bash suite. Until then, run `cd mcp && npm run typecheck && npm test`
+by hand before pushing and paste the result into the PR body.
 
 **shared-sync** — not a test suite but a consistency gate. `@devdigest/shared` is
 vendored into both `server/` and `client/` instead of being a workspace package,
@@ -92,6 +114,7 @@ the whole chain end to end; the rest test one script each.
 # per package
 cd client        && pnpm test           # + pnpm typecheck
 cd reviewer-core && npm test
+cd mcp           && npm run typecheck && npm test   # no CI workflow — this is the gate
 
 # server — the unit/integration split (see note below)
 cd server && pnpm exec vitest run --exclude '**/*.it.test.ts'   # unit, no Docker

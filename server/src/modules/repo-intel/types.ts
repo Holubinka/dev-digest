@@ -58,6 +58,13 @@ export interface BlastChangedSymbol {
   file: string;
   name: string;
   kind: string;
+  /**
+   * 1-based declaration line. Carried because a consumer rendering the symbol as
+   * `file:line` has no second read to recover it from — the callers' lines are
+   * the CALL sites, not the declaration. `0` when the index has no line for the
+   * row (the column is nullable).
+   */
+  line: number;
 }
 
 export interface BlastCallerRow {
@@ -73,7 +80,21 @@ export interface BlastCallerRow {
 
 export interface BlastResult {
   changedSymbols: BlastChangedSymbol[];
+  /**
+   * Cross-file callers, ALREADY capped to MAX_CALLERS_PER_SYMBOL per changed
+   * symbol — on BOTH paths. Read `callerCounts` for how many there were.
+   */
   callers: BlastCallerRow[];
+  /**
+   * How many callers each changed symbol had BEFORE the per-symbol cap, keyed by
+   * `viaSymbol`. Without it a consumer cannot tell "20 callers" from "20 of 47":
+   * it only ever sees the capped array, so a `truncated` flag derived from
+   * `callers.length` alone is false by construction.
+   *
+   * Emitted by every path that returns callers. It stays OPTIONAL for the
+   * early returns that carry `callers: []`, where there is nothing to count.
+   */
+  callerCounts?: Record<string, number>;
   /** "METHOD /path" (via extractEndpoints / file_facts) — flat union. */
   impactedEndpoints: string[];
   /**
@@ -84,6 +105,22 @@ export interface BlastResult {
   factsByFile?: Record<string, { endpoints: string[]; crons: string[] }>;
   degraded?: boolean;
   reason?: DegradedReason;
+}
+
+/**
+ * One file downstream of the change: it imports a changed file, or imports
+ * something that does (transitively, up to MAX_DOWNSTREAM_DEPTH hops).
+ *
+ * `depth` is the number of import hops from the nearest changed file — 1 is a
+ * direct importer. The changed files themselves are depth 0 and are never
+ * returned. `endpoints` / `crons` come from the precomputed `file_facts` read,
+ * and are `[]` for a file the indexer found neither in.
+ */
+export interface DownstreamFile {
+  file: string;
+  depth: number;
+  endpoints: string[];
+  crons: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -145,6 +182,17 @@ export interface RepoIntel {
 
   // --- Reads --------------------------------------------------------------
   getBlastRadius(repoId: string, changedFiles: string[]): Promise<BlastResult>;
+  /**
+   * Files that (transitively) import `files`, breadth-first through the import
+   * graph. `maxDepth` is clamped to MAX_DOWNSTREAM_DEPTH; `files` themselves are
+   * excluded, and a file reachable at several depths is returned once, at the
+   * smallest. Postgres only — never parses the clone.
+   */
+  getDownstream(
+    repoId: string,
+    files: string[],
+    maxDepth: number,
+  ): Promise<DownstreamFile[]>;
   getRepoMap(repoId: string, tokenBudget?: number): Promise<RepoMapResult>;
   getFileRank(repoId: string, paths: string[]): Promise<FileRankRow[]>;
   getSymbolsInFiles(repoId: string, paths: string[]): Promise<SymbolRow[]>;

@@ -79,6 +79,48 @@ State the order in the same commit that adds the aggregate:
 `src/db/seed.ts` inserts several agents in one statement and `defaultNow()` gives them an
 identical timestamp, so the tie-break is load-bearing.
 
+
+### A `truncated` flag computed from an already-capped list is false by construction
+
+**Symptom.** `blast`'s `caller_count` never exceeded 20 and `truncated` was never `true` on any
+real PR, while a unit test asserting exactly that behaviour passed.
+**Cause.** `specs/07-blast-radius.md` step 3 caps callers at `MAX_CALLERS_PER_SYMBOL` inside
+`modules/repo-intel/service.ts`, and step 7 then asked `blast/helpers.ts` `toView` to report the
+count *before* the cap. `toView` only ever receives the capped array, so `callers.length` is the
+post-cap size by definition. The plan's own test passed only because it handed `toView` a
+hand-built 21-element list — a shape no production path can produce.
+**Fix.** The function that truncates is the last one that knows the original size, so it must
+return both: `capCallersPerSymbol` returns `{ callers, counts }` and `BlastResult.callerCounts`
+carries the pre-cap size per `viaSymbol`. Generalised, two rules. When a cap and the field
+describing that cap live in different rings, the capping ring has to emit the count — the
+consuming ring cannot recover it. And when a test for an "N of M" field constructs M itself,
+check whether any real path can produce M before believing the green.
+
+### A gate is only as strong as the method it reads, and two facade methods disagreed
+
+**Symptom.** With `REPO_INTEL_ENABLED=false` and a previously-indexed repo,
+`GET /pulls/:id/blast` ran `codeIndex.symbols`, `codeIndex.references` and `readClone`
+synchronously inside the HTTP request — the AST work acceptance criterion 4 forbids — while
+`blast/service.ts` sat there holding a gate written specifically to prevent it.
+
+**Cause.** The gate reads `repoIntel.getIndexState(repoId).status` and refuses to call
+`getBlastRadius` unless it is `full` or `partial`. But `getIndexState`
+(`repo-intel/service.ts:191`) built its answer from the `repo_index_state` row alone and never
+consulted `config.repoIntelEnabled`, while `getBlastRadius` (`:225`) did. So the flag turned
+off the *persistent* path and left the *clone-reading fallback* on, and the gate — reading a
+stale `full` — opened onto exactly the branch it exists to keep shut. Every unit test passed:
+the blast suite fakes `repoIntel`, so a disagreement *between* two real facade methods is
+invisible to it by construction.
+
+**Fix.** `getIndexState` checks the flag first and returns `degradedIndexState(repoId,
+'flag_off')`, the way `getRepoMap` already did per-method — which also makes the contract at
+`platform/config.ts:60-64` true rather than nearly true. Two rules out of it. When one method
+gates another, they must consult the *same* inputs, and a config flag consulted by only half a
+facade is a bug waiting for the flag to be flipped. And when a slice fakes a collaborator
+wholesale, at least one test must wire the REAL collaborator in
+(`test/blast-service.test.ts` → "does not reach getBlastRadius when the flag is off"), because
+the seam between two real methods is where a fake sees nothing.
+
 ## Codebase Patterns
 
 ### Truncate untrusted text BEFORE `wrapUntrusted`, never after
@@ -230,6 +272,41 @@ defaulted inside the service, which is what keeps `Db` off the port at all. And 
 throws**: one discriminated `{ ok }` result serves both a route that must report the failure as a
 502 and an executor that must ignore it, with no `throwOnError` flag.
 
+
+### Type a service's repository seam as an interface, not as the repository class
+
+A repository declared `constructor(private db: Db) {}` cannot be satisfied by an object literal —
+TypeScript requires private members to originate in the same declaration — so a fake needs a cast
+through `as XRepository`, which lies, and which keeps compiling after a method is renamed. That,
+not the constructor default, is why `AgentsService`, `RepoService` and `ReviewService` have no
+hermetic tests (`onion-architecture` → testing-the-rings §3): it is a property of the *type
+annotation*, not of the class.
+
+`modules/blast/types.ts` takes the other route. `BlastReads` declares the two methods
+`BlastService` calls, `BlastRepository` satisfies it structurally with its `private db` intact,
+and `test/blast-service.test.ts` passes a plain object with no cast at all. Six lines, and it is
+the whole difference between a service tested in 5 ms and one reachable only through Docker.
+
+### A cap applied on one path of a two-path method lets the contract lie on the other
+
+`RepoIntelService.getBlastRadius` has two implementations behind one signature: the persistent
+Postgres path and the ripgrep/clone fallback. The persistent one capped callers at
+`MAX_CALLERS_PER_SYMBOL` and returned `callerCounts`; the fallback did neither, so `toView`'s
+`caller_count = callerCounts[name] ?? callers.length` made `truncated` false by construction
+while an unbounded array shipped to the card and to MCP — for a field
+`contracts/blast.ts` documents as the pre-cap number.
+
+The rule: a bound or a count promised by a contract belongs to the *method*, not to its
+happy path. Every `return` in a multi-path method has to satisfy the same contract, and the
+cheapest way to check is to grep the method for `return` and read each one against the
+contract's wording rather than against the branch you were editing.
+
+Applying it also surfaces what the fallback's ordering really is. `capCallersPerSymbol` sorts
+`rank DESC, file ASC, line ASC`; on the fallback every row has `rank: 0`, so the first key is
+inert and the surviving 20 are the first 20 *filenames*. Deterministic, and honestly not by
+importance — state that in a comment rather than letting a reader assume the persistent path's
+ranking.
+
 ## Tool & Library Notes
 
 ### `break` out of a `for await` destroys the stream, so teardown errors land inside the `try`
@@ -365,6 +442,17 @@ cannot tell a rename from a create/drop pair — and it reads raw TTY keypresses
 first (additions only, no prompt), then delete the old one (a drop only, no prompt).
 Migrations `0012` and `0013` are that pair.
 
+
+### Seeding a blast fixture needs three rows per caller file, not one
+
+`getResolvedCallers` (`modules/repo-intel/repository.ts`) INNER JOINs `file_rank` on
+`(repo_id, from_path)`, so a `references` row whose caller file has no `file_rank` row is dropped
+silently and the request answers "no callers" — indistinguishable from a correct empty answer. A
+fixture caller file therefore needs three rows: `references` for the call site, `file_rank` or the
+join eats it, and `symbols` or `enclosingFromRows` labels the caller with the file's basename
+instead of its enclosing function. `seedIndexedRepo` in `test/blast.it.test.ts` is the worked
+example.
+
 ## Recurring Errors & Fixes
 
 ### A review run fails with `401 Missing Authentication header`
@@ -487,6 +575,19 @@ schema` when the fallback answered and `OPENROUTER_API_KEY is not configured` wh
 did. Asserting only that the review survived cannot distinguish the two, which is how the
 original omission survived review.
 
+
+### `app.inject is not a function` in a new integration test
+
+**Symptom.** Every test in a new `*.it.test.ts` fails with `TypeError: app.inject is not a
+function`, pointing at the first `inject` call rather than at the setup.
+**Cause.** `buildApp` (`src/app.ts`) is `async` — it awaits `reapStaleRuns`, helmet, cors and
+multipart. A local helper that returns more than the app (`return { app: buildApp(...), llm }`)
+hands back a Promise inside an object, and unlike `const app = buildApp(...)` there is no
+missing `await` visible at the call site. `test/intent.it.test.ts` gets away with
+`return buildApp(...)` only because its callers write `await appWith()`.
+**Fix.** Make the helper `async` and `await buildApp(...)` inside it. Cost on 2026-08-09: one
+full testcontainers run.
+
 ## Session Notes
 
 ### 2026-08-03 (conventions extractor)
@@ -568,6 +669,26 @@ original omission survived review.
   `intent.it.test.ts` override walk with `expected 'z-ai/glm-4.7-flash' to be
   'minimax/minimax-m2.5'`.
 
+
+### 2026-08-09 (blast radius — the server slice)
+
+- Steps 5-10 of `specs/07-blast-radius.md`: the `blast/` slice, its structural container port and
+  the two routes. `pnpm arch` clean with the baseline unchanged at 19, typecheck clean, 520 unit
+  and 98 integration tests green.
+- **The assertion that matters is not in the unit file.** `test/blast-service.test.ts` fakes
+  `RepoIntel`, so it can only assert what a fake returns — and the fake is exactly where the
+  `caller_count` defect above was hiding. `test/blast.it.test.ts` seeds 21 real `references` rows
+  and asserts `truncated: true` comes back over HTTP; that is the one that would have caught it.
+- Thirteen mutations across `blast/helpers.ts`, `blast/service.ts`, `blast/repository.ts` and
+  `repo-intel/service.ts` were each proven red and restored. Four minutes, and every mutation
+  produced a failure — which is the point of doing it: it converts "the tests pass" into "the
+  tests would notice".
+- Live check against the dev API, `Holubinka/dev-digest` PR #12: `full`, 30 symbols, 38 endpoints,
+  `ReviewService` at `server/src/modules/reviews/service.ts:28` with callers at `app.ts:81` and
+  `reviews/routes.ts:22`, in **22 ms** — Postgres only, which is what acceptance criterion 4 asks
+  for. Note the spec's own line numbers had already rotted (it says `app.ts:83`, `service.ts` for
+  the declaration); the response is the source of truth.
+
 ## Open Questions
 
 - The classifier's PR body and linked-issue text reach `renderClassifierInput` uncapped. Plan 05
@@ -628,3 +749,22 @@ original omission survived review.
   the cheapest correct shape is a `head_sha` column written by `upsertIntent`, `derive({ force })`
   from `POST /pulls/:id/intent`, and the pre-pass in `run-executor.ts:88-100` passing no `force`.
   Raised 2026-08-05.
+
+- **`GET /pulls/:id/blast` can still reach the clone when `REPO_INTEL_ENABLED=false`.**
+  `BlastService.getBlast` gates on `repoIntel.getIndexState`, which reads `repo_index_state` and
+  ignores the flag, while `getBlastRadius` checks the flag *before* `tryPersistentBlast` and falls
+  through to the clone-reading, `codeIndex.symbols` path (`modules/repo-intel/service.ts:238-306`).
+  So a repo indexed earlier and then run with the flag off passes the gate and does whole-repo
+  scanning on the request path — the thing acceptance criterion 4 of `specs/07-blast-radius.md`
+  forbids. Not fixed on 2026-08-09 because both fixes are wider than the step that found it:
+  putting `config` on `BlastContainer` (step 5 deliberately keeps it to three methods), or having
+  `getIndexState` report `degraded` when the flag is off, which changes a facade every module
+  reads. Raised 2026-08-09.
+- **A feature reusing a `FeatureModelId` inherits that id's provider, not the one you have a key
+  for.** `risk_brief` defaults to `openai/gpt-4.1`
+  (`vendor/shared/contracts/platform.ts:55-62`), and this machine's `~/.devdigest/secrets.json`
+  holds only `GITHUB_TOKEN` and `OPENROUTER_API_KEY` — so `POST /pulls/:id/blast/summary` answers
+  `500 config_error: OPENAI_API_KEY is not configured` until the workspace picks a model under
+  Settings → Models. Verified live 2026-08-09. Fail-closed and correct, but it means the Explain
+  button is dead on a fresh install; worth deciding whether the registry defaults should follow
+  the keys that actually exist. Raised 2026-08-09.

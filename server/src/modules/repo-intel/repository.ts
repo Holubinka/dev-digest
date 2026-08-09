@@ -436,6 +436,28 @@ export class RepoIntelRepository {
       .where(eq(t.fileEdges.repoId, repoId));
   }
 
+  /**
+   * DEPENDENTS of `files` — one hop, scoped. `file_edges.from_file` IMPORTS
+   * `file_edges.to_file` (schema/repo-intel.ts:50-53), so "who depends on X" is
+   * `to_file IN (X…)` and `from_file` is the dependent. This is the reverse
+   * lookup the `file_edges_repo_to_idx` (repo_id, to_file) index exists for:
+   * equality on the leftmost column plus an IN on the second, so no new index
+   * and no migration.
+   *
+   * NOT `getEdges` — that loads every edge in the repo to build the rank graph.
+   * DISTINCT because several changed files can share an importer, ordered so
+   * the depth-2 walk visits the same nodes in the same order every request.
+   */
+  async getDependents(repoId: string, files: string[]): Promise<string[]> {
+    if (files.length === 0) return [];
+    const rows = await this.db
+      .selectDistinct({ fromFile: t.fileEdges.fromFile })
+      .from(t.fileEdges)
+      .where(and(eq(t.fileEdges.repoId, repoId), inArray(t.fileEdges.toFile, files)))
+      .orderBy(asc(t.fileEdges.fromFile));
+    return rows.map((r) => r.fromFile);
+  }
+
   /** `{path, percentile}` for the given paths (smart-diff / run-executor). */
   async getFileRankFor(repoId: string, paths: string[]): Promise<FileRankRow[]> {
     if (paths.length === 0) return [];

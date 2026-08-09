@@ -15,6 +15,7 @@ aliases, not published modules):
 | `client/`        | `@devdigest/web`            | Next.js 15 web app (the studio)                       | 3000 |
 | `reviewer-core/` | `@devdigest/reviewer-core`  | Pure review engine: diff → prompt → LLM → findings    | —    |
 | `e2e/`           | `@devdigest/e2e`            | Deterministic browser e2e (agent-browser)             | —    |
+| `mcp/`           | `@devdigest/mcp`            | MCP server (stdio): review tools for coding agents    | —    |
 | `server/src/vendor/shared` | `@devdigest/shared` | Zod contracts shared across every package             | —    |
 
 `repo-intel` (the codebase indexer that powers the **Indexed** badge and feeds
@@ -85,7 +86,8 @@ These are intentionally **not** in the starter — each lesson adds one back:
 This script:
 1. starts Postgres (`docker compose up -d`) and waits until it's healthy,
 2. creates `server/.env` and `client/.env` from `.env.example` if missing,
-3. installs deps in `server/` and `client/` (only when `node_modules` is absent),
+3. installs deps in `server/`, `client/`, `reviewer-core/` and `mcp/` (only when
+   `node_modules` is absent), then builds `mcp/dist/`,
 4. applies DB migrations and seeds demo data,
 5. launches the API (`:3001`) and the web app (`:3000`).
 
@@ -96,6 +98,20 @@ Flags: `--no-seed` · `--no-client` · `--db-only` · `--help`.
 
 > Add your keys in `server/.env` (`OPENAI_API_KEY` / `ANTHROPIC_API_KEY`,
 > `GITHUB_TOKEN`) or via the Settings UI at runtime.
+
+## MCP server (Claude Code)
+
+`.mcp.json` at the repo root registers the `devdigest` MCP server project-scope, so a
+Claude Code session opened in this folder gets the review loop as tools: list the
+reviewer agents, run one on a PR, read the findings, read a repo's extracted
+conventions, plus a blast-radius placeholder. It talks to the API on `:3001` like any
+other client — start the stack first, then `/mcp` should list `devdigest` as connected.
+
+**`./scripts/dev.sh` does not build it** — the MCP server is a developer tool, not part
+of the app, and nothing in the stack imports it. Build it yourself when you want it:
+`cd mcp && npm ci && npm run build` (**npm**, not pnpm). The server is launched as
+`node mcp/dist/index.js`, so a missing or stale `dist/` is the usual reason it does not
+connect. See [`mcp/README.md`](mcp/README.md).
 
 ## Manual steps (what the script does)
 
@@ -115,6 +131,7 @@ cd ../client && pnpm install && pnpm dev               # web on :3000
 `server/`: `dev` · `build` · `db:migrate` · `db:seed` · `db:generate` · `test` · `typecheck`
 (unit/integration split: `pnpm exec vitest run --exclude '**/*.it.test.ts'` / `pnpm exec vitest run .it.test`)
 `client/`: `dev` · `build` · `start` · `test` · `typecheck`
+`mcp/` (npm): `build` · `test` · `typecheck` — no CI workflow, run before a push
 
 ## Testing & CI
 

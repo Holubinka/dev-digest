@@ -1,0 +1,27 @@
+{
+  "name": "@devdigest/mcp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "DevDigest MCP server \u2014 exposes the local review loop to a coding agent over stdio. Another HTTP client of the API on :3001: no database, no import from server/src. Unlike reviewer-core it EMITS JS, because it is launched as a process by another program rather than imported as source.",
+  "bin": {
+    "devdigest": "dist/cli.js"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.scripts.json",
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "smoke": "tsx scripts/smoke.ts",
+    "inspector": "npm run build && npx --yes @modelcontextprotocol/inspector@2.1.0 node dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

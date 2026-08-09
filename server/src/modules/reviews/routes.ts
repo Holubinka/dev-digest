@@ -1,21 +1,39 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { z } from 'zod';
 import { RunRequest } from '@devdigest/shared';
 import type { RunEvent } from '@devdigest/shared';
 import { getContext } from '../_shared/context.js';
 import { IdParams } from '../_shared/schemas.js';
 import { NotFoundError } from '../../platform/errors.js';
 import { ReviewService } from './service.js';
+import { MAX_DIFF_CHARS, MAX_DIFF_BODY_BYTES } from './diff-review.js';
 
 /**
  * reviews module.
  *   POST   /pulls/:id/review  {agentId} | {all:true}  → run review(s); returns runs
+ *   POST   /reviews/diff      {diff, agentId|all}      → review a raw diff; persists nothing
  *   GET    /runs/:id/events                            → SSE stream of RunEvent (replay-first)
  *   GET    /runs/:id/trace                             → the single-document RunTrace
  *   GET    /pulls/:id/reviews                          → persisted reviews + findings for a PR
  *   POST   /findings/:id/(accept|dismiss)              → finding actions
  */
 const FINDING_ACTIONS = ['accept', 'dismiss'] as const;
+
+/**
+ * `POST /reviews/diff` body.
+ *
+ * Declared rather than hand-parsed, so the type provider rejects it with a 422
+ * before the handler runs (`onion-architecture` §3.1). `diff` is capped here as
+ * well as by `bodyLimit` because the two answer different questions: the body
+ * limit bounds the bytes on the wire, `max()` bounds what reaches a model.
+ */
+const DiffReviewBody = z.object({
+  diff: z.string().min(1).max(MAX_DIFF_CHARS),
+  agentId: z.string().uuid().optional(),
+  all: z.boolean().optional(),
+});
+
 export default async function reviewsRoutes(appBase: FastifyInstance) {
   const app = appBase.withTypeProvider<ZodTypeProvider>();
   const { container } = app;
@@ -42,6 +60,24 @@ export default async function reviewsRoutes(appBase: FastifyInstance) {
     );
     return { pr_id: req.params.id, runs, reviews };
   });
+
+  // ---- Review a raw diff (no PR row; persists nothing) --------------------
+  // Tighter than /pulls/:id/review's 10/min: that route hands its work to a
+  // background executor and answers immediately with cancellable run ids, while
+  // this one holds the connection open for the whole (paid) model call and
+  // leaves nothing behind to cancel. Tenancy is resolved before any spend.
+  app.post(
+    '/reviews/diff',
+    {
+      schema: { body: DiffReviewBody },
+      bodyLimit: MAX_DIFF_BODY_BYTES,
+      config: { rateLimit: { max: 6, timeWindow: '1 minute' } },
+    },
+    async (req) => {
+      const { workspaceId } = await getContext(container, req);
+      return service.reviewDiff(workspaceId, req.body, req.log);
+    },
+  );
 
   // ---- SSE: live run events (replay buffer first, then live; ends on done) -
   // No rate limit: SSE is one long-lived connection, not burst traffic.
