@@ -81,4 +81,25 @@ describe("OverviewTab — description", () => {
 
     expect(screen.getByTestId("blast-radius-card")).toHaveAttribute("data-pr-id", "pr-1");
   });
+
+  /**
+   * The card row stacks below 1024px, and that rule lives in `app/globals.css`
+   * against `dd-overview-cards`. jsdom loads no stylesheet, so the media query
+   * itself cannot be asserted here — but the way it breaks can be, and it breaks
+   * silently: an inline style beats any stylesheet rule, so re-adding
+   * `display`/`gridTemplateColumns` to `s.cardRow` would leave the row looking
+   * correct at desktop width and quietly stop it responding
+   * (`client/AGENTS.md`). That is what this pins.
+   *
+   * It is also what made the row overflow in the first place: the columns were
+   * inline `1fr`, whose implicit `min-width: auto` refuses to shrink below the
+   * content — and blast radius is full of unbreakable paths.
+   */
+  it("leaves the grid to the stylesheet, so the breakpoint is not overridden inline", () => {
+    const { container } = render(<OverviewTab prBody={null} prId="pr-1" />);
+    const row = container.querySelector(".dd-overview-cards");
+
+    expect(row).not.toBeNull();
+    expect(row!.getAttribute("style") ?? "").not.toMatch(/display|grid-template-columns/);
+  });
 });

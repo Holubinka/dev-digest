@@ -313,12 +313,16 @@ function SymbolDisclosure({
 
   return (
     <details style={s.symbol} open={defaultOpen}>
+      {/* Name and count first, path underneath: the path is one unbreakable
+          word and putting it between them made the row reflow into three
+          ragged lines as soon as the card narrowed. Two deliberate lines beat
+          three accidental ones. */}
       <summary style={s.disclosure}>
         <span style={s.symbolName}>{symbol.name}</span>
+        <span style={s.callerCount}>{t("callerCount", { count: symbol.caller_count })}</span>
         <span className="mono" style={s.symbolSite}>
           {symbol.file}:{symbol.line}
         </span>
-        <span style={s.callerCount}>{t("callerCount", { count: symbol.caller_count })}</span>
       </summary>
 
       {symbol.callers.length > 0 && (

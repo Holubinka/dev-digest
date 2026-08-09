@@ -19,7 +19,7 @@ export function OverviewTab({ prBody, prId }: OverviewTabProps) {
 
   return (
     <>
-      <div style={s.cardRow}>
+      <div className="dd-overview-cards" style={s.cardRow}>
         <IntentCard
           intent={intent}
           isLoading={isLoading}

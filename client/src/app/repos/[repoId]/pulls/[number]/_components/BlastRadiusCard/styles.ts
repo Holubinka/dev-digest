@@ -119,22 +119,43 @@ export const s = {
 
   symbolList: { marginTop: 14 } satisfies CSSProperties,
   symbol: { borderTop: "1px solid var(--border)", padding: "9px 0" } satisfies CSSProperties,
-  /** No `display` override: that is what keeps the native disclosure triangle. */
+  /**
+   * No `display` override, and that is load-bearing twice over. A `<summary>`
+   * loses its native disclosure triangle the moment it is given a `display`
+   * other than `list-item` — and laying the three spans out as a flex row put
+   * every symbol on three lines instead of one, thirty of them on the demo PR.
+   * Inline text already wraps at the spaces between the spans; the only thing
+   * missing was permission for the path itself to break, which is on
+   * `symbolSite` below.
+   */
   disclosure: {
     cursor: "pointer",
     fontSize: 13,
     color: "var(--text-primary)",
   } satisfies CSSProperties,
   symbolName: { fontWeight: 600 } satisfies CSSProperties,
+  /**
+   * The whole fix at this level. A repository path has no space in it —
+   * `server/src/modules/reviews/run-executor.ts:184` is one unbreakable word —
+   * so once the Overview columns were allowed to shrink below their content,
+   * this span was what ran past the card edge.
+   *
+   * `break-word`, not `anywhere`: `anywhere` splits the path at whatever column
+   * the line happens to end on, which left `helpers.ts:` on one line and `82` on
+   * the next. `break-word` moves the whole path down first and only breaks it
+   * when it still cannot fit.
+   */
   symbolSite: {
-    marginLeft: 8,
+    display: "block",
     fontSize: 12,
     color: "var(--text-muted)",
+    overflowWrap: "break-word",
   } satisfies CSSProperties,
   callerCount: {
     marginLeft: 8,
     fontSize: 12,
     color: "var(--text-secondary)",
+    whiteSpace: "nowrap",
   } satisfies CSSProperties,
 
   callerList: {
@@ -153,7 +174,11 @@ export const s = {
   } satisfies CSSProperties,
   callerSymbol: { fontSize: 12, color: "var(--text-muted)" } satisfies CSSProperties,
   /** A caller whose link cannot be built renders as text, never as a dead link. */
-  callerPlain: { fontSize: 13, color: "var(--text-secondary)" } satisfies CSSProperties,
+  callerPlain: {
+    fontSize: 13,
+    color: "var(--text-secondary)",
+    overflowWrap: "break-word",
+  } satisfies CSSProperties,
 
   chipRow: {
     display: "flex",

@@ -1,10 +1,16 @@
 import type { CSSProperties } from "react";
 
 export const s = {
-  /** INTENT + BLAST RADIUS, side by side. Both columns are filled. */
+  /**
+   * INTENT + BLAST RADIUS, side by side.
+   *
+   * `display` and `grid-template-columns` are DELIBERATELY absent here and live
+   * in `app/globals.css` under `.dd-overview-cards`. An inline style beats any
+   * stylesheet rule, so a property a breakpoint changes must be declared only in
+   * the media-query block — declare it here as well and the row silently stops
+   * responding (`client/AGENTS.md`). Only what no breakpoint touches stays.
+   */
   cardRow: {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
     gap: 16,
     marginBottom: 24,
     alignItems: "start",
