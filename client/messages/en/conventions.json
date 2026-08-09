@@ -5,7 +5,7 @@
     "headingPrefix": "Conventions in ",
     "repoFallback": "repo",
     "subtitle": "Scan the cloned repo to surface house-rules — each backed by evidence you can turn into a Skill.",
-    "scanSummary": "Detected from {files} sample files · {model}",
+    "scanSummary": "Detected from {files, plural, one {# sample file} other {# sample files}} · {model}",
     "scanning": "Scanning…",
     "rescan": "Re-scan",
     "runExtraction": "Run extraction",
@@ -21,7 +21,6 @@
     "candidateCount": "{count, plural, one {# candidate} other {# candidates}} · grounded against sampled files"
   },
   "card": {
-    "confidence": "Confidence",
     "accept": "Accept",
     "accepted": "Accepted",
     "reject": "Reject",

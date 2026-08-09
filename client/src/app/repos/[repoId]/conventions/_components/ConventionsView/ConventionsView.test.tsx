@@ -90,6 +90,12 @@ describe("ConventionsView", () => {
     expect(screen.getByText(/Detected from 14 sample files/)).toBeInTheDocument();
   });
 
+  it("says 'sample file' when the scan read exactly one", () => {
+    loaded([convention()], { ...SCAN, sample_files: 1 });
+    renderView();
+    expect(screen.getByText(/Detected from 1 sample file ·/)).toBeInTheDocument();
+  });
+
   it("offers a first run before any scan exists, and a re-scan after one", () => {
     hooks.useConventions.mockReturnValue({
       data: { scan: null, candidates: [] },
