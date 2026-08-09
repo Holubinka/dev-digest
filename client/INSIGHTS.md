@@ -370,6 +370,24 @@ check `getComputedStyle` before claiming a colour is wrong on screen. The *visib
 this change was the badge gaining the token's icon and background, because it went from a
 bare `Badge` to `SeverityBadge`.
 
+**Addition, 2026-08-09 — the same shape, on confidence, and this one WAS visible.**
+`ConventionCard/helpers.ts` carried a `confidenceColor` banding at 80/60 with `var(--crit)` at
+the bottom, while `vendor/ui/primitives/ConfidenceNum.tsx:5` — what `FindingCard`,
+`FindingsPreview` and `Showcase` all render — bands at 85/65 with `var(--text-muted)`. A
+candidate at 82% was green on the conventions screen and amber everywhere else; at 50%, red
+here and muted everywhere else. The doc comment claimed "on the same thresholds the findings
+list uses", which is what kept it invisible: the comment was the only place the two were
+compared, and it was wrong.
+
+Fixed by rendering `<ConfidenceNum>` and deleting the local table, so `vendor/` stayed
+untouched — the vendored primitive keeps no exported band table, so the alternative would have
+meant editing a read-only copy. The bar keeps `ProgressBar`'s default accent and the band is
+stated once. Two things worth copying: a colour rule whose only cross-check is a comment will
+drift, so pin it with a test that renders the vendored primitive alongside and compares
+`outerHTML` (`ConventionCard.test.tsx`, "bands the confidence exactly as the findings list
+does") — and jsdom *does* preserve `var(--warn)` in an inline style attribute, so
+`expect(html).toContain("var(--warn)")` is a real assertion here, not a vacuous one.
+
 ### `Severity` means two different things depending on which package you import it from
 
 `@devdigest/shared` declares `Severity = z.enum(['CRITICAL','WARNING','SUGGESTION'])` —

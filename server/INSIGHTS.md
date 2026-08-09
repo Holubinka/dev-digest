@@ -146,6 +146,23 @@ liability.
 
 ## Codebase Patterns
 
+### A DTO mapper without a return type is unchecked, even where the caller has one
+
+**Symptom.** `toScanDto` (`modules/conventions/helpers.ts:254`) had no return annotation, and
+nothing anywhere rejected an extra field on the object it returns — despite the caller assigning
+it into `ConventionsResponse`.
+
+**Cause.** TypeScript's excess-property check fires on a *fresh object literal*, not on the
+result of a call. `service.ts:86` assigns `toScanDto(scan)`, so the literal inside the mapper is
+only ever checked against its own inferred type, which by definition matches. Measured
+2026-08-09: adding `bogus: row.repoId` to the literal left `pnpm typecheck` clean; with
+`: ConventionScan` on the function it fails with `TS2353 … 'bogus' does not exist in type`. A
+field added off a `*Row` would have shipped over the wire with no contract declaring it.
+
+**Fix.** Annotate every `to*Dto` with the contract type from `@devdigest/shared`, the way
+`toCandidateDto` (line 235) already does. The annotation is the only place the shape is checked;
+it is not documentation.
+
 ### Truncate untrusted text BEFORE `wrapUntrusted`, never after
 
 The order looks like a style choice and is not. `wrapUntrusted(label, text)`

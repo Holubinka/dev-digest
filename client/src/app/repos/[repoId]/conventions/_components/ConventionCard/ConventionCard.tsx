@@ -6,10 +6,18 @@
 
 import React from "react";
 import { useTranslations } from "next-intl";
-import { Button, Icon, IconBtn, MonoLink, ProgressBar, Textarea } from "@devdigest/ui";
+import {
+  Button,
+  ConfidenceNum,
+  Icon,
+  IconBtn,
+  MonoLink,
+  ProgressBar,
+  Textarea,
+} from "@devdigest/ui";
 import type { ConventionCandidate } from "@devdigest/shared";
 import { githubBlobUrl } from "@/lib/github-urls";
-import { confidenceColor, lineLabel } from "./helpers";
+import { lineLabel } from "./helpers";
 import { COPIED_FEEDBACK_MS } from "./constants";
 import { s } from "./styles";
 
@@ -133,13 +141,15 @@ export function ConventionCard({
           </div>
         )}
 
+        {/* The banded colour is `ConfidenceNum`'s, not ours: a candidate at 82%
+            has to read the same here as in the findings list. The bar keeps its
+            default accent so the band is stated once. */}
         <div className="dd-card-meta" style={s.metaRow}>
           <span style={s.category}>{t(`category.${candidate.category}`)}</span>
-          <span style={s.label}>{t("card.confidence")}</span>
           <div style={s.confidenceBar}>
-            <ProgressBar value={confidence} color={confidenceColor(confidence)} />
+            <ProgressBar value={confidence} />
           </div>
-          <span style={s.confidenceValue}>{confidence}%</span>
+          <ConfidenceNum value={candidate.confidence ?? 0} />
         </div>
       </div>
 

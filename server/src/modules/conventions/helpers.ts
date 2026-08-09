@@ -1,4 +1,4 @@
-import type { ConventionCandidate, ConventionEvidence } from '@devdigest/shared';
+import type { ConventionCandidate, ConventionEvidence, ConventionScan } from '@devdigest/shared';
 import type { ConventionRow, ConventionScanRow } from '../../db/rows.js';
 import { MAX_EVIDENCE_CHARS, MAX_EVIDENCE_LINES, MIN_SNIPPET_MATCH_CHARS } from './constants.js';
 
@@ -251,7 +251,7 @@ export function toCandidateDto(row: ConventionRow): ConventionCandidate {
   };
 }
 
-export function toScanDto(row: ConventionScanRow) {
+export function toScanDto(row: ConventionScanRow): ConventionScan {
   return {
     id: row.id,
     repo_id: row.repoId,

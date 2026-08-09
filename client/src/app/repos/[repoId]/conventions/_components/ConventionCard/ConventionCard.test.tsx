@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
+import { ConfidenceNum } from "@devdigest/ui";
 import messages from "@/../messages/en/conventions.json";
 import { convention } from "@/test/conventions";
 import { ConventionCard } from "./ConventionCard";
@@ -97,6 +98,23 @@ describe("ConventionCard", () => {
 
   it("shows the confidence the scan settled on", () => {
     renderCard({ confidence: 0.86 });
-    expect(screen.getByText("86%")).toBeInTheDocument();
+    expect(screen.getByText("86% conf")).toBeInTheDocument();
+  });
+
+  /**
+   * A candidate at 82% used to read green here and amber in the findings list:
+   * the card carried its own 80/60 band table and claimed in a comment that it
+   * matched. The readout is the vendored primitive now, so this compares the
+   * card's markup against what that primitive renders on its own — one band
+   * table, and any edit to it moves both surfaces together.
+   */
+  it("bands the confidence exactly as the findings list does", () => {
+    renderCard({ confidence: 0.82 });
+    const fromCard = screen.getByTitle("Model confidence").outerHTML;
+    expect(fromCard).toContain("var(--warn)");
+
+    cleanup();
+    render(<ConfidenceNum value={0.82} />);
+    expect(fromCard).toBe(screen.getByTitle("Model confidence").outerHTML);
   });
 });

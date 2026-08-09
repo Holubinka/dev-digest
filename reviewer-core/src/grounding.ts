@@ -38,10 +38,17 @@ export function buildLineIndex(diff: UnifiedDiff): Map<string, Set<number>> {
   return idx;
 }
 
+/**
+ * Walks the lines the diff actually covers, NOT the range the model declared.
+ * Both formulations answer the same question — "is any covered line inside
+ * [lo, hi]" — but `start_line`/`end_line` are unbounded model output
+ * (`Finding` declares them `z.number().int()`), so iterating the declared range
+ * lets one finding with `end_line: 2e9` block the event loop for ~13 s.
+ */
 function rangeIntersects(lines: Set<number>, start: number, end: number): boolean {
   const lo = Math.min(start, end);
   const hi = Math.max(start, end);
-  for (let n = lo; n <= hi; n++) if (lines.has(n)) return true;
+  for (const n of lines) if (n >= lo && n <= hi) return true;
   return false;
 }
 
