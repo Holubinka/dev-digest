@@ -98,6 +98,17 @@ const DIFF_TASK_LINE =
  * line-anchored finding fail the gate and be dropped. The model call still
  * happens and still costs money, and the caller gets an empty, confident-looking
  * "no findings" answer. Failing before the call is the only honest outcome.
+ *
+ * Counting hunks is not enough, because a hunk is a HEADER: `@@` declares a
+ * new-side range and the lines under it are what actually cover one. When a hunk
+ * covers nothing, `buildLineIndex` falls back to the declared range
+ * (`reviewer-core/src/grounding.ts:31-34`) and materialises one `Set` entry per
+ * declared line — from a body that never carried them. Measured on this repo:
+ * the 49-byte body `diff --git a/x b/x\n+++ b/x\n@@ -1,1 +1,16000000 @@` parses to
+ * 1 file / 1 hunk / `newLineNumbers: []`, and building its index blocks the
+ * single-process event loop for 1345 ms while allocating 478 MB; a 20-digit count
+ * reaches `RangeError: Set maximum size exceeded`. That work runs once PER AGENT,
+ * after each agent's paid call has already been made, at 6 requests/minute.
  */
 function assertReviewable(diff: ReturnType<typeof parseUnifiedDiff>): void {
   if (diff.files.length === 0) {
@@ -108,13 +119,39 @@ function assertReviewable(diff: ReturnType<typeof parseUnifiedDiff>): void {
       422,
     );
   }
-  const hunks = diff.files.reduce((n, f) => n + f.hunks.length, 0);
-  if (hunks === 0) {
+
+  const hunks = diff.files.flatMap((file) => file.hunks);
+  if (hunks.length === 0) {
     throw new AppError(
       'invalid_diff',
       'The diff names files but carries no @@ hunks, so no finding could be anchored to a ' +
         'line and every one would be dropped by the citation gate. Send a diff with context, ' +
         'not a `--stat` or `--name-only` summary.',
+      422,
+    );
+  }
+
+  // Checked PER HUNK, not as a total across the diff. One honest file in front of
+  // the crafted one keeps a whole-diff total above zero while the crafted hunk
+  // still takes the fallback — verified: a 95-byte two-file body totals 1 covered
+  // line and still built a 16,000,000-entry Set in 1333 ms.
+  const overclaiming = hunks.find((h) => h.newLineNumbers.length === 0 && h.newLines > 0);
+  if (overclaiming) {
+    throw new AppError(
+      'invalid_diff',
+      `A hunk header declares ${overclaiming.newLines} new-side line(s) from line ` +
+        `${overclaiming.newStart} but no line follows it, so the body describes content it ` +
+        'does not carry. Send the output of `git diff`, unmodified and untruncated.',
+      422,
+    );
+  }
+
+  if (hunks.every((h) => h.newLineNumbers.length === 0)) {
+    throw new AppError(
+      'invalid_diff',
+      'Every hunk in this diff removes lines and adds none, so there is no new-side line for a ' +
+        'finding to cite and the citation gate would drop all of them. Review the diff that ' +
+        'introduced the code, or include the files that changed alongside the deletion.',
       422,
     );
   }
@@ -128,6 +165,14 @@ function assertReviewable(diff: ReturnType<typeof parseUnifiedDiff>): void {
  * fans out to every enabled agent. A failure (a missing provider key is the
  * usual one) propagates — there is no run row to record it on, so the request
  * fails and the caller sees why.
+ *
+ * An EMPTY agent list is refused rather than looped over zero times. `all: true`
+ * resolves to `agentsRepo.listEnabled(workspaceId)`, which is `[]` — with no
+ * error — when every agent in the workspace is disabled, and a 200 with
+ * `reviews: []` makes `devdigest review` count 0 blockers and exit 0, which its
+ * `--help` defines as "the review ran and found nothing blocking". A gate that
+ * reports clean without running anything is fail-open, so this is the one case
+ * the route must fail loudly on.
  */
 export async function runDiffReview(
   container: Container,
@@ -135,6 +180,19 @@ export async function runDiffReview(
   raw: string,
   logger?: Logger,
 ): Promise<DiffReviewResponse> {
+  // First, before the body is even parsed: nothing here depends on the diff, and
+  // a caller whose workspace has no reviewer must hear that rather than a second
+  // complaint about their diff.
+  if (agents.length === 0) {
+    throw new AppError(
+      'no_enabled_agents',
+      'No review agent is enabled in this workspace, so nothing would have reviewed this ' +
+        'diff. Enable at least one agent on the Agents screen, or send `agentId` to name one ' +
+        'explicitly — an empty result here would otherwise read as "no problems found".',
+      409,
+    );
+  }
+
   const diff = parseUnifiedDiff(raw);
   assertReviewable(diff);
 

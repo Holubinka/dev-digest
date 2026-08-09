@@ -50,6 +50,8 @@ const SYMBOL: BlastSymbol = {
       kind: "http",
     },
   ],
+  endpoint_count: 1,
+  endpoints_truncated: false,
 };
 
 /**
@@ -308,6 +310,25 @@ describe("BlastRadiusCard — the answer itself", () => {
 
     expect(await screen.findByText("Showing the top 2 of 37 callers by rank.")).toBeInTheDocument();
     expect(screen.getByText("37 callers")).toBeInTheDocument();
+  });
+
+  /**
+   * The endpoint list is capped by the server at 20 per symbol, because its
+   * length is repository content — one entry per route registration in every
+   * caller file. Twenty badges under a symbol that reaches nine hundred routes is
+   * the same silent lie the caller cap is guarded against above.
+   */
+  it("says how many endpoints were dropped by the cap", async () => {
+    serve({
+      ...VIEW,
+      symbols: [{ ...SYMBOL, endpoint_count: 900, endpoints_truncated: true }],
+      totals: { ...VIEW.totals, endpoints: 900 },
+    });
+    renderCard();
+
+    expect(await screen.findByText("Showing 1 of 900 endpoints and crons.")).toBeInTheDocument();
+    // The stat row is not capped: it is the count the answer actually knows.
+    expect(statCell(messages.stat.endpoints)).toHaveTextContent(/^900\s*endpoints$/);
   });
 });
 

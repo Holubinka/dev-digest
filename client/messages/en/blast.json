@@ -6,6 +6,7 @@
   "explaining": "Explaining…",
   "explainFailed": "The explanation could not be generated.",
   "truncated": "Showing the top {shown} of {count} callers by rank.",
+  "endpointsTruncated": "Showing {shown} of {count} endpoints and crons.",
   "stat": {
     "symbols": "symbols",
     "callers": "callers",

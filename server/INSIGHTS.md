@@ -121,6 +121,29 @@ wholesale, at least one test must wire the REAL collaborator in
 (`test/blast-service.test.ts` → "does not reach getBlastRadius when the flag is off"), because
 the seam between two real methods is where a fake sees nothing.
 
+### Summing a per-hunk property across the whole diff is not a guard — one honest file defeats it
+
+**Symptom.** `POST /reviews/diff` accepted the 49-byte body
+`diff --git a/x b/x\n+++ b/x\n@@ -1,1 +1,16000000 @@`. It parses to 1 file / 1 hunk with
+`newLineNumbers: []`, so `buildLineIndex` (`reviewer-core/src/grounding.ts:31-34`) fell back to
+the *declared* range and blocked the single-process event loop for **1345 ms while allocating
+478 MB** — measured 2026-08-09 with `pnpm exec tsx`. A 20-digit count reaches
+`RangeError: Set maximum size exceeded`. The route runs it once per agent, after each agent's
+paid call, at 6 requests/minute.
+
+**Cause.** `assertReviewable` counted *hunks*, and a hunk is only a header: `@@` declares a
+new-side range, and the lines under it are what cover one.
+
+**Fix.** Refuse a hunk with `newLineNumbers.length === 0 && newLines > 0` — and refuse it
+**per hunk**, not by summing coverage across the diff. The obvious total-based check
+(`sum(newLineNumbers) === 0 → 422`) is defeated by a 95-byte body that puts one real one-line
+file in front of the crafted one: the total is 1, the guard passes, and the crafted hunk still
+built a 16,000,000-entry Set in 1333 ms. Verified both ways before and after the fix; the
+counter-example is `test/reviews-diff-guard.test.ts` → "refuses that hunk even when an honest
+file precedes it". Note the fallback itself still exists in `reviewer-core` — the server refuses
+the input, nothing bounds the loop, so any future caller of `buildLineIndex` inherits the same
+liability.
+
 ## Codebase Patterns
 
 ### Truncate untrusted text BEFORE `wrapUntrusted`, never after
@@ -306,6 +329,58 @@ Applying it also surfaces what the fallback's ordering really is. `capCallersPer
 inert and the surviving 20 are the first 20 *filenames*. Deterministic, and honestly not by
 importance — state that in a comment rather than letting a reader assume the persistent path's
 ranking.
+
+### `parseUnifiedDiff` counts the trailing empty line of a body as a covered context line
+
+**Symptom.** `'@@ -1,1 +1,9 @@\n'` parses to a hunk with `newLineNumbers: [1]`, and the same
+header with no trailing newline parses to `newLineNumbers: []`. A test fixture built with
+`[...].join('\n')` and a final `''` therefore behaves differently from the identical body
+posted by `curl --data-binary`.
+
+**Cause.** The parser's last branch (`adapters/git/diff-parser.ts:70-74`) treats anything that
+is not `+` or `-` as a context line and advances the new-side cursor, and `'x\n'.split('\n')`
+leaves a trailing `''` for it to consume.
+
+**Fix.** When a test is about a hunk that covers *nothing*, end the fixture at the `@@` header
+with no trailing newline — `test/reviews-diff-guard.test.ts` does, and says why. The same quirk
+is why the crafted 49-byte body in the 2026-08-09 finding had to omit its final newline to reach
+`buildLineIndex`'s declared-range fallback: with the newline it covers one line and the fallback
+never runs.
+
+### A `Record` keyed by a repository-derived name is read with `Object.hasOwn`, never bare
+
+**Symptom.** On 2026-08-09 `facts.callerCounts[sym.name]` returned `Object.prototype.toString`
+for a changed symbol named `toString`. `noUncheckedIndexedAccess` types that read
+`number | undefined`, which is exactly what makes `?? callers.length` look sound — the compiler
+cannot see the prototype chain. The consequences were all silent: `JSON.stringify` drops a
+function-valued key so `caller_count` vanished from the response, `b.caller_count -
+a.caller_count` went `NaN`, and `totals.callers` string-concatenated to
+`"0function toString() { [native code] }"`. One level down, a caller *file* named `toString`
+made `factsByFile[file]` a function and the loop threw `labels is not iterable` — a 500 on
+`GET /pulls/:id/blast` caused by a file name.
+
+**Cause.** ast-grep emits class methods under their bare name (`adapters/astgrep/index.ts:272`,
+only `constructor` is in `KEYWORDS`) and `getSymbolRows` applies no kind filter, so
+`class X { toString() {} }` in any changed file produces such a row. The same holds for file
+paths and for the free-form `reason` the indexer stamps.
+
+**Fix.** `Object.hasOwn(record, key)` before the read — the precedent `client/INSIGHTS.md:684`
+records for `value in OBJ`, now applied at `modules/blast/helpers.ts` in three places
+(`REASON_PROSE`, `callerCounts`, `factsByFile`). Pinned by `test/blast-helpers.test.ts`, which
+names the eight inherited keys one by one rather than saying "an inherited key". To find the
+rest: `grep -rn "\[\(sym\|symbol\|file\|name\|reason\|label\|key\)[.a-zA-Z]*\]" src/`.
+
+### A cap on an array that goes over the wire must not reach the number printed beside it
+
+`toView` caps `symbol.endpoints` at `MAX_VIEW_ENDPOINTS` (20) because its length is repository
+content — `extractEndpoints` emits one entry per matching line of a 400 KB file — but
+`totals.endpoints` is what a reviewer reads as *how much this change reaches*. So the distinct
+`(file, label)` keys are collected in `toView` **before** the slice and handed to `totals` as
+parameters; re-deriving them from `symbols[].endpoints` would silently report 20 for a change
+that reaches 500 routes. `endpoint_count` / `endpoints_truncated` carry the same admission into
+the contract, next to the older `caller_count` / `truncated` pair. If you ever simplify
+`totals(...)` back to reading the symbols, the tests that fail are in
+`test/blast-helpers.test.ts` — and the number that silently changes is on the PR page.
 
 ## Tool & Library Notes
 
@@ -689,6 +764,26 @@ full testcontainers run.
   for. Note the spec's own line numbers had already rotted (it says `app.ts:83`, `service.ts` for
   the declaration); the response is the source of truth.
 
+### 2026-08-09 (four majors from the self-review, fixed)
+
+- `diff-review.ts` (two 422 branches → four, plus a 409 for an empty agent list) and
+  `blast/helpers.ts` (three prototype-safe reads, two endpoint caps, `totals` taking its keys as
+  parameters). New hermetic suites: `test/reviews-diff-guard.test.ts`, `test/blast-helpers.test.ts`.
+- **Reproducing first paid for itself twice.** The prescribed fix for the DoS was a whole-diff
+  total; running it against the real functions showed a 95-byte body that walks straight past it
+  (entry above). And the reproduction of the `toString` finding turned up a *fourth* site the
+  report had not named — `factsByFile[file]`, which throws rather than corrupting a number.
+- Nine mutations (eight server, one client) each proven red and restored. The one that took
+  1470 ms to fail is the honest-file-in-front case: the test was slow precisely because the
+  vulnerability was running.
+- The exit-code contract was verified by driving `runCli` with a stubbed `fetch`: the new 409 maps
+  to `EXIT_UNAVAILABLE` (2), while the pre-fix 200-with-`reviews: []` returned 0 and printed "No
+  blocking findings across 0 agent(s)." — a pre-commit hook would have passed on an unreviewed
+  diff.
+- Live against the dev API: the 49-byte body is refused in ~20 ms with the new message, and
+  `GET /pulls/:id/blast` on PR 5 (`Holubinka/dev-digest`) serves 15 symbols carrying the new
+  `endpoint_count` / `endpoints_truncated` fields.
+
 ## Open Questions
 
 - The classifier's PR body and linked-issue text reach `renderClassifierInput` uncapped. Plan 05
@@ -768,3 +863,11 @@ full testcontainers run.
   Settings → Models. Verified live 2026-08-09. Fail-closed and correct, but it means the Explain
   button is dead on a fresh install; worth deciding whether the registry defaults should follow
   the keys that actually exist. Raised 2026-08-09.
+
+- **A `vitest run` immediately after an Edit appeared to execute the pre-edit module once.**
+  On 2026-08-09 the first run of a new test file reported the empty-agent-list guard missing
+  (`{ files: 1, reviews: [] }` returned instead of a throw) while `pnpm typecheck` and the full
+  unit suite had already passed against the new code; the identical command 8 seconds later was
+  green, and stayed green. Vitest 2.1.9, no `--no-cache`. Not reproduced deliberately, so it may
+  equally have been something else — but if a test fails against code you are certain you wrote,
+  re-run once before debugging it. Raised 2026-08-09.

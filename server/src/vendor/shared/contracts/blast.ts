@@ -60,6 +60,15 @@ export type BlastViewCaller = z.infer<typeof BlastViewCaller>;
  * A symbol declared in a changed file, with who calls it.
  * `caller_count` is the count BEFORE the per-symbol cap; `truncated` says the
  * `callers` array is shorter than `caller_count`.
+ *
+ * `endpoints` is capped the same way, and for the same reason: its length is set
+ * by repository content — one entry per matching line of every caller file — so
+ * an answer that carried it whole would be bounded by nothing this codebase
+ * controls. `endpoint_count` is the pre-cap size and `endpoints_truncated` says
+ * the list is short, because a UI that renders one badge per element must be able
+ * to tell "reaches three routes" from "reaches the first three of nine hundred".
+ * The names are asymmetric (`truncated` is already the caller list's) rather than
+ * renamed, which would have been a breaking change to every reader.
  */
 export const BlastSymbol = z.object({
   name: z.string(),
@@ -70,6 +79,8 @@ export const BlastSymbol = z.object({
   caller_count: z.number().int(),
   truncated: z.boolean(),
   endpoints: z.array(BlastEndpoint),
+  endpoint_count: z.number().int(),
+  endpoints_truncated: z.boolean(),
 });
 export type BlastSymbol = z.infer<typeof BlastSymbol>;
 

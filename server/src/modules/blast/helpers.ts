@@ -19,6 +19,31 @@ const MAX_FACT_CHARS = 200;
 const MAX_PROMPT_SYMBOLS = 12;
 /** Callers per symbol carried into the summary prompt. */
 const MAX_PROMPT_CALLERS = 8;
+/**
+ * Endpoints per symbol carried into the summary prompt.
+ *
+ * The prompt caps every other input, and this was the hole: `symbol.endpoints`
+ * is sized by REPOSITORY CONTENT, not by this file. `extractEndpoints`
+ * (`adapters/codeindex/extract.ts:182`) emits one entry per matching line of a
+ * file indexed up to `MAX_FILE_SIZE` (400 KB), and `endpointsForCallers` unions
+ * that across a symbol's caller files — so a routes file with a thousand
+ * registrations put a thousand lines into a paid prompt.
+ */
+const MAX_PROMPT_ENDPOINTS = 8;
+/**
+ * Endpoints per symbol carried over the WIRE, in `BlastSymbol.endpoints`.
+ *
+ * Applied here rather than declared as a `.max()` on the contract for a reason:
+ * a `z.array().max()` on a response schema turns an over-cap answer into a 500
+ * at serialization time, and this array is not the caller's input to fix. The
+ * cap therefore lives where the array is built, and the CONTRACT carries the
+ * fact that it was applied — `endpoint_count` and `endpoints_truncated`, the
+ * same shape `caller_count` / `truncated` already uses for the caller list.
+ *
+ * 20 matches repo-intel's `MAX_CALLERS_PER_SYMBOL` and sits above both readers:
+ * the prompt takes 8, and `mcp/src/project.ts` projects 5.
+ */
+const MAX_VIEW_ENDPOINTS = 20;
 
 /**
  * Prose for the machine-readable reasons repo-intel reports. The card shows this
@@ -34,9 +59,38 @@ const REASON_PROSE: Record<string, string> = {
   no_clone: 'This repository has not been cloned yet.',
 };
 
+/**
+ * `Object.hasOwn`, never a bare index or `in`: `REASON_PROSE` is an object
+ * literal, so `REASON_PROSE['toString']` resolves to `Object.prototype.toString`
+ * and the `?? null` guard never fires — the reason sentence would then read
+ * "function toString() { [native code] } No call sites could be resolved."
+ * `reason` is free-form text the indexer stamped (`types.ts:33`), so the string
+ * is not ours to trust. Same defect class as `client/INSIGHTS.md:684-704`.
+ */
 function prose(reason: string | undefined): string | null {
-  if (!reason) return null;
+  if (!reason || !Object.hasOwn(REASON_PROSE, reason)) return null;
   return REASON_PROSE[reason] ?? null;
+}
+
+/**
+ * The pre-cap caller count for one symbol, read prototype-safely.
+ *
+ * `capCallersPerSymbol` builds `const counts: Record<string, number> = {}`
+ * (`repo-intel/service.ts:872`), and ast-grep emits class methods under their
+ * BARE name (`adapters/astgrep/index.ts:272`) with no kind filter downstream —
+ * so `class X { toString() {} }` in a changed file really does reach this
+ * lookup. Bare-indexed, it returned `Object.prototype.toString`:
+ * `noUncheckedIndexedAccess` types that `number | undefined` and `??` never
+ * fires, `caller_count` became a function, `JSON.stringify` dropped the key from
+ * the response, the sort comparator went `NaN` and `totals.callers`
+ * string-concatenated to `"0function toString() { [native code] }"`.
+ */
+function ownCallerCount(
+  counts: Record<string, number> | undefined,
+  name: string,
+): number | undefined {
+  if (!counts || !Object.hasOwn(counts, name)) return undefined;
+  return counts[name];
 }
 
 /**
@@ -109,6 +163,11 @@ interface ToViewInput {
  * has ever been reviewed. The `?? callers.length` fallback is now only reached by
  * a facts object carrying no counts at all — both repo-intel paths cap and report.
  *
+ * `endpoints` is capped here too, and `endpoint_count` carries the pre-cap size
+ * so a short list never reads as a small blast radius. The distinct-key sets fed
+ * to `totals` are collected BEFORE the cap: the stat row is what a reviewer reads
+ * as "how much this reaches", and counting only the listed rows would shrink it.
+ *
  * `link_sha` is the index's commit, never the PR head: every `line` below was
  * recorded by the indexer against that tree, so it is the only commit at which
  * they resolve. `index_matches_head` is the one bit a UI needs to say so.
@@ -118,10 +177,17 @@ export function toView(input: ToViewInput): BlastRadiusView {
   const byDepth = new Map(input.downstream.map((d) => [d.file, d]));
   const callersBySymbol = groupCallers(facts?.callers ?? []);
   const factsByFile = facts?.factsByFile ?? {};
+  const attributedEndpoints = new Set<string>();
+  const attributedCrons = new Set<string>();
 
   const symbols: BlastSymbol[] = (facts?.changedSymbols ?? []).map((sym) => {
     const callers = callersBySymbol.get(sym.name) ?? [];
-    const callerCount = facts?.callerCounts?.[sym.name] ?? callers.length;
+    const callerCount = ownCallerCount(facts?.callerCounts, sym.name) ?? callers.length;
+    const endpoints = endpointsForCallers(callers, factsByFile, byDepth);
+    for (const endpoint of endpoints) {
+      const into = endpoint.kind === 'http' ? attributedEndpoints : attributedCrons;
+      into.add(`${endpoint.file}|${endpoint.label}`);
+    }
     return {
       name: sym.name,
       kind: sym.kind,
@@ -130,7 +196,9 @@ export function toView(input: ToViewInput): BlastRadiusView {
       callers: callers.map(toViewCaller),
       caller_count: callerCount,
       truncated: callerCount > callers.length,
-      endpoints: endpointsForCallers(callers, factsByFile, byDepth),
+      endpoints: endpoints.slice(0, MAX_VIEW_ENDPOINTS),
+      endpoint_count: endpoints.length,
+      endpoints_truncated: endpoints.length > MAX_VIEW_ENDPOINTS,
     };
   });
 
@@ -158,7 +226,7 @@ export function toView(input: ToViewInput): BlastRadiusView {
     index_matches_head: linkSha !== null && linkSha === input.headSha,
     changed_files: input.changedFiles,
     symbols,
-    totals: totals(symbols, input.downstream),
+    totals: totals(symbols, attributedEndpoints, attributedCrons, input.downstream),
     summary: input.summary ?? null,
   };
 }
@@ -199,6 +267,12 @@ function endpointsForCallers(
   const out: BlastEndpoint[] = [];
   const seen = new Set<string>();
   for (const file of [...new Set(callers.map((c) => c.file))].sort(cmpText)) {
+    // `Object.hasOwn` for the reason `prose` uses it: the keys are repository
+    // paths, and a top-level file named `toString` made `factsByFile[file]`
+    // resolve to `Object.prototype.toString`. The `if (!fileFacts)` guard passes
+    // a function happily, and the loop below then threw "labels is not iterable"
+    // — a 500 on `GET /pulls/:id/blast` from a file name.
+    if (!Object.hasOwn(factsByFile, file)) continue;
     const fileFacts = factsByFile[file];
     if (!fileFacts) continue;
     const depth = clampDepth(byDepth.get(file)?.depth ?? 1);
@@ -226,18 +300,20 @@ function endpointsForCallers(
  * found. Under-reporting here would be the worse error: a change that lands two
  * hops from a route is exactly the case this feature exists to surface, and it
  * would show 0.
+ *
+ * Which is why the attributed keys arrive as PARAMETERS instead of being read
+ * back off `symbols[].endpoints`: that array is capped at MAX_VIEW_ENDPOINTS, and
+ * re-deriving the totals from it would silently apply the wire cap to the counts.
+ * The sets are copied rather than mutated so this stays a pure function.
  */
 function totals(
   symbols: BlastSymbol[],
+  attributedEndpoints: ReadonlySet<string>,
+  attributedCrons: ReadonlySet<string>,
   downstream: DownstreamFile[],
 ): BlastRadiusView['totals'] {
-  const endpoints = new Set<string>();
-  const crons = new Set<string>();
-  for (const symbol of symbols) {
-    for (const endpoint of symbol.endpoints) {
-      (endpoint.kind === 'http' ? endpoints : crons).add(`${endpoint.file}|${endpoint.label}`);
-    }
-  }
+  const endpoints = new Set(attributedEndpoints);
+  const crons = new Set(attributedCrons);
   for (const file of downstream) {
     for (const label of file.endpoints) endpoints.add(`${file.file}|${label}`);
     for (const label of file.crons) crons.add(`${file.file}|${label}`);
@@ -304,12 +380,19 @@ export function renderSummaryFacts(view: BlastRadiusView): string {
         clampCodePoints(`    called by ${caller.symbol} at ${caller.file}:${caller.line}`, MAX_FACT_CHARS),
       );
     }
-    for (const endpoint of symbol.endpoints) {
+    for (const endpoint of symbol.endpoints.slice(0, MAX_PROMPT_ENDPOINTS)) {
       lines.push(
         clampCodePoints(
           `    reaches ${endpoint.kind === 'http' ? 'endpoint' : 'cron'} ${endpoint.label} in ${endpoint.file} (${endpoint.depth} hop(s))`,
           MAX_FACT_CHARS,
         ),
+      );
+    }
+    // Counted off `endpoint_count`, not off the array, so the sentence covers
+    // BOTH caps: what this prompt dropped and what the wire dropped before it.
+    if (symbol.endpoint_count > MAX_PROMPT_ENDPOINTS) {
+      lines.push(
+        `    (${symbol.endpoint_count - MAX_PROMPT_ENDPOINTS} further endpoint(s) or cron(s) not listed.)`,
       );
     }
   }

@@ -673,6 +673,27 @@ That is why `POST /reviews/diff` refuses such a body with a 422 **before** calli
 (`reviews/diff-loader.ts`) — owes the same check: `diff.files.reduce((n, f) => n + f.hunks.length, 0) > 0`.
 `files.length > 0` is not enough, and neither the type system nor any test catches the difference.
 
+**2026-08-09, extending the above: the hunk count is not enough either.** A hunk is a header.
+`buildLineIndex` falls back to the *declared* `@@` range when a hunk carries no new-side line
+(`reviewer-core/src/grounding.ts:31-34`), so `@@ -1,1 +1,16000000 @@` with nothing under it is a
+49-byte request that allocates 478 MB and blocks the event loop for 1345 ms — per agent, after
+each paid call. The check a hand-built `UnifiedDiff` owes is therefore per hunk, not per diff:
+no hunk may have `newLineNumbers.length === 0 && newLines > 0`. Summing coverage across the diff
+is defeated by one honest file placed in front of the crafted one. Details and the counter-example
+are in `server/INSIGHTS.md`; the fallback in `reviewer-core` is unchanged and still unbounded.
+
+### Widening a vendored contract moves four files, and only `client/pnpm typecheck` finds the fourth
+
+Adding two required fields to `BlastSymbol` (`vendor/shared/contracts/blast.ts`) on 2026-08-09
+touched, in this order: the **server** copy (the source of truth), the client copy via
+`cp` + `diff -r`, the component that reads them — and `BlastRadiusCard.test.tsx`, whose fixture is
+annotated `const SYMBOL: BlastSymbol`, so it stopped compiling with
+`TS2739: missing the following properties`. That last one is invisible to the `shared-sync` gate
+(both copies agreed), to `server/pnpm typecheck`, and to the client's *tests*, which pass a
+fixture the compiler has already rejected. Only `cd client && pnpm typecheck` reports it. A
+fixture typed as the contract is the good pattern — it is what makes the omission loud — but it
+means "mirror the contract" is three steps, not one.
+
 ## Tool & Library Notes
 
 ### GitHub's "Download ZIP" flattens the `CLAUDE.md` symlinks into 9-byte text files

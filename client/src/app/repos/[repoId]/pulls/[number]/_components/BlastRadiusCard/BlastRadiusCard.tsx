@@ -259,6 +259,19 @@ function SymbolDisclosure({
           ))}
         </div>
       )}
+
+      {/* The server caps this list — its length is set by how many routes the
+          indexed repository declares, not by anything here — so the badges are a
+          sample, and the count beside them is what stops the sample reading as
+          the whole. Same contract as `truncated` above. */}
+      {symbol.endpoints_truncated && (
+        <p style={s.hint}>
+          {t("endpointsTruncated", {
+            shown: symbol.endpoints.length,
+            count: symbol.endpoint_count,
+          })}
+        </p>
+      )}
     </details>
   );
 }

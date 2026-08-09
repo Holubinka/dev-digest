@@ -67,10 +67,11 @@ flowchart TB
     repos["repos<br/>/repos"]
     pulls["pulls<br/>/pulls/:id · /pulls/:id/comments"]
     intent["intent<br/>/pulls/:id/intent"]
+    blast["blast<br/>/pulls/:id/blast · /pulls/:id/blast/summary"]
     polling["polling<br/>/repos/:id/poll"]
   end
   subgraph Review["Review & runs"]
-    reviews["reviews<br/>/pulls/:id/review · /reviews · /findings/:id/(accept|dismiss)<br/>/runs/:id/(events|trace)"]
+    reviews["reviews<br/>/pulls/:id/review · /reviews · /reviews/diff · /findings/:id/(accept|dismiss)<br/>/runs/:id/(events|trace)"]
   end
   subgraph Agents["Agents & skills"]
     agents["agents<br/>/agents · /agents/:id · /agents/:id/skills (bindings)"]
