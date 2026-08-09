@@ -11,7 +11,7 @@ export type Mode = (typeof MODES)[number];
 
 export type ParsedArgs =
   | { kind: 'help' }
-  | { kind: 'review'; mode: Mode }
+  | { kind: 'review'; mode: Mode; agent?: string }
   | { kind: 'error'; message: string };
 
 function isMode(value: string): value is Mode {
@@ -40,8 +40,24 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   }
 
   let mode: Mode = 'working';
+  let agent: string | undefined;
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i]!;
+    if (arg === '--agent') {
+      const value = rest[++i];
+      if (value === undefined || value.trim() === '') {
+        return { kind: 'error', message: '--agent needs an agent name.' };
+      }
+      agent = value.trim();
+      continue;
+    }
+    const inlineAgent = /^--agent=(.*)$/.exec(arg);
+    if (inlineAgent) {
+      const value = inlineAgent[1]!.trim();
+      if (value === '') return { kind: 'error', message: '--agent needs an agent name.' };
+      agent = value;
+      continue;
+    }
     if (arg === '--mode') {
       const value = rest[++i];
       if (value === undefined) {
@@ -71,7 +87,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     return { kind: 'error', message: `Unknown option ${JSON.stringify(arg)}.` };
   }
 
-  return { kind: 'review', mode };
+  return agent === undefined ? { kind: 'review', mode } : { kind: 'review', mode, agent };
 }
 
 /**
@@ -92,6 +108,10 @@ Options:
   --mode <working|staged|branch>  What to review. Default: working.
                                   "staged" and "branch" are reserved names and
                                   exit 2 with "not implemented".
+  --agent <name>                  Review with ONE agent instead of every enabled
+                                  one. The name is the one the Agents screen
+                                  shows, e.g. "Security Reviewer".
+                                  One paid model call instead of N.
   -h, --help                      Print this and exit 0.
 
 What gets reviewed:
@@ -115,10 +135,14 @@ Exit codes:
      DevDigest API being unreachable
 
 Cost and persistence:
-  Every ENABLED agent reviews the diff — one paid model call each. Nothing is
-  persisted: there is no pull request to attach a run, a review or a finding to.
+  Without --agent, every ENABLED agent reviews the diff — one paid model call
+  each, and they run one after another, so five agents take five times as long.
+  --agent narrows that to one. Nothing is persisted either way: there is no pull
+  request to attach a run, a review or a finding to.
 
 Environment:
-  DEVDIGEST_API_URL             default http://localhost:3001 (loopback only)
-  DEVDIGEST_MCP_RUN_TIMEOUT_MS  default 120000 — how long to wait for the review
+  DEVDIGEST_API_URL          default http://localhost:3001 (loopback only)
+  DEVDIGEST_CLI_TIMEOUT_MS   default 600000 — how long to wait for the review.
+                             Reviewing with every enabled agent is what gets
+                             near this; --agent stays far below it.
 `;

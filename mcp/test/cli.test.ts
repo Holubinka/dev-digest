@@ -59,6 +59,8 @@ interface HarnessOptions {
   status?: number;
   /** Make every git invocation fail, the way a non-repository does. */
   gitFails?: boolean;
+  /** What `GET /agents` answers with, for the `--agent` path. */
+  agents?: { id: string; name: string; description: string; model: string; enabled: boolean }[];
 }
 
 function harness(options: HarnessOptions = {}) {
@@ -70,6 +72,14 @@ function harness(options: HarnessOptions = {}) {
   const fetchImpl: FetchLike = async (input, init) => {
     const { pathname } = new URL(String(input));
     posted.push({ path: pathname, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+    if (pathname === '/agents') {
+      return json(
+        options.agents ?? [
+          { id: 'a-sec', name: 'Security Reviewer', description: 'd', model: 'm', enabled: true },
+          { id: 'a-gen', name: 'General Reviewer', description: 'd', model: 'm', enabled: true },
+        ],
+      );
+    }
     return json(options.response ?? { files: 1, reviews: [] }, options.status ?? 200);
   };
 
@@ -216,5 +226,57 @@ describe('devdigest review', () => {
 
     expect(await runCli(['review'], h.deps)).toBe(EXIT_UNAVAILABLE);
     expect(h.err.join('\n')).toContain('does not recognise');
+  });
+
+  /**
+   * `--agent` exists because the default fans out to EVERY enabled agent, one
+   * paid call each, run one after another: five agents over a 728-character
+   * diff measured 110s. One agent is the difference between a demo and a wait.
+   */
+  it('reviews with a single named agent, resolving the name to an id first', async () => {
+    const h = harness({ response: { files: 1, reviews: [review({ blockers: 0, findings: [] })] } });
+
+    expect(await runCli(['review', '--agent', 'Security Reviewer'], h.deps)).toBe(EXIT_CLEAN);
+
+    // The name is translated, not passed through: the wire takes an id.
+    expect(h.posted.map((p) => p.path)).toEqual(['/agents', '/reviews/diff']);
+    expect(h.posted[1]!.body).toEqual({ diff: DIFF, agentId: 'a-sec' });
+    // And `all` is gone — otherwise the server would fan out anyway.
+    expect(h.posted[1]!.body).not.toHaveProperty('all');
+  });
+
+  it('accepts the inline form and matches the name case-insensitively', async () => {
+    const h = harness({ response: { files: 1, reviews: [review({ blockers: 0, findings: [] })] } });
+
+    expect(await runCli(['review', '--agent=security reviewer'], h.deps)).toBe(EXIT_CLEAN);
+    expect(h.posted[1]!.body).toEqual({ diff: DIFF, agentId: 'a-sec' });
+  });
+
+  it('refuses an unknown agent by name, listing the real ones, and spends nothing', async () => {
+    const h = harness();
+
+    expect(await runCli(['review', '--agent', 'Nope'], h.deps)).toBe(EXIT_UNAVAILABLE);
+
+    // The review route is never reached, so no model call is paid for.
+    expect(h.posted.map((p) => p.path)).toEqual(['/agents']);
+    expect(h.err.join('\n')).toMatch(/Nope/);
+    expect(h.err.join('\n')).toMatch(/list_agents/);
+  });
+
+  it('rejects --agent with no value before touching git or the API', async () => {
+    const h = harness();
+
+    expect(await runCli(['review', '--agent'], h.deps)).toBe(EXIT_UNAVAILABLE);
+    expect(h.gitCalls).toEqual([]);
+    expect(h.posted).toEqual([]);
+  });
+
+  it('documents --agent in the help, next to what it costs', async () => {
+    const h = harness();
+
+    expect(await runCli(['--help'], h.deps)).toBe(EXIT_CLEAN);
+    const help = h.out.join('\n');
+    expect(help).toMatch(/--agent <name>/);
+    expect(help).toMatch(/one paid model call/i);
   });
 });

@@ -18,6 +18,7 @@
  */
 
 import type { ApiClient } from '../api/client.js';
+import { Resolver } from '../api/resolve.js';
 import { compareFindings } from '../project.js';
 import { HELP, parseArgs } from './args.js';
 import { MAX_DIFF_CHARS, repoRoot, workingDiff, type ExecLike } from './git.js';
@@ -88,14 +89,23 @@ export async function runCli(argv: readonly string[], deps: CliDeps): Promise<nu
       return EXIT_UNAVAILABLE;
     }
 
+    // `--agent` is a NAME on the command line and an id on the wire, and the
+    // translation is the resolver the MCP tools already use — so an unknown name
+    // comes back listing the valid ones rather than as a 404 from the API.
+    let target: { diff: string; all: true } | { diff: string; agentId: string } = {
+      diff,
+      all: true,
+    };
+    if (parsed.agent !== undefined) {
+      const { id, name } = await new Resolver(deps.client).agentId(parsed.agent);
+      target = { diff, agentId: id };
+      deps.err(`Reviewing with one agent: ${name}.`);
+    }
+
     deps.err(`Reviewing ${diff.length} characters of working-tree diff from ${root}…`);
-    const payload = await deps.client.post(
-      '/reviews/diff',
-      // Every enabled agent, because the CLI takes no agent argument. The
-      // server resolves this with the same `resolveTargets` the PR route uses.
-      { diff, all: true },
-      DiffReviewPayload,
-    );
+    // Either shape is resolved server-side by the same `resolveTargets` the PR
+    // route uses — the CLI decides who reviews, never how.
+    const payload = await deps.client.post('/reviews/diff', target, DiffReviewPayload);
 
     let blockers = 0;
     for (const review of payload.reviews) {
