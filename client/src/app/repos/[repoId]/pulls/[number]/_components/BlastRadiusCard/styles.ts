@@ -35,6 +35,32 @@ export const s = {
     color: "var(--text-muted)",
   } satisfies CSSProperties,
 
+  /** `tree | graph`, in the card header. Segmented, so the two read as one control. */
+  viewToggle: {
+    display: "inline-flex",
+    border: "1px solid var(--border)",
+    borderRadius: 6,
+    overflow: "hidden",
+  } satisfies CSSProperties,
+  viewBtn: {
+    padding: "3px 9px",
+    border: "none",
+    background: "transparent",
+    fontSize: 11,
+    fontWeight: 600,
+    letterSpacing: "0.06em",
+    textTransform: "uppercase",
+    color: "var(--text-muted)",
+    cursor: "pointer",
+  } satisfies CSSProperties,
+  viewBtnOn: {
+    background: "var(--bg-hover)",
+    color: "var(--text-primary)",
+  } satisfies CSSProperties,
+
+  /** The modal body has no padding of its own (`vendor/ui/kit/Modal.tsx:60`). */
+  graphBody: { padding: "16px 24px 22px" } satisfies CSSProperties,
+
   /** `partial` / `degraded` is its own visible state, never a shorter list. */
   banner: {
     display: "flex",

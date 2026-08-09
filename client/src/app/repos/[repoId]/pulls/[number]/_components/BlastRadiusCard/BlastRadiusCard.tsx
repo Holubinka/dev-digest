@@ -2,11 +2,13 @@
 
 import React from "react";
 import { useTranslations } from "next-intl";
-import { Badge, Button, Icon, MonoLink, SectionLabel, Skeleton } from "@devdigest/ui";
+import { Badge, Button, Icon, Modal, MonoLink, SectionLabel, Skeleton } from "@devdigest/ui";
+import { MermaidDiagram } from "@/components/mermaid-diagram";
 import { githubBlobUrl } from "@/lib/github-urls";
 import { useBlastRadius, useExplainBlast } from "@/lib/hooks/blast";
 import type { BlastRadiusView, BlastSymbol } from "@/lib/types";
 import { s } from "./styles";
+import { toMermaid } from "./toMermaid";
 
 /**
  * The abbreviated form git itself prints. `String.slice` is safe here and only
@@ -40,11 +42,21 @@ export function BlastRadiusCard({ prId }: BlastRadiusCardProps) {
   const t = useTranslations("blast");
   const { data: view, isLoading, isError } = useBlastRadius(prId);
   const explain = useExplainBlast(prId);
+  /**
+   * The `graph` half of the toggle opens a MODAL; it does not swap the card's
+   * body. This card is one column of a two-column Overview grid, and PR #12's
+   * answer is 30 symbols, 20 call sites and 38 endpoints — a graph of that size
+   * drawn into half a column is a smudge. The tree stays the card.
+   */
+  const [graphOpen, setGraphOpen] = React.useState(false);
 
-  // Four states, in this order, none of them masking another.
+  // Four states, in this order, none of them masking another. `right` is
+  // required rather than defaulted on purpose: an optional slot silently absent
+  // is how a whole feature was disabled twice here (`client/INSIGHTS.md:163-249`),
+  // so each state states that it has no toggle instead of omitting one.
   if (isError) {
     return (
-      <CardShell title={t("title")}>
+      <CardShell title={t("title")} right={null}>
         <p style={s.note}>{t("failed")}</p>
       </CardShell>
     );
@@ -52,7 +64,7 @@ export function BlastRadiusCard({ prId }: BlastRadiusCardProps) {
 
   if (isLoading && !view) {
     return (
-      <CardShell title={t("title")}>
+      <CardShell title={t("title")} right={null}>
         <Skeleton height={16} style={s.skeletonRow} />
         <Skeleton width="70%" height={12} />
       </CardShell>
@@ -65,7 +77,7 @@ export function BlastRadiusCard({ prId }: BlastRadiusCardProps) {
   // yet" falls through to here, the empty state, and never to the failure above.
   if (!view) {
     return (
-      <CardShell title={t("title")}>
+      <CardShell title={t("title")} right={null}>
         <p style={s.note}>{t("unavailable")}</p>
       </CardShell>
     );
@@ -76,7 +88,10 @@ export function BlastRadiusCard({ prId }: BlastRadiusCardProps) {
   const noDownstream = view.symbols.length > 0 && view.totals.callers === 0;
 
   return (
-    <CardShell title={t("title")}>
+    <CardShell
+      title={t("title")}
+      right={<ViewToggle graph={graphOpen} onSelect={setGraphOpen} />}
+    >
       {view.status !== "full" && <IndexBanner status={view.status} reason={view.reason} />}
 
       {/* The links below open `link_sha`, not the PR head. Saying so is the
@@ -126,17 +141,118 @@ export function BlastRadiusCard({ prId }: BlastRadiusCardProps) {
           {explain.isPending ? t("explaining") : t("explain")}
         </Button>
       </div>
+
+      {graphOpen && <GraphModal view={view} onClose={() => setGraphOpen(false)} />}
     </CardShell>
   );
 }
 
 /** The frame every state shares, so the four never drift apart visually. */
-function CardShell({ title, children }: { title: string; children: React.ReactNode }) {
+function CardShell({
+  title,
+  right,
+  children,
+}: {
+  title: string;
+  right: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
     <section style={s.card}>
-      <SectionLabel icon="Workflow">{title}</SectionLabel>
+      <SectionLabel icon="Workflow" right={right}>
+        {title}
+      </SectionLabel>
       {children}
     </section>
+  );
+}
+
+/**
+ * `tree | graph`. Two buttons rather than a `<select>` or a checkbox: there are
+ * two positions, both are always available, and `aria-pressed` says which one is
+ * current without inventing a widget a screen reader has to be taught.
+ *
+ * It is not a "view" state machine — `graph` is the modal's open flag. Adding a
+ * third position later is where a real `view` union starts earning its keep.
+ */
+function ViewToggle({
+  graph,
+  onSelect,
+}: {
+  graph: boolean;
+  onSelect: (graph: boolean) => void;
+}) {
+  const t = useTranslations("blast");
+
+  return (
+    <div style={s.viewToggle}>
+      <button
+        type="button"
+        aria-pressed={!graph}
+        onClick={() => onSelect(false)}
+        style={{ ...s.viewBtn, ...(graph ? {} : s.viewBtnOn) }}
+      >
+        {t("view.tree")}
+      </button>
+      <button
+        type="button"
+        aria-pressed={graph}
+        onClick={() => onSelect(true)}
+        style={{ ...s.viewBtn, ...(graph ? s.viewBtnOn : {}) }}
+      >
+        {t("view.graph")}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * The same answer the tree is rendering, drawn as changed symbol → call site →
+ * endpoint. No second request, no second contract: `toMermaid` reads the view
+ * the card already has.
+ *
+ * The chart is built during this component's render, and this component only
+ * mounts while the modal is open — which is the cheapest possible "compute it
+ * lazily" and needs no `useMemo` to say so.
+ */
+function GraphModal({ view, onClose }: { view: BlastRadiusView; onClose: () => void }) {
+  const t = useTranslations("blast");
+  const { chart, shown, total } = toMermaid(view);
+
+  return (
+    <Modal
+      width={1100}
+      title={t("title")}
+      // Not decoration: the graph is capped and the tree is not, so the modal
+      // has to say what it left out. A map missing half its roads and not
+      // saying so is worse than no map.
+      subtitle={
+        chart === ""
+          ? undefined
+          : t("graph.showing", {
+              symbols: shown.symbols,
+              symbolTotal: total.symbols,
+              callers: shown.callers,
+              callerTotal: total.callers,
+              endpoints: shown.endpoints,
+              endpointTotal: total.endpoints,
+            })
+      }
+      onClose={onClose}
+    >
+      <div style={s.graphBody}>
+        {chart === "" ? (
+          <p style={s.note}>{t("graph.empty")}</p>
+        ) : (
+          // `role="img"` with a name, because the SVG mermaid injects is a
+          // picture: its text nodes are laid out by position, and reading them
+          // in DOM order says nothing true about the graph.
+          <div role="img" aria-label={t("graph.ariaLabel")}>
+            <MermaidDiagram chart={chart} />
+          </div>
+        )}
+      </div>
+    </Modal>
   );
 }
 

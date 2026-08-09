@@ -27,6 +27,12 @@ reviewer-core engine, so the loop is usable before a PR exists.
   Settings screen), **`--mode staged` / `--mode branch`** (validated and refused, not
   implemented), and **e2e** (no `e2e/specs/*.flow.json` change).
 
+**Follow-up, 2026-08-09 — the toggle was built after all,** at the user's request once the rest
+had shipped. It lives in `client/src/app/repos/[repoId]/pulls/[number]/_components/BlastRadiusCard/`:
+a `tree | graph` control in the card header whose `graph` half opens a capped `MermaidDiagram` of
+the same `BlastRadiusView` in a modal (`toMermaid.ts`), with no new request and no new contract.
+The bullet above is left standing — it was the decision at the time.
+
 ## What already exists
 
 | Path | What it gives us |

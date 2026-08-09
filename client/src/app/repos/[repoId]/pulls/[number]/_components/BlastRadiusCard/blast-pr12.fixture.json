@@ -1,0 +1,1181 @@
+{
+  "status": "full",
+  "reason": null,
+  "repo_full_name": "Holubinka/dev-digest",
+  "head_sha": "de50d5c364fb803f7ac4d53ffc34450d968bdf98",
+  "link_sha": "66727c85ce06d7b16e64f888925d131d558cbe51",
+  "index_matches_head": false,
+  "changed_files": [
+    "server/src/db/schema/agents.ts",
+    "server/src/modules/reviews/constants.ts",
+    "server/src/modules/reviews/diff-loader.ts",
+    "server/src/modules/reviews/helpers.ts",
+    "server/src/modules/reviews/run-executor.ts",
+    "server/src/modules/reviews/service.ts",
+    "server/src/modules/reviews/types.ts",
+    "server/test/reviews-repo-intel-once.test.ts"
+  ],
+  "symbols": [
+    {
+      "name": "taskLine",
+      "kind": "function",
+      "file": "server/src/modules/reviews/helpers.ts",
+      "line": 82,
+      "callers": [
+        {
+          "file": "server/src/modules/reviews/run-executor.ts",
+          "symbol": "runOneAgent",
+          "line": 184,
+          "rank": 0.001988696171233137
+        },
+        {
+          "file": "server/test/reviews-helpers.test.ts",
+          "symbol": "reviews-helpers.test.ts",
+          "line": 20,
+          "rank": 0.001568244206123978
+        }
+      ],
+      "caller_count": 2,
+      "truncated": false,
+      "endpoints": [],
+      "endpoint_count": 0,
+      "endpoints_truncated": false
+    },
+    {
+      "name": "ReviewService",
+      "kind": "class",
+      "file": "server/src/modules/reviews/service.ts",
+      "line": 28,
+      "callers": [
+        {
+          "file": "server/src/app.ts",
+          "symbol": "buildApp",
+          "line": 81,
+          "rank": 0.003702500922537583
+        },
+        {
+          "file": "server/src/modules/reviews/routes.ts",
+          "symbol": "reviewsRoutes",
+          "line": 22,
+          "rank": 0.001790593698583974
+        }
+      ],
+      "caller_count": 2,
+      "truncated": false,
+      "endpoints": [
+        {
+          "label": "GET /health",
+          "file": "server/src/app.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /health/ready",
+          "file": "server/src/app.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /pulls/:id/runs/active",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /pulls/:id/runs",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "DELETE /runs/:id",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "POST /runs/:id/cancel",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /runs/:id/trace",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /pulls/:id/reviews",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "DELETE /reviews/:id",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "POST /findings/:id/${action}",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        }
+      ],
+      "endpoint_count": 10,
+      "endpoints_truncated": false
+    },
+    {
+      "name": "loadDiff",
+      "kind": "function",
+      "file": "server/src/modules/reviews/diff-loader.ts",
+      "line": 12,
+      "callers": [
+        {
+          "file": "server/src/modules/reviews/run-executor.ts",
+          "symbol": "executeRuns",
+          "line": 97,
+          "rank": 0.001988696171233137
+        }
+      ],
+      "caller_count": 1,
+      "truncated": false,
+      "endpoints": [],
+      "endpoint_count": 0,
+      "endpoints_truncated": false
+    },
+    {
+      "name": "findingRowToDto",
+      "kind": "function",
+      "file": "server/src/modules/reviews/helpers.ts",
+      "line": 34,
+      "callers": [
+        {
+          "file": "server/src/modules/reviews/findings.ts",
+          "symbol": "actOnFinding",
+          "line": 25,
+          "rank": 0.001988696171233137
+        }
+      ],
+      "caller_count": 1,
+      "truncated": false,
+      "endpoints": [],
+      "endpoint_count": 0,
+      "endpoints_truncated": false
+    },
+    {
+      "name": "reviewToDto",
+      "kind": "function",
+      "file": "server/src/modules/reviews/helpers.ts",
+      "line": 55,
+      "callers": [
+        {
+          "file": "server/src/modules/reviews/service.ts",
+          "symbol": "reviewsForPull",
+          "line": 172,
+          "rank": 0.0024733612351757815
+        }
+      ],
+      "caller_count": 1,
+      "truncated": false,
+      "endpoints": [],
+      "endpoint_count": 0,
+      "endpoints_truncated": false
+    },
+    {
+      "name": "ReviewRunExecutor",
+      "kind": "class",
+      "file": "server/src/modules/reviews/run-executor.ts",
+      "line": 43,
+      "callers": [
+        {
+          "file": "server/src/modules/reviews/service.ts",
+          "symbol": "ReviewService",
+          "line": 36,
+          "rank": 0.0024733612351757815
+        }
+      ],
+      "caller_count": 1,
+      "truncated": false,
+      "endpoints": [],
+      "endpoint_count": 0,
+      "endpoints_truncated": false
+    },
+    {
+      "name": "executeRuns",
+      "kind": "method",
+      "file": "server/src/modules/reviews/run-executor.ts",
+      "line": 55,
+      "callers": [
+        {
+          "file": "server/src/modules/reviews/service.ts",
+          "symbol": "runReview",
+          "line": 133,
+          "rank": 0.0024733612351757815
+        }
+      ],
+      "caller_count": 1,
+      "truncated": false,
+      "endpoints": [],
+      "endpoint_count": 0,
+      "endpoints_truncated": false
+    },
+    {
+      "name": "resolveTargets",
+      "kind": "method",
+      "file": "server/src/modules/reviews/service.ts",
+      "line": 46,
+      "callers": [
+        {
+          "file": "server/src/modules/reviews/routes.ts",
+          "symbol": "reviewsRoutes",
+          "line": 33,
+          "rank": 0.001790593698583974
+        }
+      ],
+      "caller_count": 1,
+      "truncated": false,
+      "endpoints": [
+        {
+          "label": "GET /pulls/:id/runs/active",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /pulls/:id/runs",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "DELETE /runs/:id",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "POST /runs/:id/cancel",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /runs/:id/trace",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /pulls/:id/reviews",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "DELETE /reviews/:id",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "POST /findings/:id/${action}",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        }
+      ],
+      "endpoint_count": 8,
+      "endpoints_truncated": false
+    },
+    {
+      "name": "deleteReview",
+      "kind": "method",
+      "file": "server/src/modules/reviews/service.ts",
+      "line": 60,
+      "callers": [
+        {
+          "file": "server/src/modules/reviews/routes.ts",
+          "symbol": "reviewsRoutes",
+          "line": 137,
+          "rank": 0.001790593698583974
+        }
+      ],
+      "caller_count": 1,
+      "truncated": false,
+      "endpoints": [
+        {
+          "label": "GET /pulls/:id/runs/active",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /pulls/:id/runs",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "DELETE /runs/:id",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "POST /runs/:id/cancel",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /runs/:id/trace",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /pulls/:id/reviews",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "DELETE /reviews/:id",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "POST /findings/:id/${action}",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        }
+      ],
+      "endpoint_count": 8,
+      "endpoints_truncated": false
+    },
+    {
+      "name": "activeRuns",
+      "kind": "method",
+      "file": "server/src/modules/reviews/service.ts",
+      "line": 65,
+      "callers": [
+        {
+          "file": "server/src/modules/reviews/routes.ts",
+          "symbol": "reviewsRoutes",
+          "line": 97,
+          "rank": 0.001790593698583974
+        }
+      ],
+      "caller_count": 1,
+      "truncated": false,
+      "endpoints": [
+        {
+          "label": "GET /pulls/:id/runs/active",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /pulls/:id/runs",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "DELETE /runs/:id",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "POST /runs/:id/cancel",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /runs/:id/trace",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /pulls/:id/reviews",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "DELETE /reviews/:id",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "POST /findings/:id/${action}",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        }
+      ],
+      "endpoint_count": 8,
+      "endpoints_truncated": false
+    },
+    {
+      "name": "listRuns",
+      "kind": "method",
+      "file": "server/src/modules/reviews/service.ts",
+      "line": 70,
+      "callers": [
+        {
+          "file": "server/src/modules/reviews/routes.ts",
+          "symbol": "reviewsRoutes",
+          "line": 103,
+          "rank": 0.001790593698583974
+        }
+      ],
+      "caller_count": 1,
+      "truncated": false,
+      "endpoints": [
+        {
+          "label": "GET /pulls/:id/runs/active",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /pulls/:id/runs",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "DELETE /runs/:id",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "POST /runs/:id/cancel",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /runs/:id/trace",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /pulls/:id/reviews",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "DELETE /reviews/:id",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "POST /findings/:id/${action}",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        }
+      ],
+      "endpoint_count": 8,
+      "endpoints_truncated": false
+    },
+    {
+      "name": "deleteRun",
+      "kind": "method",
+      "file": "server/src/modules/reviews/service.ts",
+      "line": 75,
+      "callers": [
+        {
+          "file": "server/src/modules/reviews/routes.ts",
+          "symbol": "reviewsRoutes",
+          "line": 109,
+          "rank": 0.001790593698583974
+        }
+      ],
+      "caller_count": 1,
+      "truncated": false,
+      "endpoints": [
+        {
+          "label": "GET /pulls/:id/runs/active",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /pulls/:id/runs",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "DELETE /runs/:id",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "POST /runs/:id/cancel",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /runs/:id/trace",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /pulls/:id/reviews",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "DELETE /reviews/:id",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "POST /findings/:id/${action}",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        }
+      ],
+      "endpoint_count": 8,
+      "endpoints_truncated": false
+    },
+    {
+      "name": "cancelRun",
+      "kind": "method",
+      "file": "server/src/modules/reviews/service.ts",
+      "line": 85,
+      "callers": [
+        {
+          "file": "server/src/modules/reviews/routes.ts",
+          "symbol": "reviewsRoutes",
+          "line": 116,
+          "rank": 0.001790593698583974
+        }
+      ],
+      "caller_count": 1,
+      "truncated": false,
+      "endpoints": [
+        {
+          "label": "GET /pulls/:id/runs/active",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /pulls/:id/runs",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "DELETE /runs/:id",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "POST /runs/:id/cancel",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /runs/:id/trace",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /pulls/:id/reviews",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "DELETE /reviews/:id",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "POST /findings/:id/${action}",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        }
+      ],
+      "endpoint_count": 8,
+      "endpoints_truncated": false
+    },
+    {
+      "name": "reapStaleRuns",
+      "kind": "method",
+      "file": "server/src/modules/reviews/service.ts",
+      "line": 93,
+      "callers": [
+        {
+          "file": "server/src/app.ts",
+          "symbol": "buildApp",
+          "line": 81,
+          "rank": 0.003702500922537583
+        }
+      ],
+      "caller_count": 1,
+      "truncated": false,
+      "endpoints": [
+        {
+          "label": "GET /health",
+          "file": "server/src/app.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /health/ready",
+          "file": "server/src/app.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        }
+      ],
+      "endpoint_count": 2,
+      "endpoints_truncated": false
+    },
+    {
+      "name": "runReview",
+      "kind": "method",
+      "file": "server/src/modules/reviews/service.ts",
+      "line": 103,
+      "callers": [
+        {
+          "file": "server/src/modules/reviews/routes.ts",
+          "symbol": "reviewsRoutes",
+          "line": 37,
+          "rank": 0.001790593698583974
+        }
+      ],
+      "caller_count": 1,
+      "truncated": false,
+      "endpoints": [
+        {
+          "label": "GET /pulls/:id/runs/active",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /pulls/:id/runs",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "DELETE /runs/:id",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "POST /runs/:id/cancel",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /runs/:id/trace",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /pulls/:id/reviews",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "DELETE /reviews/:id",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "POST /findings/:id/${action}",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        }
+      ],
+      "endpoint_count": 8,
+      "endpoints_truncated": false
+    },
+    {
+      "name": "actOnFinding",
+      "kind": "method",
+      "file": "server/src/modules/reviews/service.ts",
+      "line": 148,
+      "callers": [
+        {
+          "file": "server/src/modules/reviews/routes.ts",
+          "symbol": "reviewsRoutes",
+          "line": 146,
+          "rank": 0.001790593698583974
+        }
+      ],
+      "caller_count": 1,
+      "truncated": false,
+      "endpoints": [
+        {
+          "label": "GET /pulls/:id/runs/active",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /pulls/:id/runs",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "DELETE /runs/:id",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "POST /runs/:id/cancel",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /runs/:id/trace",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /pulls/:id/reviews",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "DELETE /reviews/:id",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "POST /findings/:id/${action}",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        }
+      ],
+      "endpoint_count": 8,
+      "endpoints_truncated": false
+    },
+    {
+      "name": "reviewsForPull",
+      "kind": "method",
+      "file": "server/src/modules/reviews/service.ts",
+      "line": 160,
+      "callers": [
+        {
+          "file": "server/src/modules/reviews/routes.ts",
+          "symbol": "reviewsRoutes",
+          "line": 131,
+          "rank": 0.001790593698583974
+        }
+      ],
+      "caller_count": 1,
+      "truncated": false,
+      "endpoints": [
+        {
+          "label": "GET /pulls/:id/runs/active",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /pulls/:id/runs",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "DELETE /runs/:id",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "POST /runs/:id/cancel",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /runs/:id/trace",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /pulls/:id/reviews",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "DELETE /reviews/:id",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "POST /findings/:id/${action}",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        }
+      ],
+      "endpoint_count": 8,
+      "endpoints_truncated": false
+    },
+    {
+      "name": "getRunTrace",
+      "kind": "method",
+      "file": "server/src/modules/reviews/service.ts",
+      "line": 176,
+      "callers": [
+        {
+          "file": "server/src/modules/reviews/routes.ts",
+          "symbol": "reviewsRoutes",
+          "line": 123,
+          "rank": 0.001790593698583974
+        }
+      ],
+      "caller_count": 1,
+      "truncated": false,
+      "endpoints": [
+        {
+          "label": "GET /pulls/:id/runs/active",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /pulls/:id/runs",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "DELETE /runs/:id",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "POST /runs/:id/cancel",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /runs/:id/trace",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "GET /pulls/:id/reviews",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "DELETE /reviews/:id",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        },
+        {
+          "label": "POST /findings/:id/${action}",
+          "file": "server/src/modules/reviews/routes.ts",
+          "line": 0,
+          "depth": 1,
+          "kind": "http"
+        }
+      ],
+      "endpoint_count": 8,
+      "endpoints_truncated": false
+    },
+    {
+      "name": "diffFromPrFiles",
+      "kind": "function",
+      "file": "server/src/modules/reviews/diff-loader.ts",
+      "line": 33,
+      "callers": [],
+      "caller_count": 0,
+      "truncated": false,
+      "endpoints": [],
+      "endpoint_count": 0,
+      "endpoints_truncated": false
+    },
+    {
+      "name": "ReviewDtoFinding",
+      "kind": "interface",
+      "file": "server/src/modules/reviews/helpers.ts",
+      "line": 12,
+      "callers": [],
+      "caller_count": 0,
+      "truncated": false,
+      "endpoints": [],
+      "endpoint_count": 0,
+      "endpoints_truncated": false
+    },
+    {
+      "name": "ReviewDto",
+      "kind": "interface",
+      "file": "server/src/modules/reviews/helpers.ts",
+      "line": 18,
+      "callers": [],
+      "caller_count": 0,
+      "truncated": false,
+      "endpoints": [],
+      "endpoint_count": 0,
+      "endpoints_truncated": false
+    },
+    {
+      "name": "RunCancelledError",
+      "kind": "class",
+      "file": "server/src/modules/reviews/run-executor.ts",
+      "line": 13,
+      "callers": [],
+      "caller_count": 0,
+      "truncated": false,
+      "endpoints": [],
+      "endpoint_count": 0,
+      "endpoints_truncated": false
+    },
+    {
+      "name": "Logger",
+      "kind": "type",
+      "file": "server/src/modules/reviews/run-executor.ts",
+      "line": 21,
+      "callers": [],
+      "caller_count": 0,
+      "truncated": false,
+      "endpoints": [],
+      "endpoint_count": 0,
+      "endpoints_truncated": false
+    },
+    {
+      "name": "RunOutcome",
+      "kind": "type",
+      "file": "server/src/modules/reviews/run-executor.ts",
+      "line": 30,
+      "callers": [],
+      "caller_count": 0,
+      "truncated": false,
+      "endpoints": [],
+      "endpoint_count": 0,
+      "endpoints_truncated": false
+    },
+    {
+      "name": "runOneAgent",
+      "kind": "method",
+      "file": "server/src/modules/reviews/run-executor.ts",
+      "line": 138,
+      "callers": [],
+      "caller_count": 0,
+      "truncated": false,
+      "endpoints": [],
+      "endpoint_count": 0,
+      "endpoints_truncated": false
+    },
+    {
+      "name": "buildCallersDigest",
+      "kind": "method",
+      "file": "server/src/modules/reviews/run-executor.ts",
+      "line": 327,
+      "callers": [],
+      "caller_count": 0,
+      "truncated": false,
+      "endpoints": [],
+      "endpoint_count": 0,
+      "endpoints_truncated": false
+    },
+    {
+      "name": "buildRepoMapDigest",
+      "kind": "method",
+      "file": "server/src/modules/reviews/run-executor.ts",
+      "line": 364,
+      "callers": [],
+      "caller_count": 0,
+      "truncated": false,
+      "endpoints": [],
+      "endpoint_count": 0,
+      "endpoints_truncated": false
+    },
+    {
+      "name": "buildRankNote",
+      "kind": "method",
+      "file": "server/src/modules/reviews/run-executor.ts",
+      "line": 384,
+      "callers": [],
+      "caller_count": 0,
+      "truncated": false,
+      "endpoints": [],
+      "endpoint_count": 0,
+      "endpoints_truncated": false
+    },
+    {
+      "name": "traceFromBuffer",
+      "kind": "method",
+      "file": "server/src/modules/reviews/run-executor.ts",
+      "line": 408,
+      "callers": [],
+      "caller_count": 0,
+      "truncated": false,
+      "endpoints": [],
+      "endpoint_count": 0,
+      "endpoints_truncated": false
+    },
+    {
+      "name": "publish",
+      "kind": "method",
+      "file": "server/src/modules/reviews/service.ts",
+      "line": 140,
+      "callers": [],
+      "caller_count": 0,
+      "truncated": false,
+      "endpoints": [],
+      "endpoint_count": 0,
+      "endpoints_truncated": false
+    }
+  ],
+  "totals": {
+    "symbols": 30,
+    "callers": 20,
+    "endpoints": 38,
+    "crons": 0
+  },
+  "summary": null
+}

@@ -2,11 +2,16 @@ import React from "react";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 // `fireEvent`, not `userEvent`: `@testing-library/user-event` is not a
 // dependency of this package (`client/INSIGHTS.md:435`).
-import { screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { screen, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import { renderWithProviders } from "@/test/render";
 import { githubBlobUrl } from "@/lib/github-urls";
 import type { BlastRadiusView, BlastSymbol } from "@/lib/types";
 import messages from "@/../messages/en/blast.json";
+/* The live answer for PR #12, saved verbatim on 2026-08-09 — see the header of
+   `toMermaid.test.ts`. The graph is capped and the tree is not, so the sentence
+   the modal prints is only worth asserting against a payload big enough to be
+   capped: 30 symbols, 20 call sites, 38 endpoints. */
+import liveFixture from "./blast-pr12.fixture.json";
 import { BlastRadiusCard } from "./BlastRadiusCard";
 
 /* The boundary mocked here is `fetch`, not the hooks: that way one file covers
@@ -62,6 +67,8 @@ const SYMBOL: BlastSymbol = {
  */
 const LINK_SHA = "66727c85ce06";
 const HEAD_SHA = "9f2c1ab4d5e6";
+
+const LIVE = liveFixture as BlastRadiusView;
 
 const VIEW: BlastRadiusView = {
   status: "full",
@@ -329,6 +336,95 @@ describe("BlastRadiusCard — the answer itself", () => {
     expect(await screen.findByText("Showing 1 of 900 endpoints and crons.")).toBeInTheDocument();
     // The stat row is not capped: it is the count the answer actually knows.
     expect(statCell(messages.stat.endpoints)).toHaveTextContent(/^900\s*endpoints$/);
+  });
+});
+
+describe("BlastRadiusCard — tree | graph", () => {
+  it("starts on tree, with no modal and nothing drawn", async () => {
+    renderCard();
+
+    expect(await screen.findByRole("button", { name: messages.view.tree })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: messages.view.graph })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  /**
+   * The whole reason the graph is a modal and not a swapped card body: this is
+   * the real PR #12 answer, and the sentence asserted here is the one that keeps
+   * a capped graph from reading as the whole map.
+   */
+  it("opens the graph over the live answer and states what it left out", async () => {
+    serve(LIVE);
+    renderCard();
+
+    fireEvent.click(await screen.findByRole("button", { name: messages.view.graph }));
+
+    const dialog = screen.getByRole("dialog");
+    expect(
+      within(dialog).getByText(
+        "Showing 6 of 18 changed symbols with callers, 8 of 19 call sites and 10 of 10 endpoints.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("img", { name: messages.graph.ariaLabel }),
+    ).toBeInTheDocument();
+    // The tree is not replaced — it is still the card, behind the modal, with
+    // every one of the 30 symbols the graph could only draw 6 of.
+    expect(statCell(messages.stat.symbols)).toHaveTextContent(/^30\s*symbols$/);
+    expect(screen.getAllByText("ReviewService").length).toBeGreaterThan(0);
+  });
+
+  it("closes the modal when the tree half is pressed again", async () => {
+    renderCard();
+
+    fireEvent.click(await screen.findByRole("button", { name: messages.view.graph }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: messages.view.tree }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: messages.view.tree })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  /**
+   * `MermaidDiagram` renders nothing at all when a chart will not parse, so an
+   * empty modal is indistinguishable from a broken one. Symbols with nothing
+   * downstream must therefore say so in words rather than be handed to mermaid
+   * as a chart with no edges.
+   */
+  it("says there is nothing to graph instead of opening an empty modal", async () => {
+    serve({
+      ...VIEW,
+      symbols: [{ ...SYMBOL, callers: [], caller_count: 0, endpoints: [] }],
+      totals: { symbols: 1, callers: 0, endpoints: 0, crons: 0 },
+    });
+    renderCard();
+
+    fireEvent.click(await screen.findByRole("button", { name: messages.view.graph }));
+
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText(messages.graph.empty)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("img", { name: messages.graph.ariaLabel }),
+    ).not.toBeInTheDocument();
+    // Nothing to cap, so nothing claimed about caps either.
+    expect(within(dialog).queryByText(/^Showing \d+ of/)).not.toBeInTheDocument();
+  });
+
+  it("offers no toggle in a state that has no answer to toggle", () => {
+    renderCard(null);
+
+    expect(screen.getByText(messages.unavailable)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: messages.view.graph })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: messages.view.tree })).not.toBeInTheDocument();
   });
 });
 

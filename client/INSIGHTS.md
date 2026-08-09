@@ -52,6 +52,20 @@ everything.
 compile time, so the four siblings reading `SeverityLevel` from the folder pay no runtime
 edge, and only `FindingsTab` — which actually renders the bar — keeps a value import.
 
+### When the items repeat, cap the chart's node budget, not each item's list
+
+Building the blast-radius graph on 2026-08-09, the first cap was per symbol: four endpoints
+each. On the live PR #12 answer that drew *the same first four routes twelve times over* —
+endpoints are attached per symbol but come from the caller's **file**, so twelve symbols in
+`reviews/routes.ts` carry an identical eight-route list — and the union came out four short.
+`POST /findings/:id/${action}`, the tenth, was cut from a chart with room for it.
+
+Replacing it with one budget for the whole chart (`GRAPH_CAPS.endpoints = 10`, spent only on
+boxes that do not exist yet, edges to an already-drawn box being free) drew all ten inside the
+same node count. The general shape: when a capped list repeats across the things you are
+capping, a per-item cap spends the budget on duplicates. Count what the render actually costs —
+distinct nodes — and cap that.
+
 ## What Doesn't Work
 
 ### A popover anchored inside a PR-list row gets clipped
@@ -253,6 +267,32 @@ branch: `BlastRadiusCard.test.tsx` asserted `getByText("2 callers")`, which a ha
 `getByText("1 caller")` plus `queryByText("1 callers")` being absent. Cheapest sweep for the
 remaining ones: `grep -n '{count}' client/messages/en/*.json` and read each hit for whether 1
 can reach it.
+
+### A mermaid label built from repository content: the quotes carry it, and the test can be vacuous
+
+**Symptom.** The graph modal opens empty. Nothing throws, nothing is logged, no error box —
+`MermaidDiagram` returns `null` when `mermaid.parse` says the chart is invalid
+(`src/components/mermaid-diagram/MermaidDiagram.tsx:59`), so one bad label is
+indistinguishable from a component that never loaded.
+
+**Cause.** Every label in a blast-radius chart is repository content. `Holubinka/dev-digest`
+PR #12 already serves an endpoint literally named `POST /findings/:id/${action}` — the route is
+registered in a loop — and symbol names carry `(`, `)`, `<`, `>`, quotes and, from a multi-line
+declaration, newlines.
+
+**Fix.** In `toMermaid.ts`: generate every node id (`n0`, `n1`, …) so nothing from the
+repository is ever interpolated unquoted, always wrap the label in `"…"`, and inside it rewrite
+`#` → `#35;` **first** (it opens a mermaid entity code, so escaping it last would corrupt the
+codes just emitted), then `"` → `#34;`, `<` → `#60;`, `>` → `#62;`, collapse whitespace, and
+clip by code point.
+
+**The part worth the entry.** Measured with the real parser on 2026-08-09: `n0["POST
+/findings/:id/${action}"]` **parses fine**. Quoting alone saves that label; `${…}` is not the
+danger. What fails is `n0[POST /findings/:id/${action}]` unquoted, and any label carrying a
+quote or a newline. So a test that pushes the scary-looking string through the builder and
+asserts the chart parses proves *nothing about the escaping* — it would pass with the escaping
+deleted. The assertion that has teeth is the control: build the naive chart by hand and assert
+`parse` returns **false**. Both live in `toMermaid.test.ts`.
 
 ## Codebase Patterns
 
@@ -612,6 +652,29 @@ filter therefore has nothing to filter on.
 Assert what the row contains and let the open/closed default be a design decision, checked in
 a browser. `BlastRadiusCard` opens the first symbol that has callers so the card shows a real
 call site without a click.
+
+### mermaid both parses and renders under this jsdom suite — so a chart can be checked for real
+
+**Symptom.** A component that feeds a generated chart to `MermaidDiagram` looks untestable:
+mermaid is a browser library, and the obvious fallback is asserting the chart *contains* a
+label — which passes on a chart that draws nothing.
+
+**Cause.** Only half of mermaid needs layout. `mermaid.parse(src, { suppressErrors: true })`
+works in jsdom as-is, in about 20ms; `mermaid.render(id, src)` needs one missing DOM method.
+
+**Fix.** Import `mermaid` straight into the test (2026-08-09, mermaid 11.15, vitest 2.1.9),
+`mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "strict" })` — the same
+options `MermaidDiagram.tsx:37` uses — and assert on `parse`. For `render`, stub the box
+measurement first:
+
+```ts
+(SVGElement.prototype as unknown as { getBBox: () => DOMRect }).getBBox = () =>
+  ({ x: 0, y: 0, width: 100, height: 20 }) as DOMRect;
+```
+
+The live PR #12 chart then renders to a ~500KB SVG carrying every label, in ~250ms
+(`toMermaid.test.ts`). What this does **not** prove is legibility: every box is measured at the
+same stubbed 100×20, so the layout in the assertion is not the layout on screen.
 
 ## Recurring Errors & Fixes
 

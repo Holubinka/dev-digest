@@ -22,6 +22,7 @@
   "noDownstream": "{count} changed symbol(s), no downstream callers found.",
   "graph": {
     "empty": "No downstream callers to graph.",
-    "ariaLabel": "Blast radius graph"
+    "ariaLabel": "Blast radius graph",
+    "showing": "Showing {symbols} of {symbolTotal} changed symbols with callers, {callers} of {callerTotal} call sites and {endpoints} of {endpointTotal} endpoints."
   }
 }
