@@ -51,9 +51,11 @@ const exec: CliDeps['exec'] = async (file, args, options) => {
 
 async function main(): Promise<number> {
   const config = loadConfig();
-  // The RUN timeout, not the 15s per-request one: this single request holds the
-  // connection open for the whole model call.
-  const client = new ApiClient({ baseUrl: config.apiUrl, timeoutMs: config.runTimeoutMs });
+  // The CLI ceiling, not the 15s per-request one and not the MCP run one: this
+  // single request holds the connection open for the whole model call, and no
+  // MCP client is waiting behind it. The MCP ceiling cut a five-agent review off
+  // about half the time, and the abort then read as "the API is unreachable".
+  const client = new ApiClient({ baseUrl: config.apiUrl, timeoutMs: config.cliTimeoutMs });
   return runCli(process.argv.slice(2), {
     client,
     exec,

@@ -7,13 +7,14 @@
  * in this package hermetic: no API, no Docker, no network, no key.
  *
  * Three failures are decoded here so no caller has to:
- *   - transport dead or timed out  → `api_unreachable`
+ *   - transport dead                → `api_unreachable`
+ *   - our own deadline fired       → `api_timeout` (the server is still working)
  *   - `{error:{code,message}}`     → `api_error`   (server/src/app.ts:126-170)
  *   - response fails `safeParse`   → `contract_mismatch`
  */
 
 import type { z } from 'zod';
-import { type ToolError, apiError, apiUnreachable, contractMismatch } from '../errors.js';
+import { type ToolError, apiError, apiTimeout, apiUnreachable, contractMismatch } from '../errors.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../config.js';
 import { truncate } from '../project.js';
 
@@ -91,7 +92,14 @@ export class ApiClient {
     init: RequestInit,
   ): Promise<{ status: number; ok: boolean; text: string }> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    // Recorded rather than inferred from the error: `fetch` rejects with a bare
+    // `AbortError` whoever called `abort()`, so without this flag a caller-side
+    // cancellation and our own deadline are indistinguishable.
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, this.timeoutMs);
     try {
       const res = await this.fetchImpl(url, {
         ...init,
@@ -104,6 +112,7 @@ export class ApiClient {
       });
       return { status: res.status, ok: res.ok, text: await res.text() };
     } catch (err) {
+      if (timedOut) throw apiTimeout(this.baseUrl, this.timeoutMs, err);
       throw apiUnreachable(this.baseUrl, err);
     } finally {
       clearTimeout(timer);

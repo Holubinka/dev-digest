@@ -202,13 +202,19 @@ describe('the HTTP client behind the resolvers', () => {
     expect(err.message).toContain(BASE);
   });
 
-  it('aborts a hanging request at the per-request timeout', async () => {
+  it('aborts a hanging request at the per-request timeout, and calls it a timeout', async () => {
     const hang: FetchLike = (_url, init) =>
       new Promise((_resolve, reject) => {
         init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
       });
     const err = await new Resolver(client(hang, 5)).repoId('acme/payments-api').catch((e) => e);
-    expect(err.kind).toBe('api_unreachable');
+
+    // NOT `api_unreachable`. A server that is answering slowly is not a server
+    // that is down, and saying so sent the reader off to restart a process that
+    // was working the whole time.
+    expect(err.kind).toBe('api_timeout');
+    expect(err.message).not.toContain('./scripts/dev.sh');
+    expect(err.message).toMatch(/did not answer within/);
   });
 
   it('turns a moved contract into a loud, self-describing error naming the path', async () => {

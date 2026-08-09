@@ -9,18 +9,31 @@
  *
  *   DEVDIGEST_API_URL              default http://localhost:3001, loopback only
  *   DEVDIGEST_MCP_RUN_TIMEOUT_MS   default 120000 (spec 06 step 8)
+ *   DEVDIGEST_CLI_TIMEOUT_MS       default 600000 — the CLI waits in a terminal,
+ *                                  not inside an MCP client, so it gets its own
  */
 
 export const DEFAULT_API_URL = 'http://localhost:3001';
 export const DEFAULT_RUN_TIMEOUT_MS = 120_000;
 /** Per-HTTP-request ceiling. Not an env var: the run ceiling is the tunable one. */
 export const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+/**
+ * The CLI's own ceiling, and deliberately far above the MCP one. 120000 exists
+ * because an MCP client is holding a tool call open; `devdigest review` is a
+ * foreground command with a human watching, bound only by how long the work
+ * takes. Measured: five enabled agents over a 728-character diff run 73-125s,
+ * so the MCP ceiling cut it off about half the time. 600000 matches
+ * reviewer-core's own wall-clock deadline, past which the server gives up too.
+ */
+export const DEFAULT_CLI_TIMEOUT_MS = 600_000;
 
 export interface McpConfig {
   /** Base URL with no trailing slash, e.g. `http://localhost:3001`. */
   readonly apiUrl: string;
   readonly requestTimeoutMs: number;
   readonly runTimeoutMs: number;
+  /** The CLI's ceiling. Separate from `runTimeoutMs`: no MCP client is waiting. */
+  readonly cliTimeoutMs: number;
 }
 
 export class ConfigError extends Error {
@@ -87,6 +100,7 @@ function parsePositiveInt(raw: string, name: string): number {
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): McpConfig {
   const rawUrl = env.DEVDIGEST_API_URL?.trim();
   const rawRunTimeout = env.DEVDIGEST_MCP_RUN_TIMEOUT_MS?.trim();
+  const rawCliTimeout = env.DEVDIGEST_CLI_TIMEOUT_MS?.trim();
   return {
     apiUrl: parseApiUrl(rawUrl && rawUrl.length > 0 ? rawUrl : DEFAULT_API_URL),
     requestTimeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
@@ -94,5 +108,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): McpConfig {
       rawRunTimeout && rawRunTimeout.length > 0
         ? parsePositiveInt(rawRunTimeout, 'DEVDIGEST_MCP_RUN_TIMEOUT_MS')
         : DEFAULT_RUN_TIMEOUT_MS,
+    cliTimeoutMs:
+      rawCliTimeout && rawCliTimeout.length > 0
+        ? parsePositiveInt(rawCliTimeout, 'DEVDIGEST_CLI_TIMEOUT_MS')
+        : DEFAULT_CLI_TIMEOUT_MS,
   };
 }

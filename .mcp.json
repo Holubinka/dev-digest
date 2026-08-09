@@ -3,6 +3,7 @@
     "devdigest": {
       "command": "node",
       "args": ["mcp/dist/index.js"],
+      "timeout": 180000,
       "env": {
         "DEVDIGEST_API_URL": "http://localhost:3001",
         "DEVDIGEST_MCP_RUN_TIMEOUT_MS": "120000"

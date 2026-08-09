@@ -20,6 +20,7 @@ export type ToolErrorKind =
   | 'agent_not_found'
   | 'agent_ambiguous'
   | 'api_unreachable'
+  | 'api_timeout'
   | 'api_error'
   | 'contract_mismatch'
   | 'run_failed'
@@ -130,6 +131,24 @@ export function apiUnreachable(url: string, cause?: unknown): ToolError {
     'api_unreachable',
     `Cannot reach the DevDigest API at ${url}. ` +
       `Start it with ./scripts/dev.sh (API on :3001), then retry.`,
+    { cause },
+  );
+}
+
+/**
+ * A timeout is NOT unreachability, and saying so cost real time: a review of a
+ * 728-character diff across five enabled agents runs 73-125s, so it straddles
+ * the ceiling — and every time it lost, the answer read "Cannot reach the
+ * DevDigest API", sending the reader to restart a server that was serving the
+ * whole time. The server keeps working after this fires; only the wait stopped.
+ */
+export function apiTimeout(url: string, ms: number, cause?: unknown): ToolError {
+  return new ToolError(
+    'api_timeout',
+    `The DevDigest API at ${url} did not answer within ${Math.round(ms / 1000)}s. ` +
+      `It is running — this is the client giving up, and the work may still finish ` +
+      `on the server. A review across every enabled agent is what usually takes this ` +
+      `long; enable fewer of them, or raise DEVDIGEST_CLI_TIMEOUT_MS.`,
     { cause },
   );
 }
