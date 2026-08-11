@@ -125,9 +125,23 @@ async function guard(run: () => Promise<ToolTextResult> | ToolTextResult): Promi
  * Build the server with its five tools. Separate from `main` so constructing it
  * has no side effect on the process — importing this module must not open a
  * transport.
+ *
+ * `client` is injectable for one reason, and it is not tidiness: everything
+ * between the transport and a tool function — the five `registerTool` calls,
+ * their input schemas, the `readOnlyHint` annotations and the `guard` that keeps
+ * a throw out of the protocol — has no other seam. Each tool is unit-tested by
+ * calling it directly, which skips all of that, so before this parameter the
+ * registration layer was exercised only by `scripts/driver.mjs` against a live
+ * API, by hand. Passing a client built on a stubbed `fetch` lets a test drive
+ * the real server over an in-memory transport instead.
  */
-export function createServer(config: McpConfig): McpServer {
-  const client = new ApiClient({ baseUrl: config.apiUrl, timeoutMs: config.requestTimeoutMs });
+export function createServer(
+  config: McpConfig,
+  client: ApiClient = new ApiClient({
+    baseUrl: config.apiUrl,
+    timeoutMs: config.requestTimeoutMs,
+  }),
+): McpServer {
   const resolver = new Resolver(client);
 
   const server = new McpServer(
