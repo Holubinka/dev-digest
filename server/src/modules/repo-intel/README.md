@@ -7,9 +7,9 @@ map** (the project skeleton). On a review it is only **read** — the index is
 already computed, so adding context to a prompt costs no analysis at request time.
 
 This is **starter infrastructure**: it works from day 1 (the **Indexed** badge),
-but you don't write it. Course lessons build features _on top_ of its facade —
-Blast Radius (L04), Conventions samples (L02), Onboarding reading-path (L05),
-the Phantom-API gate (L06) — by calling `repoIntel.*`, not by re-indexing.
+but you don't write it. Features are built _on top_ of its facade — Blast Radius
+(`specs/07-blast-radius.md`), Conventions samples (L02), Onboarding reading-path
+(L05), the Phantom-API gate (L06) — by calling `repoIntel.*`, not by re-indexing.
 
 ## Pipeline
 
@@ -38,14 +38,24 @@ touch the pipeline internals:
 - `getRepoMap(repoId)` → the cached repo skeleton (fed into the **review prompt**).
 - `getFileRank(repoId, files)` → importance percentile per changed file.
 - `getCallerSignatures(repoId, files, limit)` → callers of changed symbols.
-- `getBlastRadius(repoId, files)` → impacted symbols / callers (used by L04).
+- `getBlastRadius(repoId, files)` → impacted symbols / callers.
+- `getDownstream(repoId, files, maxDepth)` → files that import the changed ones,
+  breadth-first over the reverse import graph, capped at depth 2.
+- `getIndexState(repoId)` → how much of the index backs an answer.
 - `getUnresolvedReferences(repoId, …)` → phantom-symbol detection (used by L06).
 - `getConventionSamples(repoId)` → top-ranked files for convention extraction (L02).
 
-In the starter, only `getRepoMap` / `getFileRank` / `getCallerSignatures` are
-wired — into `modules/reviews/run-executor.ts`, which adds the repo map and a
-high-blast-radius note to the prompt. Toggled by `REPO_INTEL_ENABLED` (global)
-and a per-agent `repo_intel` flag.
+Wired today:
+
+- `getRepoMap` / `getFileRank` / `getCallerSignatures` → `modules/reviews/run-executor.ts`,
+  which adds the repo map and a high-blast-radius note to the prompt. Toggled by
+  `REPO_INTEL_ENABLED` (global) and a per-agent `repo_intel` flag.
+- `getIndexState` / `getBlastRadius` / `getDownstream` → `modules/blast/service.ts`, behind
+  `GET /pulls/:id/blast` (`specs/07-blast-radius.md`). `getIndexState` gates the other two:
+  on an unindexed repo they are never called.
+- `getConventionSamples` → `modules/conventions/service.ts:179`.
+
+`getUnresolvedReferences` has no consumer yet.
 
 ## Routes
 

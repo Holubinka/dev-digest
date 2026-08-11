@@ -95,7 +95,6 @@ export const s = {
   } satisfies CSSProperties,
   label: { fontSize: 12.5, color: "var(--text-muted)" } satisfies CSSProperties,
   confidenceBar: { width: 145 } satisfies CSSProperties,
-  confidenceValue: { fontSize: 12.5, color: "var(--text-secondary)" } satisfies CSSProperties,
   /** Direction and width belong to `.dd-card-actions`: below 1024px the column
    *  becomes a row under the evidence. */
   actions: {

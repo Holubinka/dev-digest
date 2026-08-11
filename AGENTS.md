@@ -12,6 +12,7 @@ and lockfile.
 | `client/` | `@devdigest/web` | Next.js 15 App Router · React 19 · TanStack Query 5 · Tailwind 4 | 3000 |
 | `reviewer-core/` | `@devdigest/reviewer-core` | Pure TS library — `openai` + `zod` only | — |
 | `e2e/` | `@devdigest/e2e` | `agent-browser` (not Playwright) · declarative JSON flows | — |
+| `mcp/` | `@devdigest/mcp` | MCP server over stdio — `@modelcontextprotocol/sdk` 1.x · Zod 3 | — |
 
 Node ≥ 22 · Vitest 2 everywhere. Docker runs Postgres only; API and web run on the host.
 
@@ -28,7 +29,7 @@ cd server && pnpm exec vitest run .it.test                      # integration (t
 cd client && pnpm lint          # ESLint — client/ only; no other package has one
 ```
 
-`server/` and `client/` use **pnpm**; `reviewer-core/` and `e2e/` use **npm**. Do not mix.
+`server/` and `client/` use **pnpm**; `reviewer-core/`, `e2e/` and `mcp/` use **npm**. Do not mix.
 
 ## A push is gated
 

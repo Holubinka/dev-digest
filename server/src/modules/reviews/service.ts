@@ -5,6 +5,7 @@ import type { AgentRow } from '../../db/rows.js';
 import { ReviewRepository } from './repository.js';
 import { type ReviewDto, type ReviewDtoFinding } from './helpers.js';
 import { ReviewRunExecutor, type Logger } from './run-executor.js';
+import { runDiffReview, type DiffReviewResponse } from './diff-review.js';
 import { actOnFinding as actOnFindingImpl } from './findings.js';
 import { reviewToDto, toReviewAgent, toReviewPull, toReviewRepo } from './helpers.js';
 import type { ReviewAgent } from './types.js';
@@ -55,6 +56,27 @@ export class ReviewService {
       return [agent];
     }
     throw new AppError('invalid_run_request', 'Provide agentId or all:true', 400);
+  }
+
+  /**
+   * Review a raw unified diff that belongs to no PR (spec 07 step 14).
+   *
+   * Target resolution is `resolveTargets` — the same policy `POST
+   * /pulls/:id/review` uses, so "agent not found" and "provide agentId or
+   * all:true" read identically on both routes. Everything after it persists
+   * nothing; see `diff-review.ts` for why that is structural rather than
+   * careful.
+   */
+  async reviewDiff(
+    workspaceId: string,
+    input: { diff: string; agentId?: string; all?: boolean },
+    logger?: Logger,
+  ): Promise<DiffReviewResponse> {
+    const targets = await this.resolveTargets(workspaceId, {
+      ...(input.agentId !== undefined ? { agentId: input.agentId } : {}),
+      ...(input.all !== undefined ? { all: input.all } : {}),
+    });
+    return runDiffReview(this.container, targets.map(toReviewAgent), input.diff, logger);
   }
 
   /** Delete a whole review run (one agent's pass) + its findings (cascade). */

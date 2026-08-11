@@ -52,6 +52,20 @@ everything.
 compile time, so the four siblings reading `SeverityLevel` from the folder pay no runtime
 edge, and only `FindingsTab` — which actually renders the bar — keeps a value import.
 
+### When the items repeat, cap the chart's node budget, not each item's list
+
+Building the blast-radius graph on 2026-08-09, the first cap was per symbol: four endpoints
+each. On the live PR #12 answer that drew *the same first four routes twelve times over* —
+endpoints are attached per symbol but come from the caller's **file**, so twelve symbols in
+`reviews/routes.ts` carry an identical eight-route list — and the union came out four short.
+`POST /findings/:id/${action}`, the tenth, was cut from a chart with room for it.
+
+Replacing it with one budget for the whole chart (`GRAPH_CAPS.endpoints = 10`, spent only on
+boxes that do not exist yet, edges to an already-drawn box being free) drew all ten inside the
+same node count. The general shape: when a capped list repeats across the things you are
+capping, a per-item cap spends the budget on duplicates. Count what the render actually costs —
+distinct nodes — and cap that.
+
 ## What Doesn't Work
 
 ### A popover anchored inside a PR-list row gets clipped
@@ -245,6 +259,41 @@ Rendering unconditionally also means 0 and 1 now reach the message, and
 (`{count, plural, =0 {No skills} one {# skill} other {# skills}}`). Any count that used to be
 hidden behind a truthiness check has the same latent "1 skills".
 
+**2026-08-09 — it happened again, and the test is why.** `messages/en/blast.json` shipped
+`"callerCount": "{count} callers"`, so a symbol with one caller read "1 callers". The entry
+above did not prevent it, because the guard everyone writes is an assertion on the plural
+branch: `BlastRadiusCard.test.tsx` asserted `getByText("2 callers")`, which a hard-coded
+`"{count} callers"` satisfies forever. **Assert BOTH branches or the test proves nothing** —
+`getByText("1 caller")` plus `queryByText("1 callers")` being absent. Cheapest sweep for the
+remaining ones: `grep -n '{count}' client/messages/en/*.json` and read each hit for whether 1
+can reach it.
+
+### A mermaid label built from repository content: the quotes carry it, and the test can be vacuous
+
+**Symptom.** The graph modal opens empty. Nothing throws, nothing is logged, no error box —
+`MermaidDiagram` returns `null` when `mermaid.parse` says the chart is invalid
+(`src/components/mermaid-diagram/MermaidDiagram.tsx:59`), so one bad label is
+indistinguishable from a component that never loaded.
+
+**Cause.** Every label in a blast-radius chart is repository content. `Holubinka/dev-digest`
+PR #12 already serves an endpoint literally named `POST /findings/:id/${action}` — the route is
+registered in a loop — and symbol names carry `(`, `)`, `<`, `>`, quotes and, from a multi-line
+declaration, newlines.
+
+**Fix.** In `toMermaid.ts`: generate every node id (`n0`, `n1`, …) so nothing from the
+repository is ever interpolated unquoted, always wrap the label in `"…"`, and inside it rewrite
+`#` → `#35;` **first** (it opens a mermaid entity code, so escaping it last would corrupt the
+codes just emitted), then `"` → `#34;`, `<` → `#60;`, `>` → `#62;`, collapse whitespace, and
+clip by code point.
+
+**The part worth the entry.** Measured with the real parser on 2026-08-09: `n0["POST
+/findings/:id/${action}"]` **parses fine**. Quoting alone saves that label; `${…}` is not the
+danger. What fails is `n0[POST /findings/:id/${action}]` unquoted, and any label carrying a
+quote or a newline. So a test that pushes the scary-looking string through the builder and
+asserts the chart parses proves *nothing about the escaping* — it would pass with the escaping
+deleted. The assertion that has teeth is the control: build the naive chart by hand and assert
+`parse` returns **false**. Both live in `toMermaid.test.ts`.
+
 ## Codebase Patterns
 
 ### Run-level data reaches the PR-detail subtree by joining in `FindingsTab`, not by widening `ReviewRecord`
@@ -360,6 +409,24 @@ agreeing with every other severity chip. But do not sell a fix like this as a vi
 check `getComputedStyle` before claiming a colour is wrong on screen. The *visible* half of
 this change was the badge gaining the token's icon and background, because it went from a
 bare `Badge` to `SeverityBadge`.
+
+**Addition, 2026-08-09 — the same shape, on confidence, and this one WAS visible.**
+`ConventionCard/helpers.ts` carried a `confidenceColor` banding at 80/60 with `var(--crit)` at
+the bottom, while `vendor/ui/primitives/ConfidenceNum.tsx:5` — what `FindingCard`,
+`FindingsPreview` and `Showcase` all render — bands at 85/65 with `var(--text-muted)`. A
+candidate at 82% was green on the conventions screen and amber everywhere else; at 50%, red
+here and muted everywhere else. The doc comment claimed "on the same thresholds the findings
+list uses", which is what kept it invisible: the comment was the only place the two were
+compared, and it was wrong.
+
+Fixed by rendering `<ConfidenceNum>` and deleting the local table, so `vendor/` stayed
+untouched — the vendored primitive keeps no exported band table, so the alternative would have
+meant editing a read-only copy. The bar keeps `ProgressBar`'s default accent and the band is
+stated once. Two things worth copying: a colour rule whose only cross-check is a comment will
+drift, so pin it with a test that renders the vendored primitive alongside and compares
+`outerHTML` (`ConventionCard.test.tsx`, "bands the confidence exactly as the findings list
+does") — and jsdom *does* preserve `var(--warn)` in an inline style attribute, so
+`expect(html).toContain("var(--warn)")` is a real assertion here, not a vacuous one.
 
 ### `Severity` means two different things depending on which package you import it from
 
@@ -568,6 +635,47 @@ was read early. So the check to run on a new query-backed component is: **write 
 disabled query renders, and confirm that state is one you would want to show.** If it is not,
 reorder.
 
+### jsdom toggles `<details>` on a summary click but does not hide the closed content
+
+**Symptom.** A disclosure test looks like it proves the callers are on screen — `getByRole
+("link", …)` finds them whether the `<details>` is open or closed, so the assertion cannot
+fail on a card that ships collapsed.
+
+**Cause.** Probed on 2026-08-09 while writing `BlastRadiusCard.test.tsx`: jsdom implements the
+summary activation behaviour (`summary.click()` flips `details.open` to `true`), but its
+default stylesheet does not implement the content-hiding half —
+`getComputedStyle(childOfClosedDetails).display` is `"block"`. Testing Library's visibility
+filter therefore has nothing to filter on.
+
+**Fix.** Use `<details>` freely — it is the cheapest accessible disclosure here and needs no
+`useState` — but do not write a test that claims a row is *visible* or *hidden* through it.
+Assert what the row contains and let the open/closed default be a design decision, checked in
+a browser. `BlastRadiusCard` opens the first symbol that has callers so the card shows a real
+call site without a click.
+
+### mermaid both parses and renders under this jsdom suite — so a chart can be checked for real
+
+**Symptom.** A component that feeds a generated chart to `MermaidDiagram` looks untestable:
+mermaid is a browser library, and the obvious fallback is asserting the chart *contains* a
+label — which passes on a chart that draws nothing.
+
+**Cause.** Only half of mermaid needs layout. `mermaid.parse(src, { suppressErrors: true })`
+works in jsdom as-is, in about 20ms; `mermaid.render(id, src)` needs one missing DOM method.
+
+**Fix.** Import `mermaid` straight into the test (2026-08-09, mermaid 11.15, vitest 2.1.9),
+`mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "strict" })` — the same
+options `MermaidDiagram.tsx:37` uses — and assert on `parse`. For `render`, stub the box
+measurement first:
+
+```ts
+(SVGElement.prototype as unknown as { getBBox: () => DOMRect }).getBBox = () =>
+  ({ x: 0, y: 0, width: 100, height: 20 }) as DOMRect;
+```
+
+The live PR #12 chart then renders to a ~500KB SVG carrying every label, in ~250ms
+(`toMermaid.test.ts`). What this does **not** prove is legibility: every box is measured at the
+same stubbed 100×20, so the layout in the assertion is not the layout on screen.
+
 ## Recurring Errors & Fixes
 
 ### `pnpm typecheck` fails on routes that do not exist on the branch you are standing on
@@ -770,6 +878,21 @@ vendored copies), `TraceBody.tsx`, and `messages/en/runs.json` under `trace.prom
 `PROMPT_COLORS` entry in the drawer's `constants.ts`. Render in the order `assemblePrompt`
 pushes the sections (`reviewer-core/src/prompt.ts:125-148`), and pin that order in
 `RunTraceDrawer.test.tsx` — an out-of-order block is a lie about what the model read.
+
+### A fixture built by spreading `FIXTURE.array[0]` passes `pnpm test` and fails `pnpm typecheck`
+
+**Symptom.** Three `TS2322: Type 'string | undefined' is not assignable to type 'string'` on
+test-file lines like `symbols: [{ ...VIEW.symbols[0], caller_count: 0 }]`, while the same file
+was green under `pnpm exec vitest run`. Hit on 2026-08-09 in `BlastRadiusCard.test.tsx`.
+
+**Cause.** `client/tsconfig.json` sets `noUncheckedIndexedAccess`, so `VIEW.symbols[0]` is
+`BlastSymbol | undefined`; spreading it makes **every** field optional again, and the object no
+longer satisfies the array's element type. Vitest never typechecks, so only `tsc` sees it —
+the same split that lets a vitest alias and a tsconfig path drift apart.
+
+**Fix.** Hoist the element into its own annotated constant (`const SYMBOL: BlastSymbol = {…}`)
+and build both the fixture and its variants from that. Do not reach for `!` or a cast: the
+annotation is what keeps the fixture honest when the contract gains a field.
 
 ## Session Notes
 

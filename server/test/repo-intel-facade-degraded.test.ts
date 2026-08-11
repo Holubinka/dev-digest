@@ -19,15 +19,16 @@ function buildDegradedService(opts: {
   flag: boolean;
   basics?: RepoBasics | null;
   indexStateRow?: IndexState | null;
+  codeIndex?: { symbols: () => Promise<unknown[]>; references: (ref: unknown, name: string) => Promise<unknown[]> };
 }): RepoIntelService {
   const container = {
     config: { repoIntelEnabled: opts.flag },
     db: {} as never,
     // codeIndex is reached by getBlastRadius; we stub minimal behaviour.
-    codeIndex: {
+    codeIndex: (opts.codeIndex ?? {
       symbols: async () => [],
       references: async () => [],
-    } as never,
+    }) as never,
   } as never;
   const svc = new RepoIntelService(container);
   (svc as unknown as { repo: Record<string, unknown> }).repo = {
@@ -78,6 +79,54 @@ describe('RepoIntel facade — degraded contract (flag off)', () => {
     expect(state.degraded).toBe(true);
   });
 
+  /**
+   * The flag beats the row, and this is the one degraded answer that is load
+   * bearing rather than cosmetic: `blast/service.ts` GATES on this status before
+   * calling `getBlastRadius`, whose fallback reads the clone and parses it. A
+   * repo indexed last week still has `status: 'full'` in Postgres, so reporting
+   * the row here while `getBlastRadius` separately refuses the index (service.ts:
+   * 225) is what opened the request path onto that AST work.
+   */
+  it('getIndexState → degraded/flag_off even when a FULL row is persisted', async () => {
+    const row: IndexState = {
+      repoId: 'r1',
+      status: 'full',
+      filesIndexed: 312,
+      filesSkipped: 0,
+      durationMs: 4200,
+      lastIndexedSha: '66727c85ce06d7b16e64f888925d131d558cbe51',
+      indexerVersion: 2,
+      updatedAt: new Date('2026-07-28T19:08:16Z'),
+    };
+    const svc = buildDegradedService({ flag: false, indexStateRow: row });
+
+    const state = await svc.getIndexState('r1');
+
+    expect(state.status).toBe('degraded');
+    expect(state.degraded).toBe(true);
+    expect(state.degradedReason).toBe('flag_off');
+    expect(state.reason).toBe('flag_off');
+    // No sha either: with the flag off nothing is served from that commit, so a
+    // consumer must not link line numbers to it.
+    expect(state.lastIndexedSha).toBe('');
+  });
+
+  it('getIndexState → the persisted row untouched when the flag is ON', async () => {
+    const row: IndexState = {
+      repoId: 'r1',
+      status: 'full',
+      filesIndexed: 312,
+      filesSkipped: 0,
+      durationMs: 4200,
+      lastIndexedSha: '66727c85ce06d7b16e64f888925d131d558cbe51',
+      indexerVersion: 2,
+      updatedAt: new Date('2026-07-28T19:08:16Z'),
+    };
+    const svc = buildDegradedService({ flag: true, indexStateRow: row });
+
+    await expect(svc.getIndexState('r1')).resolves.toEqual(row);
+  });
+
   it('getRepoMap → degraded ({ text:"", tokens:0, cached:false, degraded:true })', async () => {
     const svc = buildDegradedService({ flag: false });
     const map = await svc.getRepoMap('r1');
@@ -121,5 +170,78 @@ describe('RepoIntel facade — degraded contract (flag on, but no data)', () => 
   it('getCallerSignatures with empty changedFiles → []', async () => {
     const svc = buildDegradedService({ flag: true, basics: { id: 'r1', owner: 'a', name: 'b', clonePath: '/tmp' } });
     await expect(svc.getCallerSignatures('r1', [])).resolves.toEqual([]);
+  });
+});
+
+/**
+ * The RIPGREP path of `getBlastRadius` — reached when the flag is on but no
+ * `repo_index_state` row exists, so `tryPersistentBlast` declines.
+ *
+ * It used to cap nothing and report no `callerCounts`, which made the contract
+ * unable to tell the truth: `contracts/blast.ts` promises `caller_count` is the
+ * PRE-cap number, and a consumer with only the array can derive `truncated`
+ * exactly once — as `false`. Meanwhile an unbounded caller array went out over
+ * the wire to the card and to MCP.
+ */
+describe('getBlastRadius — the degraded path caps per symbol too', () => {
+  const DECL = 'src/service.ts';
+  const RAW_CALLERS = 21;
+
+  /**
+   * 21 files calling `ReviewService`, plus 2 calling `reapStaleRuns`, so the cap
+   * is visibly per symbol. `symbols` doubles as the enclosing-symbol lookup, so
+   * every caller file declares one.
+   */
+  const codeIndex = () => ({
+    symbols: async () => [
+      { path: DECL, name: 'ReviewService', kind: 'class', line: 41 },
+      { path: DECL, name: 'reapStaleRuns', kind: 'method', line: 118 },
+      ...Array.from({ length: RAW_CALLERS }, (_, i) => ({
+        path: `src/caller-${String(i).padStart(2, '0')}.ts`,
+        name: `handler${i}`,
+        kind: 'function',
+        line: 1,
+      })),
+    ],
+    references: async (_ref: unknown, name: string) =>
+      name === 'ReviewService'
+        ? Array.from({ length: RAW_CALLERS }, (_, i) => ({
+            fromPath: `src/caller-${String(i).padStart(2, '0')}.ts`,
+            line: 10 + i,
+          }))
+        : [
+            { fromPath: 'src/caller-00.ts', line: 200 },
+            { fromPath: 'src/caller-01.ts', line: 201 },
+          ],
+  });
+
+  const service = () =>
+    buildDegradedService({
+      flag: true,
+      basics: { id: 'r1', owner: 'a', name: 'b', clonePath: '/nonexistent-clone' },
+      indexStateRow: null, // no persistent index → the ripgrep path
+      codeIndex: codeIndex(),
+    });
+
+  it('returns 20 callers and a pre-cap count of 21, not 21 uncapped rows', async () => {
+    const blast = await service().getBlastRadius('r1', [DECL]);
+
+    expect(blast.degraded).toBe(true);
+    expect(blast.callers.filter((c) => c.viaSymbol === 'ReviewService')).toHaveLength(20);
+    expect(blast.callerCounts?.ReviewService).toBe(RAW_CALLERS);
+    // Per symbol, not global: the second symbol keeps both of its callers.
+    expect(blast.callerCounts?.reapStaleRuns).toBe(2);
+    expect(blast.callers.filter((c) => c.viaSymbol === 'reapStaleRuns')).toHaveLength(2);
+  });
+
+  it('orders what survives the cap by file then line, since every rank here is 0', async () => {
+    const blast = await service().getBlastRadius('r1', [DECL]);
+    const kept = blast.callers.filter((c) => c.viaSymbol === 'ReviewService');
+
+    expect(kept.every((c) => c.rank === 0)).toBe(true);
+    expect(kept.map((c) => c.file)).toEqual([...kept.map((c) => c.file)].sort());
+    // Alphabetical, so the dropped one is the last filename — deterministic, and
+    // NOT a claim that it is the least important.
+    expect(kept.map((c) => c.file)).not.toContain('src/caller-20.ts');
   });
 });

@@ -27,3 +27,5 @@ implementation; note the divergence instead.
 | [`03-pr-self-review-skill.md`](03-pr-self-review-skill.md) | Implemented 2026-08-02 |
 | [`04-agents-for-tests-review-and-docs.md`](04-agents-for-tests-review-and-docs.md) | Planned 2026-08-05 |
 | [`05-intent-layer.md`](05-intent-layer.md) | Implemented 2026-08-05 |
+| [`06-mcp-server.md`](06-mcp-server.md) | In progress 2026-08-08 |
+| [`07-blast-radius.md`](07-blast-radius.md) | In progress 2026-08-09 |

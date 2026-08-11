@@ -14,11 +14,21 @@ vi.mock("@/lib/hooks/core", () => ({
   usePrIntent: hooks.usePrIntent,
   useRecomputeIntent: hooks.useRecomputeIntent,
 }));
-// The INTENT card has its own test and wants next-intl. What is under test here
-// is the Description beside it.
+// Both cards in the row have their own tests and want providers this file does
+// not supply — next-intl for either, plus a QueryClient for BLAST RADIUS, which
+// owns its data. What is under test here is the Description beside them.
 vi.mock("../IntentCard", () => ({
   IntentCard: () => <div data-testid="intent-card" />,
 }));
+// The stand-in records `prId`: the card is useless without it, and a prop the
+// parent never passes is invisible to `tsc` when it has a default
+// (`client/INSIGHTS.md:163-249`).
+vi.mock("../BlastRadiusCard", () => ({
+  BlastRadiusCard: ({ prId }: { prId: string | null }) => (
+    <div data-testid="blast-radius-card" data-pr-id={String(prId)} />
+  ),
+}));
+
 import { OverviewTab } from "./OverviewTab";
 
 beforeEach(() => {
@@ -64,5 +74,32 @@ describe("OverviewTab — description", () => {
 
     expect(screen.queryByText("Description")).not.toBeInTheDocument();
     expect(screen.getByTestId("intent-card")).toBeInTheDocument();
+  });
+
+  it("fills the second card slot with BLAST RADIUS, wired to the PR", () => {
+    render(<OverviewTab prBody={null} prId="pr-1" />);
+
+    expect(screen.getByTestId("blast-radius-card")).toHaveAttribute("data-pr-id", "pr-1");
+  });
+
+  /**
+   * The card row stacks below 1024px, and that rule lives in `app/globals.css`
+   * against `dd-overview-cards`. jsdom loads no stylesheet, so the media query
+   * itself cannot be asserted here — but the way it breaks can be, and it breaks
+   * silently: an inline style beats any stylesheet rule, so re-adding
+   * `display`/`gridTemplateColumns` to `s.cardRow` would leave the row looking
+   * correct at desktop width and quietly stop it responding
+   * (`client/AGENTS.md`). That is what this pins.
+   *
+   * It is also what made the row overflow in the first place: the columns were
+   * inline `1fr`, whose implicit `min-width: auto` refuses to shrink below the
+   * content — and blast radius is full of unbreakable paths.
+   */
+  it("leaves the grid to the stylesheet, so the breakpoint is not overridden inline", () => {
+    const { container } = render(<OverviewTab prBody={null} prId="pr-1" />);
+    const row = container.querySelector(".dd-overview-cards");
+
+    expect(row).not.toBeNull();
+    expect(row!.getAttribute("style") ?? "").not.toMatch(/display|grid-template-columns/);
   });
 });

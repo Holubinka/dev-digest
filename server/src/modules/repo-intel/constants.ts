@@ -30,6 +30,16 @@ export const EXCLUDED_DIRS = [
 export const MAX_CALLERS_PER_SYMBOL = 20;
 
 /**
+ * Hard ceiling on `getDownstream`'s reverse import-graph walk. Two hops is what
+ * keeps the query bounded — each level is one indexed `(repo_id, to_file)`
+ * lookup, and the fan-out of a third would be the whole repo on any hub file.
+ * Deliberately NOT `BFS_DEPTH`, which happens to be 2 as well but belongs to
+ * getCriticalPaths: tying the two together makes one feature's tuning move the
+ * other's contract.
+ */
+export const MAX_DOWNSTREAM_DEPTH = 2;
+
+/**
  * [T1] Bumped whenever the AST extractor or symbol schema changes. A mismatch
  * with `repo_index_state.indexer_version` forces a full reindex.
  *

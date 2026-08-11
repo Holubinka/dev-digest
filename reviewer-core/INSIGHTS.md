@@ -49,6 +49,26 @@ regression. If a finding kind legitimately is not line-anchored, it belongs in
 **Fix.** Take the value as a parameter and let the caller supply it. `estimateCost` is
 the pattern to copy: injected as a callback so the engine holds no pricing table.
 
+### A loop over a number the model wrote is a loop the attacker controls
+
+**Symptom.** One review request blocks the whole API for seconds. Measured 2026-08-09 on a
+one-line diff: a single finding with `end_line: 100000000` blocked the event loop for 664 ms,
+`end_line: 2000000000` for 13385 ms, and eight such findings (one per enabled agent) for 54.6 s.
+
+**Cause.** `rangeIntersects` in `src/grounding.ts` walked every integer from `start_line` to
+`end_line`. Both are model output, `Finding` declares them `z.number().int()` with no upper
+bound (`server/src/vendor/shared/contracts/findings.ts:53`), and the model's input is the
+attacker-supplied diff body of `POST /reviews/diff`. Cost followed the number the model claimed,
+not the diff.
+
+**Fix.** Iterate the hunk line set and test membership of the range —
+`for (const n of lines) if (n >= lo && n <= hi) return true;`. Same predicate, cost bounded by
+the diff. Verified equivalent over 400k random cases plus NaN/±4e9 edges before landing;
+`test/grounding.test.ts` pins both the semantics and a 250 ms budget on the miss path. The
+general rule for this package: an unbounded model integer may be compared, never counted to.
+A synchronous loop like that one also ignores `testTimeout` — vitest reported the failure only
+after the full 54.6 s, so a "slow test" here can be a blocked event loop, not a slow provider.
+
 ## Tool & Library Notes
 
 ### Nested retry loops multiply, and nothing here bounded the call itself
@@ -160,4 +180,13 @@ loop's exit, not a diagnosis.
 
 ## Open Questions
 
-_Nothing recorded yet._
+- `buildLineIndex` (`src/grounding.ts:33`) still trusts a hunk header. When a hunk carries no
+  body lines, `newLineNumbers` is empty and the fallback fills the index from the header's
+  declared `newLines`, which `parseUnifiedDiff` copies verbatim
+  (`server/src/adapters/git/diff-parser.ts:50`). Measured 2026-08-09: an 84-byte diff body ending
+  in `@@ -1,0 +1,5000000 @@` cost 355 ms and 321 MB of heap, and at `+1,20000000` it threw
+  `RangeError: Set maximum size exceeded` from inside `buildLineIndex`. It also grounds findings
+  against lines no hunk contains, so the fake index keeps a finding it should drop. Left unfixed
+  on 2026-08-09 because the task was scoped to `rangeIntersects`; the fix needs a policy decision
+  (clamp `newLines` to the lines actually parsed, or drop the fallback and treat an empty hunk as
+  covering nothing).

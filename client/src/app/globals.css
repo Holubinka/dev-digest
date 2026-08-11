@@ -210,6 +210,17 @@
   width: 196px;
 }
 
+/* INTENT + BLAST RADIUS on the PR Overview tab.
+   `minmax(0, 1fr)`, never `1fr`: a `1fr` track keeps an implicit `min-width:
+   auto` and so refuses to shrink below its content's min-content width. Blast
+   radius is full of unbreakable mono paths like
+   `server/src/modules/reviews/run-executor.ts:184`, which held the row wider
+   than the page and made `main` scroll sideways from 1024px down. */
+.dd-overview-cards {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
 @media (max-width: 900px) {
   .dd-sidebar {
     position: fixed;
@@ -245,6 +256,12 @@
 }
 
 @media (max-width: 1024px) {
+  /* Two cards this dense side by side leave neither readable once the tracks
+     start shrinking — a caller list wraps to three lines per row. Stacked, each
+     gets the full width and the page still never scrolls sideways. */
+  .dd-overview-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .dd-card {
     flex-direction: column;
   }

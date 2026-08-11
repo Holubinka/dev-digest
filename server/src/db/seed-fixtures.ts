@@ -3,8 +3,8 @@ import type { Db } from './client.js';
 import * as t from './schema.js';
 
 /**
- * The `devdigest/skills-lab` fixtures: two pull requests whose diffs exist only
- * as `pr_files.patch` text.
+ * The `devdigest/skills-lab` fixtures: pull requests whose diffs exist only as
+ * `pr_files.patch` text.
  *
  * They are here so the skills before/after can be reproduced from
  * `pnpm db:seed` by anyone, with no GitHub token and no network:
@@ -133,6 +133,546 @@ const SEARCH_DOCS = `@@ -10,8 +10,9 @@
 +| limit | number | page size, defaults to 20 |
 
  Returns { results, total }.
+ `;
+
+/**
+ * PR #106 is the review-severity fixture: a plausible admin feature carrying
+ * defects that span the whole severity range, so a run has something to find at
+ * every level instead of only nits.
+ *
+ * What is planted, and why each is unambiguous rather than a matter of taste:
+ *
+ *  - `/admin/orders/purge` deletes rows and checks NOTHING — no key, no role.
+ *  - The API key arrives in the query string, is compared with `!==`, and is
+ *    then written to the log at info level.
+ *  - `collect()` builds SQL by interpolating `from`, `to` and `status` into
+ *    `sql.raw`.
+ *  - `toCsv` writes user text into a spreadsheet cell without neutralising a
+ *    leading `=`, `+`, `-` or `@`.
+ *  - The audit write is a floating promise, and its `catch` is empty.
+ *  - The query has no `LIMIT`, so a wide date range loads the table into memory.
+ *  - `escapeCell` and `quote` are the same function twice, `2000` and `50` are
+ *    unexplained, and the tests assert on status codes while never once looking
+ *    at a response body — including for the 401 branch, which has no test.
+ *
+ * Severities are NOT asserted here and no finding is seeded. Which of these a
+ * model calls critical is its answer, not ours (see the file header).
+ */
+const ADMIN_ROUTES = `@@ -0,0 +1,59 @@
++import type { FastifyInstance } from 'fastify';
++import { z } from 'zod';
++import { ExportService } from './export-service.js';
++import { toCsv } from './csv.js';
++
++/**
++ * Admin-only bulk export. Ops asked for this so they can reconcile a month of
++ * orders in a spreadsheet without waiting on the data team.
++ */
++
++const ExportQuery = z.object({
++  from: z.string(),
++  to: z.string(),
++  status: z.string().optional(),
++  format: z.string().default('csv'),
++});
++
++const PurgeBody = z.object({ before: z.string() });
++
++/** How many rows one purge statement removes. */
++const PURGE_BATCH = 500;
++
++export default async function adminExportRoutes(app: FastifyInstance) {
++  const service = new ExportService(app.container);
++
++  app.get(
++    '/admin/orders/export',
++    { schema: { querystring: ExportQuery } },
++    async (req, reply) => {
++      const { from, to, status, format } = req.query;
++      const apiKey = (req.query as Record<string, string>).api_key ?? '';
++
++      app.log.info({ apiKey, from, to }, 'admin export requested');
++
++      if (apiKey !== process.env.ADMIN_API_KEY) {
++        return reply.code(401).send({ error: 'invalid api key' });
++      }
++
++      const rows = await service.collect(from, to, status);
++      if (format === 'json') {
++        return { rows };
++      }
++
++      reply.header('content-type', 'text/csv');
++      reply.header('content-disposition', 'attachment; filename=orders.csv');
++      return toCsv(rows);
++    },
++  );
++
++  app.post('/admin/orders/purge', { schema: { body: PurgeBody } }, async (req) => {
++    const { before } = req.body;
++    const removed = await service.purgeBefore(before, PURGE_BATCH);
++    return { removed };
++  });
++
++  app.get('/admin/orders/export/status', async () => {
++    return { lastExportAt: service.lastExportAt, running: service.running };
++  });
++}`;
+
+const ADMIN_SERVICE = `@@ -0,0 +1,90 @@
++import { sql } from 'drizzle-orm';
++import type { Container } from '../../platform/container.js';
++import type { OrderRow, PurgeResult } from './types.js';
++
++/** Rows older than this are considered cold and may be purged. */
++const COLD_DAYS = 90;
++
++export class ExportService {
++  lastExportAt: string | null = null;
++  running = false;
++
++  constructor(private readonly container: Container) {}
++
++  /**
++   * Collect the orders in a date range, newest first. \`status\` narrows the set
++   * when the caller passes one.
++   */
++  async collect(from: string, to: string, status?: string): Promise<OrderRow[]> {
++    this.running = true;
++
++    const where = status
++      ? \`created_at between '\${from}' and '\${to}' and status = '\${status}'\`
++      : \`created_at between '\${from}' and '\${to}'\`;
++
++    const rows = await this.container.db.execute(
++      sql.raw(\`select * from orders where \${where} order by created_at desc\`),
++    );
++
++    this.audit('export', { from, to, status, count: rows.length });
++
++    this.running = false;
++    this.lastExportAt = new Date().toISOString();
++    return rows as unknown as OrderRow[];
++  }
++
++  /**
++   * Delete orders created before \`before\`, in batches, and report how many went.
++   */
++  async purgeBefore(before: string, batch: number): Promise<number> {
++    let removed = 0;
++
++    for (;;) {
++      const result = await this.container.db.execute(
++        sql.raw(
++          \`delete from orders where id in (
++             select id from orders where created_at < '\${before}' limit \${batch}
++           )\`,
++        ),
++      );
++      const n = (result as unknown as PurgeResult).rowCount ?? 0;
++      removed += n;
++      if (n < batch) break;
++    }
++
++    this.audit('purge', { before, removed });
++    return removed;
++  }
++
++  /** Orders nobody has touched for a while, used by the ops dashboard. */
++  async coldOrders(): Promise<OrderRow[]> {
++    const cutoff = new Date(Date.now() - COLD_DAYS * 24 * 60 * 60 * 1000);
++    const rows = await this.container.db.execute(
++      sql.raw(
++        \`select * from orders where updated_at < '\${cutoff.toISOString()}'\`,
++      ),
++    );
++    return rows as unknown as OrderRow[];
++  }
++
++  /**
++   * Best-effort audit trail. Deliberately not awaited so an export never waits
++   * on the audit table.
++   */
++  private audit(action: string, payload: Record<string, unknown>): void {
++    this.container.db
++      .execute(
++        sql.raw(
++          \`insert into admin_audit (action, payload) values ('\${action}', '\${JSON.stringify(payload)}')\`,
++        ),
++      )
++      .catch(() => {});
++  }
++
++  /** Human-readable size of the last export, for the status endpoint. */
++  formatSize(bytes: number): string {
++    if (bytes < 1024) return bytes + ' B';
++    if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + ' KB';
++    return Math.round(bytes / 1024 / 1024) + ' MB';
++  }
++}`;
+
+const ADMIN_CSV = `@@ -0,0 +1,63 @@
++import type { OrderRow } from './types.js';
++
++const COLUMNS = [
++  'id',
++  'customer_email',
++  'customer_note',
++  'status',
++  'total_cents',
++  'created_at',
++] as const;
++
++function escapeCell(value: unknown): string {
++  const s = String(value ?? '');
++  if (s.includes(',') || s.includes('"') || s.includes('\\n')) {
++    return '"' + s.replace(/"/g, '""') + '"';
++  }
++  return s;
++}
++
++function quote(value: unknown): string {
++  const s = String(value ?? '');
++  if (s.includes(',') || s.includes('"') || s.includes('\\n')) {
++    return '"' + s.replace(/"/g, '""') + '"';
++  }
++  return s;
++}
++
++/** Render one order as a CSV line. */
++function renderRow(row: OrderRow): string {
++  return [
++    escapeCell(row.id),
++    escapeCell(row.customer_email),
++    quote(row.customer_note),
++    escapeCell(row.status),
++    escapeCell((row.total_cents / 100).toFixed(2)),
++    escapeCell(row.created_at),
++  ].join(',');
++}
++
++export function toCsv(rows: OrderRow[]): string {
++  const lines = [COLUMNS.join(',')];
++  for (const row of rows) {
++    lines.push(renderRow(row));
++  }
++  return lines.join('\\n');
++}
++
++/**
++ * Split a big export into files small enough for the ops team's spreadsheet
++ * tool, which chokes past a couple of thousand rows.
++ */
++export function chunk(rows: OrderRow[]): OrderRow[][] {
++  const out: OrderRow[][] = [];
++  for (let i = 0; i < rows.length; i += 2000) {
++    out.push(rows.slice(i, i + 2000));
++  }
++  return out;
++}
++
++/** Truncate a note so one cell cannot blow up the whole row. */
++export function shortNote(note: string): string {
++  return note.length > 50 ? note.slice(0, 50) + '…' : note;
++}`;
+
+const ADMIN_TYPES = `@@ -0,0 +1,27 @@
++export interface OrderRow {
++  id: string;
++  customer_email: string;
++  customer_note: string;
++  status: string;
++  total_cents: number;
++  created_at: string;
++  updated_at: string;
++}
++
++export interface PurgeResult {
++  rowCount: number;
++}
++
++export type ExportFormat = 'csv' | 'json';
++
++export interface ExportRequest {
++  from: string;
++  to: string;
++  status?: string;
++  format: ExportFormat;
++}
++
++export interface ExportStatus {
++  lastExportAt: string | null;
++  running: boolean;
++}`;
+
+const ADMIN_TEST = `@@ -0,0 +1,62 @@
++import { describe, it, expect, beforeEach } from 'vitest';
++import { buildApp } from '../src/app';
++import { toCsv, shortNote } from '../src/modules/admin/csv';
++
++describe('admin export routes', () => {
++  let app: Awaited<ReturnType<typeof buildApp>>;
++
++  beforeEach(async () => {
++    process.env.ADMIN_API_KEY = 'test-key';
++    app = await buildApp();
++  });
++
++  it('exports orders as csv', async () => {
++    const res = await app.inject({
++      method: 'GET',
++      url: '/admin/orders/export?from=2026-01-01&to=2026-02-01&api_key=test-key',
++    });
++    expect(res.statusCode).toBe(200);
++  });
++
++  it('accepts a status filter', async () => {
++    const res = await app.inject({
++      method: 'GET',
++      url: '/admin/orders/export?from=2026-01-01&to=2026-02-01&status=paid&api_key=test-key',
++    });
++    expect(res.statusCode).toBe(200);
++  });
++
++  it('returns json when asked', async () => {
++    const res = await app.inject({
++      method: 'GET',
++      url: '/admin/orders/export?from=2026-01-01&to=2026-02-01&format=json&api_key=test-key',
++    });
++    expect(res.statusCode).toBe(200);
++  });
++
++  it('purges old orders', async () => {
++    const res = await app.inject({
++      method: 'POST',
++      url: '/admin/orders/purge',
++      payload: { before: '2025-01-01' },
++    });
++    expect(res.statusCode).toBe(200);
++  });
++
++  it('reports export status', async () => {
++    const res = await app.inject({ method: 'GET', url: '/admin/orders/export/status' });
++    expect(res.statusCode).toBe(200);
++  });
++});
++
++describe('csv helpers', () => {
++  it('renders a header row', () => {
++    const csv = toCsv([]);
++    expect(typeof csv).toBe('string');
++  });
++
++  it('shortens a long note', () => {
++    const out = shortNote('x'.repeat(80));
++    expect(out.length).toBeLessThan(80);
++  });
++});`;
+
+const ADMIN_RATE_LIMIT = `@@ -0,0 +1,55 @@
++import type { FastifyRequest } from 'fastify';
++
++/** Exports are heavy, so one admin gets a handful per hour. */
++const MAX_PER_HOUR = 5;
++const WINDOW_MS = 60 * 60 * 1000;
++
++interface Bucket {
++  count: number;
++  resetAt: number;
++}
++
++const buckets = new Map<string, Bucket>();
++
++function keyFor(req: FastifyRequest): string {
++  const forwarded = req.headers['x-forwarded-for'];
++  if (typeof forwarded === 'string' && forwarded.length > 0) {
++    return forwarded;
++  }
++  return req.ip;
++}
++
++/**
++ * Returns true when the request may proceed. Counts against the caller's bucket
++ * and starts a fresh window once the old one has elapsed.
++ */
++export async function allowExport(req: FastifyRequest): Promise<boolean> {
++  const key = keyFor(req);
++  const now = Date.now();
++  const bucket = buckets.get(key);
++
++  if (!bucket || bucket.resetAt < now) {
++    await persistWindowStart(key, now);
++    buckets.set(key, { count: 1, resetAt: now + WINDOW_MS });
++    return true;
++  }
++
++  if (bucket.count >= MAX_PER_HOUR) {
++    return false;
++  }
++
++  await persistWindowStart(key, bucket.resetAt);
++  bucket.count = bucket.count + 1;
++  return true;
++}
++
++/** Mirrors the window into the DB so a restart does not reset every bucket. */
++async function persistWindowStart(key: string, at: number): Promise<void> {
++  void key;
++  void at;
++}
++
++export function remaining(req: FastifyRequest): number {
++  const bucket = buckets.get(keyFor(req));
++  return bucket ? MAX_PER_HOUR - bucket.count : MAX_PER_HOUR;
++}`;
+
+const ADMIN_MAILER = `@@ -0,0 +1,45 @@
++import { createTransport } from 'nodemailer';
++import type { OrderRow } from './types.js';
++import { toCsv } from './csv.js';
++
++const SMTP_HOST = 'smtp.internal.example.com';
++const SMTP_USER = 'ops-exports';
++const SMTP_PASS = 'Xk92-ops-mailer-2026';
++
++const transport = createTransport({
++  host: SMTP_HOST,
++  port: 587,
++  auth: { user: SMTP_USER, pass: SMTP_PASS },
++});
++
++/** Email the export to whoever asked for it. */
++export async function mailExport(to: string, rows: OrderRow[]): Promise<void> {
++  const csv = toCsv(rows);
++
++  await transport.sendMail({
++    from: 'exports@example.com',
++    to,
++    subject: 'Your orders export',
++    text: 'The export you asked for is attached.',
++    attachments: [{ filename: 'orders.csv', content: csv }],
++  });
++}
++
++/** Retry a failed send a couple of times before giving up. */
++export async function mailExportWithRetry(to: string, rows: OrderRow[]): Promise<void> {
++  try {
++    await mailExport(to, rows);
++    return;
++  } catch {
++    // first attempt failed, fall through
++  }
++
++  try {
++    await mailExport(to, rows);
++    return;
++  } catch {
++    // second attempt failed, fall through
++  }
++
++  await mailExport(to, rows);
++}`;
+
+const ADMIN_PERMISSIONS = `@@ -0,0 +1,46 @@
++import type { FastifyRequest } from 'fastify';
++
++export type Role = 'viewer' | 'support' | 'admin' | 'owner';
++
++/** Roles allowed to export. Purge is owner-only, per the ops runbook. */
++const EXPORT_ROLES = ['support', 'admin', 'owner'];
++
++interface Principal {
++  id: string;
++  roles: string;
++}
++
++function principalOf(req: FastifyRequest): Principal | null {
++  const header = req.headers['x-admin-user'];
++  if (typeof header !== 'string') {
++    return null;
++  }
++  const [id, roles] = header.split(':');
++  return { id: id ?? '', roles: roles ?? '' };
++}
++
++/** True when the caller may run an export. */
++export function canExport(req: FastifyRequest): boolean {
++  const principal = principalOf(req);
++  if (!principal) {
++    return true;
++  }
++  return EXPORT_ROLES.some((role) => principal.roles.includes(role));
++}
++
++/** True when the caller may purge. Owner only. */
++export function canPurge(req: FastifyRequest): boolean {
++  const principal = principalOf(req);
++  if (!principal) {
++    return true;
++  }
++  return principal.roles.includes('owner');
++}
++
++/** Used by the UI to grey out buttons the caller cannot press. */
++export function permissionsFor(req: FastifyRequest): Record<string, boolean> {
++  return {
++    export: canExport(req),
++    purge: canPurge(req),
++  };
++}`;
+
+const ADMIN_INDEX = `@@ -0,0 +1,16 @@
++import type { FastifyInstance } from 'fastify';
++import adminExportRoutes from './export-routes.js';
++
++/**
++ * Admin module. Registered by hand in src/modules/index.ts, like every other
++ * module in this codebase.
++ */
++export default async function adminModule(app: FastifyInstance): Promise<void> {
++  await app.register(adminExportRoutes);
++}
++
++export { ExportService } from './export-service.js';
++export { toCsv, chunk, shortNote } from './csv.js';
++export { canExport, canPurge, permissionsFor } from './permissions.js';
++export { allowExport, remaining } from './rate-limit.js';
++export type { OrderRow, ExportFormat, ExportStatus } from './types.js';`;
+
+const ADMIN_MIGRATION = `@@ -0,0 +1,13 @@
++CREATE TABLE admin_audit (
++  id serial PRIMARY KEY,
++  action text NOT NULL,
++  payload text NOT NULL,
++  created_at timestamp DEFAULT now()
++);
++
++CREATE TABLE admin_export_window (
++  key text NOT NULL,
++  started_at bigint NOT NULL
++);
++
++ALTER TABLE orders ADD COLUMN customer_note text;`;
+
+const ADMIN_DOCS = `@@ -18,4 +18,19 @@
+ Returns { results, total }.
+
++## GET /admin/orders/export
++
++| Param | Type | Notes |
++|---|---|---|
++| from | string | ISO date, inclusive |
++| to | string | ISO date, inclusive |
++| status | string | optional filter |
++| format | string | csv (default) or json |
++
++Returns a CSV attachment.
++
++## POST /admin/orders/purge
++
++Body: { before }. Deletes orders created before that date and returns { removed }.
++
+ ## GET /health
  `;
 
 // ---- PR #104: the Smart Diff fixture --------------------------------------
@@ -399,6 +939,56 @@ const FIXTURE_PRS: FixturePr[] = [
     files: [
       { path: 'src/modules/search/routes.ts', additions: 7, deletions: 4, patch: SEARCH_ROUTES },
       { path: 'docs/api.md', additions: 1, deletions: 0, patch: SEARCH_DOCS },
+    ],
+  },
+  {
+    number: 106,
+    title: 'Add admin bulk export and purge for orders',
+    branch: 'feat/admin-bulk-export',
+    body:
+      'Ops asked for a way to pull a month of orders into a spreadsheet without ' +
+      'waiting on the data team, plus a purge for cold rows.\n\n' +
+      '- GET /admin/orders/export — date range, optional status filter, csv or json\n' +
+      '- POST /admin/orders/purge — deletes orders before a date, in batches\n' +
+      '- GET /admin/orders/export/status — what the last export did\n\n' +
+      'Guarded by ADMIN_API_KEY. Tests cover every route.',
+    files: [
+      {
+        path: 'src/modules/admin/export-routes.ts',
+        additions: 59,
+        deletions: 0,
+        patch: ADMIN_ROUTES,
+      },
+      {
+        path: 'src/modules/admin/export-service.ts',
+        additions: 90,
+        deletions: 0,
+        patch: ADMIN_SERVICE,
+      },
+      { path: 'src/modules/admin/csv.ts', additions: 63, deletions: 0, patch: ADMIN_CSV },
+      { path: 'src/modules/admin/types.ts', additions: 27, deletions: 0, patch: ADMIN_TYPES },
+      {
+        path: 'src/modules/admin/rate-limit.ts',
+        additions: 55,
+        deletions: 0,
+        patch: ADMIN_RATE_LIMIT,
+      },
+      { path: 'src/modules/admin/mailer.ts', additions: 45, deletions: 0, patch: ADMIN_MAILER },
+      {
+        path: 'src/modules/admin/permissions.ts',
+        additions: 46,
+        deletions: 0,
+        patch: ADMIN_PERMISSIONS,
+      },
+      { path: 'src/modules/admin/index.ts', additions: 16, deletions: 0, patch: ADMIN_INDEX },
+      {
+        path: 'src/db/migrations/0021_admin_audit.sql',
+        additions: 13,
+        deletions: 0,
+        patch: ADMIN_MIGRATION,
+      },
+      { path: 'test/admin-export.test.ts', additions: 62, deletions: 0, patch: ADMIN_TEST },
+      { path: 'docs/api.md', additions: 15, deletions: 0, patch: ADMIN_DOCS },
     ],
   },
   {
