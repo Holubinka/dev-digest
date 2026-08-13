@@ -217,7 +217,7 @@ else will.
 - **Read `AGENTS.md`** before writing code here — the `NodeNext` extension rule and the
   stdout rule both bite silently.
 - **Read `INSIGHTS.md`** before debugging anything in this package.
-- **Read `../specs/06-mcp-server.md`** for the design, the rejected alternatives, and the
+- **Read `../plans/06-mcp-server.md`** for the design, the rejected alternatives, and the
   measured numbers behind the 120-second ceiling. It predates `get_blast_radius` and the
-  CLI: for those, **read `../specs/07-blast-radius.md`** steps 13 and 15.
+  CLI: for those, **read `../plans/07-blast-radius.md`** steps 13 and 15.
 - **Read `../TESTING.md`** for where this suite sits relative to the others.

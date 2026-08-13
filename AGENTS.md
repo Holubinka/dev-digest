@@ -31,6 +31,17 @@ cd client && pnpm lint          # ESLint — client/ only; no other package has 
 
 `server/` and `client/` use **pnpm**; `reviewer-core/`, `e2e/` and `mcp/` use **npm**. Do not mix.
 
+## A feature starts with a spec
+
+Three folders, three questions, and they do not mix. `specs/` and `<module>/specs/` hold **what**
+is being built and why, in EARS acceptance criteria — written by the `spec-creator` agent,
+approved by a human. `plans/` holds **how**, one folder for every package — written by
+`implementation-planner` against an approved spec. `docs/` holds how the system **already** works.
+
+`spec-creator` is the one agent here whose boundary is enforced rather than trusted: a
+`PreToolUse` hook in its own frontmatter (`scripts/spec-creator/write-gate.sh`) refuses every
+write it makes outside a `specs/` folder.
+
 ## A push is gated
 
 `.claude/settings.json` registers `scripts/pr-self-review/gate.sh` as a `PreToolUse` hook, so in
@@ -61,7 +72,7 @@ again on every later turn: a printed review report costs $0.20 to generate and *
   a review is for. That is the loop those three rounds were.
 - **Do not print what a script already wrote.** `report.sh` writes `.pr-self-review/report.md`;
   the verdict line plus the findings needing a decision is enough in the conversation.
-- **A plan is a fraction of the code, not 64% of it.** `specs/05-intent-layer.md` was 1535 lines
+- **A plan is a fraction of the code, not 64% of it.** `plans/05-intent-layer.md` was 1535 lines
   and six agents read it whole.
 - **Batch independent commands into one call.** Every extra turn costs the same $0.23 whether it
   runs one command or five.

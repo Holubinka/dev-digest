@@ -62,7 +62,7 @@ and leaves a lone surrogate (`server/INSIGHTS.md`). Use the helper in `src/proje
 ## The six description strings are fixed
 
 The server `instructions` and the five tool `description`s are specified verbatim in
-`../specs/06-mcp-server.md` §Appendix and are copied character for character. They are a
+`../plans/06-mcp-server.md` §Appendix and are copied character for character. They are a
 contract, not a starting point: each is cut at 2KB with the first bytes surviving, and
 every sentence carries a specific rule. If one is wrong, fix it **in the spec first**, then
 in the code.
@@ -72,6 +72,6 @@ in the code.
 - **Read `README.md`** for the tool surface, the SDK decision, and the finding order.
 - **Read `INSIGHTS.md`** before debugging anything here — the SDK line, the cwd question
   and the stdout traps are all already answered there.
-- **Read `../specs/06-mcp-server.md`** before changing what a tool returns.
+- **Read `../plans/06-mcp-server.md`** before changing what a tool returns.
 - **Read `../TESTING.md`** — this package has no CI workflow and no Track A gate, so
   `npm run typecheck && npm test` before a push is manual and is the only gate.

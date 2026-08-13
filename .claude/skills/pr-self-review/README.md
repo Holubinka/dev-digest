@@ -97,7 +97,7 @@ specific claim taken from it.
 
 | Source | What we take from it |
 |---|---|
-| `specs/03-pr-self-review-skill.md` | the whole design: two tracks, the domain table, the severity model, the verdict file as the seam, and every rejected alternative |
+| `plans/03-pr-self-review-skill.md` | the whole design: two tracks, the domain table, the severity model, the verdict file as the seam, and every rejected alternative |
 | `scripts/pr-self-review/scope.sh` | the four buckets and their exact JSON — `routed` / `checklist` / `skipped` / `flagged`, and that `flagged` entries carry `line: 1` |
 | `scripts/pr-self-review/gates.sh` | the ten gates, the `skip` ≠ `ok` distinction, and that gate findings put the package name in `file` |
 | `scripts/pr-self-review/baseline.sh` | that only an `agent `-sourced finding is diff-anchored *or* freezable, and that the freeze fingerprint is `{file, line, message}` |
@@ -271,7 +271,7 @@ the verdict is allowed to say, and where the rules are written.
 ### 1.0.0 — 2026-08-02
 
 First release. Written against the six scripts in `scripts/pr-self-review/`, all committed and
-green, and against `specs/03-pr-self-review-skill.md`.
+green, and against `plans/03-pr-self-review-skill.md`.
 
 Decisions made while writing, beyond what the spec fixed:
 

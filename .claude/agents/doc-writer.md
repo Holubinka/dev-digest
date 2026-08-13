@@ -139,7 +139,7 @@ diagram at all when prose is clearer. `docs/architecture.md` is the register to 
 - **`AGENTS.md`, or any `CLAUDE.md`** — those are symlinks to it, and conventions are not
   documentation.
 - **`INSIGHTS.md`** — that file belongs to the `engineering-insights` skill and is append-only.
-- **Anything under `specs/`**, including the status table.
+- **Anything under `specs/` or `plans/`**, including their status tables.
 - **Generated files:** `plugins/*/skills/**`, `server/src/db/seed-skills.ts`, `docs/skills/*`,
   `docs/agent-prompts/*` — each is generated from, or is a readable copy of, a source elsewhere.
 - **Vendored copies:** `server/src/vendor/**`, `client/src/vendor/**`.

@@ -914,7 +914,7 @@ annotation is what keeps the fixture honest when the contract gains a field.
   and unclickable. Freshly generated findings were not available — see the root
   `INSIGHTS.md` on reviews that approve everything.
 - Same counts then went onto the PR list as a `FINDINGS` column with a hover card
-  (`_components/FindingsCell/`, spec `specs/L04-findings-on-the-pr-list.md`). That half
+  (`_components/FindingsCell/`, spec `plans/L04-findings-on-the-pr-list.md`). That half
   needed the server: `PrMeta` gained `findings_critical/warning/suggestion` plus a 3-item
   `findings_top`, mirrored into both vendored `shared/` copies.
 - The column's normal state on this workspace is `0 · 0 · 0`, because the agents approve

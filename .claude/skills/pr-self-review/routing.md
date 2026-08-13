@@ -45,7 +45,8 @@ Three properties are deliberate and easy to break:
   was a hole, not a scope decision.
 
 Files that reach no domain land in `checklist[]`: `.github/workflows/**`, `scripts/**`,
-`docker-compose.yml`, `*.env.example`, `docs/**`, `specs/**`, `*.md`. Read them, no subagent.
+`docker-compose.yml`, `*.env.example`, `docs/**`, `specs/**`, `plans/**`, `*.md`. Read them, no
+subagent.
 The one thing worth raising from that list: `docs/architecture.md` in the diff earns a `note`
 asking whether its diagram still holds.
 

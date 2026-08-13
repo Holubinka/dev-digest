@@ -84,7 +84,7 @@ identical timestamp, so the tie-break is load-bearing.
 
 **Symptom.** `blast`'s `caller_count` never exceeded 20 and `truncated` was never `true` on any
 real PR, while a unit test asserting exactly that behaviour passed.
-**Cause.** `specs/07-blast-radius.md` step 3 caps callers at `MAX_CALLERS_PER_SYMBOL` inside
+**Cause.** `plans/07-blast-radius.md` step 3 caps callers at `MAX_CALLERS_PER_SYMBOL` inside
 `modules/repo-intel/service.ts`, and step 7 then asked `blast/helpers.ts` `toView` to report the
 count *before* the cap. `toView` only ever receives the capped array, so `callers.length` is the
 post-cap size by definition. The plan's own test passed only because it handed `toView` a
@@ -807,7 +807,7 @@ change broke it" from "the suite is loaded" in one command — that is what sett
 
 ### 2026-08-09 (blast radius — the server slice)
 
-- Steps 5-10 of `specs/07-blast-radius.md`: the `blast/` slice, its structural container port and
+- Steps 5-10 of `plans/07-blast-radius.md`: the `blast/` slice, its structural container port and
   the two routes. `pnpm arch` clean with the baseline unchanged at 19, typecheck clean, 520 unit
   and 98 integration tests green.
 - **The assertion that matters is not in the unit file.** `test/blast-service.test.ts` fakes
@@ -893,7 +893,7 @@ change broke it" from "the suite is loaded" in one command — that is what sett
   `completeStructured`; `repo.getIntent` is called only by `get()`. So every review run pays the
   classifier again even when a fresh `pr_intent` row is sitting there, and a three-agent
   re-review of an unchanged PR buys three identical derivations of the same text. That
-  contradicts `specs/05-intent-layer.md` Step 12, which justifies storing the cost on `pr_intent`
+  contradicts `plans/05-intent-layer.md` Step 12, which justifies storing the cost on `pr_intent`
   rather than on `agent_runs` with *"one derivation serves every agent and every re-review until
   someone hits Recompute"* — the sentence is true of the storage and false of the code.
   Deliberately **not** fixed on 2026-08-05 while fixing the classifier's 502: `derive` is the
@@ -910,7 +910,7 @@ change broke it" from "the suite is loaded" in one command — that is what sett
   ignores the flag, while `getBlastRadius` checks the flag *before* `tryPersistentBlast` and falls
   through to the clone-reading, `codeIndex.symbols` path (`modules/repo-intel/service.ts:238-306`).
   So a repo indexed earlier and then run with the flag off passes the gate and does whole-repo
-  scanning on the request path — the thing acceptance criterion 4 of `specs/07-blast-radius.md`
+  scanning on the request path — the thing acceptance criterion 4 of `plans/07-blast-radius.md`
   forbids. Not fixed on 2026-08-09 because both fixes are wider than the step that found it:
   putting `config` on `BlastContainer` (step 5 deliberately keeps it to three methods), or having
   `getIndexState` report `degraded` when the flag is off, which changes a facade every module

@@ -9,7 +9,7 @@
 #
 # Both rules apply to model findings only — `source` beginning "agent " — and
 # for one reason: a Track A failure is critical by definition and nothing may
-# downgrade it (severity.md, gates.md, specs/03). Freezing used to record
+# downgrade it (severity.md, gates.md, plans/03). Freezing used to record
 # whatever it was handed, so `--freeze`, the documented day-one remedy, froze
 # this repo's two standing `gate registry` criticals; they vanished from every
 # later payload while .gates[] went on reporting `fail`, and report.sh printed
