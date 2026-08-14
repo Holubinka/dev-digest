@@ -19,6 +19,9 @@ import { Row, Stat } from "../atoms";
 export function TraceBody({ trace, findings }: { trace: RunTrace; findings: FindingRecord[] }) {
   const t = useTranslations("runs");
   const stats = trace.stats;
+  // Derived, not stored: a document that WAS sent is accounted for twice in this
+  // drawer already, so only the ones that were not are worth a row of their own.
+  const notSent = trace.project_context.filter((doc) => doc.status !== "included");
   return (
     <>
       <TraceSection icon="Settings" title={t("trace.configuration")}>
@@ -69,20 +72,22 @@ export function TraceBody({ trace, findings }: { trace: RunTrace; findings: Find
         </div>
       </TraceSection>
 
-      {/* Every document of the run's effective set, INCLUDING the ones that
-          never reached the prompt. `specs_read` above lists what went; this is
-          the only place a document that was dropped for budget, missing from
-          the clone or refused by the reader is explainable at all. Rendered
-          because the field existing and being typed on both sides is exactly
-          how a trace field ends up displayed nowhere. */}
-      {trace.project_context.length > 0 && (
+      {/* ONLY the documents that did not reach the prompt.
+          A document that was sent is already in this drawer twice — as a path in
+          `Specs read` above and as its own text in `Prompt assembly` below — so
+          listing it a third time here said nothing and buried the rows that do.
+          What neither of those two can show is a document the run was given and
+          did NOT send: `specs_read` carries the included paths only, and a
+          dropped document is by definition absent from the assembled block. That
+          is what this section is for, and why it disappears when there is none. */}
+      {notSent.length > 0 && (
         <TraceSection
           icon="FileText"
           title={t("trace.projectContext.title")}
-          right={<Badge color="var(--text-muted)">{trace.project_context.length}</Badge>}
+          right={<Badge color="var(--text-muted)">{notSent.length}</Badge>}
         >
           <div style={s.configList}>
-            {trace.project_context.map((doc) => (
+            {notSent.map((doc) => (
               <Row key={doc.path} label={doc.path}>
                 <span style={s.specsWrap}>
                   <span className="mono" style={s.spec}>
@@ -94,6 +99,7 @@ export function TraceBody({ trace, findings }: { trace: RunTrace; findings: Find
                 </span>
               </Row>
             ))}
+            <span style={s.specsNone}>{t("trace.projectContext.hint")}</span>
           </div>
         </TraceSection>
       )}

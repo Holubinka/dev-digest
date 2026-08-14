@@ -201,3 +201,53 @@ describe("A5 Run Trace drawer while the run is still going", () => {
     expect(hooks.useRunTrace).toHaveBeenCalledWith("r1", true);
   });
 });
+
+/**
+ * The drawer accounts for a SENT document twice already — its path under
+ * `Specs read`, its text under `Prompt assembly`. Listing it a third time was
+ * noise that buried the only rows this section exists for: the documents the run
+ * was given and did not send, which neither of the other two can show.
+ */
+describe("Run Trace drawer — project context documents that did not reach the prompt", () => {
+  beforeEach(() => {
+    hooks.useRunEvents.mockReturnValue({ events: [], running: false });
+  });
+
+  it("shows no such section when every document was sent", () => {
+    hooks.useRunTrace.mockReturnValue({
+      data: {
+        ...TRACE,
+        specs_read: ["specs/a.md"],
+        project_context: [{ path: "specs/a.md", tokens: 155, status: "included" }],
+      },
+      isLoading: false,
+    });
+    renderWithIntl(<RunTraceDrawer runId="r1" agentName="Security" prNumber={482} onClose={() => {}} />);
+    expect(screen.queryByText(/did not reach the prompt/)).toBeNull();
+    // It is still accounted for, in the place that says what was sent.
+    expect(screen.getByText("specs/a.md")).toBeInTheDocument();
+  });
+
+  it("shows only the documents that were not sent, and says why for each", () => {
+    hooks.useRunTrace.mockReturnValue({
+      data: {
+        ...TRACE,
+        specs_read: ["specs/sent.md"],
+        project_context: [
+          { path: "specs/sent.md", tokens: 100, status: "included" },
+          { path: "specs/over.md", tokens: 9000, status: "dropped" },
+          { path: "specs/gone.md", tokens: 0, status: "missing" },
+        ],
+      },
+      isLoading: false,
+    });
+    renderWithIntl(<RunTraceDrawer runId="r1" agentName="Security" prNumber={482} onClose={() => {}} />);
+    expect(screen.getByText(/did not reach the prompt/)).toBeInTheDocument();
+    expect(screen.getByText("specs/over.md")).toBeInTheDocument();
+    expect(screen.getByText("dropped (over budget)")).toBeInTheDocument();
+    expect(screen.getByText("specs/gone.md")).toBeInTheDocument();
+    expect(screen.getByText("missing from the clone")).toBeInTheDocument();
+    // The sent one keeps its single row under Specs read, and gains none here.
+    expect(screen.getAllByText("specs/sent.md")).toHaveLength(1);
+  });
+});
