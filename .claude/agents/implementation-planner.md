@@ -47,6 +47,14 @@ That is the reason the list is worth reading rather than testing.
   `approved`, and its row in `specs/README.md` with it. One line, one row, the spec you are
   planning against — the dispatch is the approval, you are only recording it. Its prose stays
   untouched, and you never write `implemented`; that is the implementer's word.
+
+  **And say in your report that you flipped it.** One line, naming the spec and the number of
+  criteria it carries. The dispatch is the approval *mechanically*, but a dispatch is a sentence
+  someone typed — it is not evidence that anyone read the criteria you are about to plan against,
+  and `approved` on disk looks identical either way. Announcing it is what gives the human the
+  chance to say "wait, I have not read that". A spec that reached `approved` because a plan was
+  requested, and a spec that reached it because someone weighed it, are the same file and very
+  different objects.
 - **Never write into `e2e/specs/`.** Those `*.flow.json` files are live browser tests, not
   documentation, and nothing you produce belongs there under any circumstances.
 - **You do not touch code, `AGENTS.md`, `INSIGHTS.md`, `docs/`, `server/src/vendor/**`,

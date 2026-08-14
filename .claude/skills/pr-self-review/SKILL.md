@@ -47,7 +47,10 @@ file I just wrote". Those are `/code-review` and `superpowers:systematic-debuggi
 
 ## 2. The four modes
 
-`.claude/commands/pr-self-review.md` promises four arguments. All four are implemented here.
+Four arguments, all implemented here. They were once promised by a thin wrapper at
+`.claude/commands/pr-self-review.md`; that file was deleted on 2026-08-13 when the repo dropped
+`.claude/commands/` entirely, since a skill is already invocable as `/pr-self-review` and the
+wrapper only added a second place for the argument list to drift.
 
 | Argument | Runs | Writes `mode:` | Good for |
 |---|---|---|---|

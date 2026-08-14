@@ -39,3 +39,19 @@ test-results/
 # the rule in scripts/pr-self-review/scope.sh that skips them during review, so
 # they are review-time noise with no consumer and 3.2 MB of binary weight.
 .screenshots/
+
+# Fix briefs written by /sdd between a review and the implementer that acts on
+# it. Ignored for the same load-bearing reason as .pr-self-review/ above:
+# scope.sh feeds worktreeHash from `git ls-files --others --exclude-standard`,
+# which sees untracked files but not ignored ones. Un-ignore this and writing a
+# brief after a passing --gates run silently invalidates that verdict, and the
+# push is refused pointing at an edit nobody made. They are per-session working
+# notes with no reader after the round they belong to.
+.reviews/
+
+# Run retrospectives: what a multi-agent run cost, written by the
+# run-retrospective skill. Third instance of the same load-bearing reason as the
+# two above — a report written here must not move worktreeHash. The durable half
+# of a retrospective does not live here anyway: it goes to INSIGHTS.md, and what
+# stays is the arithmetic for one run, which nobody reads twice.
+.retro/

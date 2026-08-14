@@ -19,7 +19,7 @@ it.
 | [`implementer`](implementer.md) | Making the repo match an approved plan, and proving it with gates | opus | code in the modules the plan names | explicitly, with a plan path |
 | [`researcher`](researcher.md) | Answering a question about this repo or the outside world, with evidence | sonnet | nothing | when a question blocks either of the above |
 | [`test-writer`](test-writer.md) | Writing tests for code that already shipped, and proving each one can fail | opus | test files in `client/src/**`, `server/test/`, `reviewer-core/test/` **and `e2e/specs/*.flow.json`** | explicitly, with what to cover |
-| [`architecture-reviewer`](architecture-reviewer.md) | Boundaries the dependency-cruiser rules cannot express | opus | nothing | explicitly, with a target |
+| [`architecture-reviewer`](architecture-reviewer.md) | Boundaries the dependency-cruiser rules cannot express | sonnet | nothing | explicitly, with a target |
 | [`plan-verifier`](plan-verifier.md) | Whether the finished code satisfies every item of the plan | opus | nothing | explicitly, with a plan path |
 | [`doc-writer`](doc-writer.md) | Documenting what shipped, in the right `docs/` folder | sonnet | one document under `docs/` or `<module>/docs/`, one README row | explicitly, after the work lands |
 
@@ -34,6 +34,13 @@ That order is the **maximum, not the minimum**. Every stage is a dispatch with a
 change that does not need a stage is made worse by it: a `plan-verifier` run over a one-file change
 the gates already prove returns rows nobody acts on, and four `researcher` dispatches aimed at one
 subsystem return the same answer four times.
+
+**[`/implement`](../skills/implement/SKILL.md) runs the second half of that order** — from an approved
+plan through build, run, verify, review and a bounded fix loop. It deliberately carries neither
+`spec-creator` nor `implementation-planner`, which are dispatched by hand so a human sees the
+requirements and the plan before any code exists, and it does not dispatch `test-writer` at all
+(§ *What is deliberately not here* in that file says what that costs). This README stays the map:
+the command orchestrates, the agent bodies remain the rules.
 
 **`plan-verifier` runs first among the reviewers, not last.** It answers the cheapest question —
 *did the thing the plan asked for actually happen* — and every later stage is wasted on a feature
@@ -91,9 +98,10 @@ stage of this pipeline with a clean report at each one. It is a skill the human 
 dispatch, and it takes an effort level — `/code-review high` on a feature, the default on a
 smaller change.
 
-### Two commands that outrank every agent here
+### Three habits that outrank every agent here
 
-Run both yourself, before dispatching.
+The first two are commands you run yourself before dispatching; the third is what you do with what
+they returned.
 
 **Grep the nouns of the request, before any `researcher`.** This repo carries scaffolding for
 course lessons that have not landed — tables that migrate but stay empty, contracts nobody
@@ -109,6 +117,20 @@ fixtures; they prove nothing about whether the feature works against a real prov
 database. A defect caught here costs one command. The same defect caught after review costs a
 re-plan, another `implementer`, and makes the review itself moot — it graded a feature that never
 ran.
+
+**Put the facts in the brief, and do not make each agent buy them again.** A subagent starts cold,
+so anything it is not told, it pays to rediscover — and it pays in the most expensive currency
+there is. Measured on the Project Context run (`scripts/run-retrospective/stats.sh`, 27 agents):
+**549 M tokens re-read against 1.72 M produced, a ratio of 319:1.** One file was opened by fifteen
+different agents; `plans/09-project-context-authoring.md` was opened by **ten** — a plan whose
+per-package `## Contract` blocks existed precisely so that no implementer would have to read it.
+Partitioning *writes* is not partitioning *reads*: a contract written inside the document it was
+meant to replace still costs a read of that document. Quote the contract into the dispatch instead
+of pointing at it, name the `path:line` you already established rather than the file to go looking
+in, and tell each agent what its siblings were told so it does not re-derive their half.
+
+Run `run-retrospective` after a multi-agent run to see which facts got bought more than once. The
+answer is what the next brief should carry.
 
 The last four sit in no script — they are dispatched by a human, or by the main agent when the
 work calls for it. `architecture-reviewer` in particular is **not** a Track B agent:
@@ -333,7 +355,7 @@ judge this stage's output. See § *How skills reach an agent* for why the field 
 
 | | |
 |---|---|
-| **In** | a path to a plan under `plans/`, plus the work package (`P1`) when the plan's `**Execution:**` is `multi-agent` — nothing else, no conversation |
+| **In** | a path to a plan under `plans/`, plus the work package (`P1`) when the plan's `**Execution:**` is `multi-agent`; or a fix brief under `.reviews/` naming findings against code that already landed — nothing else, no conversation |
 | **Out** | code and tests in the modules the plan names |
 | | an appended entry in the relevant module's `INSIGHTS.md`, via `engineering-insights` |
 | | `Planned <date>` → `Implemented <date>` in the plan folder's `README.md`, once gates pass |
@@ -455,6 +477,15 @@ agent, and reporting one here means it reaches nobody who acts on it.
 § *Subject* sends correctness and performance elsewhere; `/code-review` is where they go, which is
 why that command joined the order above on 2026-08-13. Dispatching this agent "to find bugs"
 returns a clean boundary report and leaves the bugs in place.
+
+**Moved to `sonnet` on 2026-08-13**, on the ground that its output is advisory: it issues no
+verdict, blocks nothing, and a human reads every row before acting. The severity axis was already
+the least reproducible thing it produces — `agents/service.ts:55` scored `major` on one run and
+`minor` on the next under `opus`, which is why the anchor table and the decision-versus-edit
+tie-break exist at all — so the tier buys back cost against a field nothing was allowed to depend
+on. What to watch on the next few dispatches: whether findings still land on the rule they cite
+rather than on a preference, and whether «Непевні спостереження» starts absorbing things that
+belong in the table.
 
 | | |
 |---|---|

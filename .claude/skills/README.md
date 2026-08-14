@@ -20,6 +20,8 @@ Reusable AI skills that provide specialized knowledge and workflows. Canonical l
 | [mermaid-diagram](mermaid-diagram/SKILL.md) | Shared | Mermaid diagrams in markdown (flowcharts, sequence, ERD, …) |
 | [engineering-insights](engineering-insights/SKILL.md) | Repo | Capture what a session learned into the right module's `INSIGHTS.md` |
 | [pr-self-review](pr-self-review/SKILL.md) | Repo | Review every open change against the repo's skills and gates before a PR; blocks on a critical |
+| [implement](implement/SKILL.md) | Repo | Carry an approved plan from `plans/` through build, run, verify, review and a bounded fix loop |
+| [run-retrospective](run-retrospective/SKILL.md) | Repo | What a multi-agent run cost and what it taught: billed tokens, dispatch order, what the agents duplicated |
 
 ## What Are Skills?
 
@@ -33,6 +35,12 @@ Skills are modular packages that extend the AI agent with specialized knowledge 
 | **Commands** (`.md`) | User actions | On `/command` invocation | Slash commands |
 | **Skills** (`.md`) | Domain knowledge | On-demand by agent | Specialized knowledge |
 | **Agents** (`.md`) | Workflows | Via Task tool | Subagent orchestration |
+
+**This repo has no commands.** `.claude/commands/` was deleted on 2026-08-13: a skill is already
+invocable as `/<name>`, so a command wrapping one added nothing but a second place for its
+arguments to drift — which is exactly what had happened to `pr-self-review`'s. Anything you would
+reach for a slash command to do belongs in `.claude/skills/` under the layout below, and gets the
+registry gate's checks for free.
 
 ## Creating New Skills
 

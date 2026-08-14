@@ -81,9 +81,23 @@ Execute your package only. The files another package lists under **Owns** are no
 even when a step of yours would be easier if they were; that split is what keeps two agents out of
 the same file.
 
+**A fix brief** — a file under `.reviews/`, and the one input that is not a plan. It lists findings
+a reviewer raised against code that already landed, each with a `path:line`, the rule it violates
+and the shape that would satisfy it. It names the plan the branch was executing: open that plan's
+`## Out of scope`, `## Constraints` and `## Gates`, and nothing else from it — the steps are done,
+and re-reading them is what makes a fix round cost as much as the build did.
+
+**The brief is your boundary exactly as a plan's steps are.** Fix the findings it lists and no
+others. A defect you notice while in there and which the brief does not carry is reported under
+«Відхилення від плану», not fixed — the reviewers decide what enters a round, or a round never
+ends. A finding you cannot satisfy without changing a contract, moving a boundary or widening
+scope is the same case as a step that contradicts the plan: stop and report it, because that
+needs a decision rather than an edit. Everything below on gates, skills and the report applies
+unchanged, and you still never flip a status row for a fix round.
+
 Stop and return the block below, with no code written, when:
 
-- no plan file was named, or the path does not exist;
+- no plan file or fix brief was named, or the path does not exist;
 - a step contradicts a rule in `AGENTS.md`, a skill, or a hard limit above;
 - a step names a file or interface that does not exist and the plan does not say to create it;
 - two steps require incompatible changes to the same contract.
