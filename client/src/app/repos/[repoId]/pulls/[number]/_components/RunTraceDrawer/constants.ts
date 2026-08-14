@@ -1,7 +1,5 @@
 /** Constants for the Run Trace + Live Log drawer (A5). */
 
-import type { ContextDocStatus } from "@/lib/types";
-
 /** Drawer width (px). */
 export const DRAWER_WIDTH = 720;
 
@@ -24,17 +22,3 @@ export const PROMPT_COLORS = {
   callers: "var(--warn)",
   user: "var(--ok)",
 } as const;
-
-/**
- * Per-document outcome colours in the run trace. All six statuses are listed:
- * the enum has six, and a map with a default is the version that colours a
- * `refused` document the same as an included one.
- */
-export const PROJECT_CONTEXT_STATUS_COLOR: Record<ContextDocStatus, string> = {
-  included: "var(--ok)",
-  truncated: "var(--warn)",
-  dropped: "var(--warn)",
-  missing: "var(--crit)",
-  refused: "var(--crit)",
-  binary: "var(--text-muted)",
-};

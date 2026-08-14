@@ -7,7 +7,7 @@ import { useTranslations } from "next-intl";
 import { Badge } from "@devdigest/ui";
 import type { RunTrace, FindingRecord } from "@devdigest/shared";
 import { formatCost, formatTokens } from "@/components/run-cost-badge";
-import { PROJECT_CONTEXT_STATUS_COLOR, PROMPT_COLORS } from "../../constants";
+import { PROMPT_COLORS } from "../../constants";
 import { formatSeconds } from "../../helpers";
 import { s } from "../../styles";
 import { TraceSection } from "../TraceSection";
@@ -19,9 +19,6 @@ import { Row, Stat } from "../atoms";
 export function TraceBody({ trace, findings }: { trace: RunTrace; findings: FindingRecord[] }) {
   const t = useTranslations("runs");
   const stats = trace.stats;
-  // Derived, not stored: a document that WAS sent is accounted for twice in this
-  // drawer already, so only the ones that were not are worth a row of their own.
-  const notSent = trace.project_context.filter((doc) => doc.status !== "included");
   return (
     <>
       <TraceSection icon="Settings" title={t("trace.configuration")}>
@@ -71,38 +68,6 @@ export function TraceBody({ trace, findings }: { trace: RunTrace; findings: Find
           <Stat label={t("trace.stat.findings")} val={stats.findings} />
         </div>
       </TraceSection>
-
-      {/* ONLY the documents that did not reach the prompt.
-          A document that was sent is already in this drawer twice — as a path in
-          `Specs read` above and as its own text in `Prompt assembly` below — so
-          listing it a third time here said nothing and buried the rows that do.
-          What neither of those two can show is a document the run was given and
-          did NOT send: `specs_read` carries the included paths only, and a
-          dropped document is by definition absent from the assembled block. That
-          is what this section is for, and why it disappears when there is none. */}
-      {notSent.length > 0 && (
-        <TraceSection
-          icon="FileText"
-          title={t("trace.projectContext.title")}
-          right={<Badge color="var(--text-muted)">{notSent.length}</Badge>}
-        >
-          <div style={s.configList}>
-            {notSent.map((doc) => (
-              <Row key={doc.path} label={doc.path}>
-                <span style={s.specsWrap}>
-                  <span className="mono" style={s.spec}>
-                    {t("trace.projectContext.tokens", { count: doc.tokens })}
-                  </span>
-                  <Badge color={PROJECT_CONTEXT_STATUS_COLOR[doc.status]}>
-                    {t(`trace.projectContext.status.${doc.status}`)}
-                  </Badge>
-                </span>
-              </Row>
-            ))}
-            <span style={s.specsNone}>{t("trace.projectContext.hint")}</span>
-          </div>
-        </TraceSection>
-      )}
 
       <FindingsSection findings={findings} />
 

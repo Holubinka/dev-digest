@@ -36,20 +36,6 @@
       "items": "{count, plural, one {# item} other {# items}}",
       "none": "none"
     },
-    "projectContext": {
-      "title": "Project context — documents that did not reach the prompt",
-      "none": "No documents were attached to this agent for this repository.",
-      "tokens": "{count} tokens",
-      "status": {
-        "included": "included",
-        "truncated": "truncated",
-        "dropped": "dropped (over budget)",
-        "missing": "missing from the clone",
-        "refused": "refused",
-        "binary": "binary"
-      },
-      "hint": "Everything else it was given is in Specs read above, and its text in Prompt assembly below."
-    },
     "stat": {
       "duration": "DURATION",
       "tokens": "TOKENS",

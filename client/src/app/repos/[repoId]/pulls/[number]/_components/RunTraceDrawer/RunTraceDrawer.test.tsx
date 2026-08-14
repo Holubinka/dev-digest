@@ -203,32 +203,23 @@ describe("A5 Run Trace drawer while the run is still going", () => {
 });
 
 /**
- * The drawer accounts for a SENT document twice already — its path under
- * `Specs read`, its text under `Prompt assembly`. Listing it a third time was
- * noise that buried the only rows this section exists for: the documents the run
- * was given and did not send, which neither of the other two can show.
+ * The trace drawer does NOT list the project-context documents, by decision on
+ * 2026-08-15. A document that reached the prompt is already accounted for twice
+ * — its path under `Specs read`, its text under `Prompt assembly` — and a third
+ * listing was repetition sitting between Stats and Findings.
+ *
+ * This diverges from `AC-37`, which asks for a per-document list with a status.
+ * The data is NOT gone: `RunTrace.project_context` still carries every document
+ * with its tokens and status, so `Copy raw output` and any consumer of the trace
+ * still have it. What went is the rendering, and this test is what stops it
+ * coming back by accident.
  */
-describe("Run Trace drawer — project context documents that did not reach the prompt", () => {
+describe("Run Trace drawer — project context is not listed", () => {
   beforeEach(() => {
     hooks.useRunEvents.mockReturnValue({ events: [], running: false });
   });
 
-  it("shows no such section when every document was sent", () => {
-    hooks.useRunTrace.mockReturnValue({
-      data: {
-        ...TRACE,
-        specs_read: ["specs/a.md"],
-        project_context: [{ path: "specs/a.md", tokens: 155, status: "included" }],
-      },
-      isLoading: false,
-    });
-    renderWithIntl(<RunTraceDrawer runId="r1" agentName="Security" prNumber={482} onClose={() => {}} />);
-    expect(screen.queryByText(/did not reach the prompt/)).toBeNull();
-    // It is still accounted for, in the place that says what was sent.
-    expect(screen.getByText("specs/a.md")).toBeInTheDocument();
-  });
-
-  it("shows only the documents that were not sent, and says why for each", () => {
+  it("renders no per-document section, not even for documents that never went", () => {
     hooks.useRunTrace.mockReturnValue({
       data: {
         ...TRACE,
@@ -242,12 +233,10 @@ describe("Run Trace drawer — project context documents that did not reach the 
       isLoading: false,
     });
     renderWithIntl(<RunTraceDrawer runId="r1" agentName="Security" prNumber={482} onClose={() => {}} />);
-    expect(screen.getByText(/did not reach the prompt/)).toBeInTheDocument();
-    expect(screen.getByText("specs/over.md")).toBeInTheDocument();
-    expect(screen.getByText("dropped (over budget)")).toBeInTheDocument();
-    expect(screen.getByText("specs/gone.md")).toBeInTheDocument();
-    expect(screen.getByText("missing from the clone")).toBeInTheDocument();
-    // The sent one keeps its single row under Specs read, and gains none here.
+    expect(screen.queryByText("specs/over.md")).toBeNull();
+    expect(screen.queryByText("specs/gone.md")).toBeNull();
+    expect(screen.queryByText("dropped (over budget)")).toBeNull();
+    // What WAS sent is still named once, where the drawer says what it sent.
     expect(screen.getAllByText("specs/sent.md")).toHaveLength(1);
   });
 });
