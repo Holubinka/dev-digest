@@ -15,8 +15,8 @@ import { useTranslations } from "next-intl";
 import { EmptyState, ErrorState, SectionLabel, Skeleton } from "@devdigest/ui";
 import { AppShell } from "@/components/app-shell";
 import { RepoNotFound } from "@/components/repo-not-found";
-import { useContextDocs } from "@/lib/hooks";
-import { useContextDoc } from "@/lib/hooks/context";
+
+import { useContextDoc, useContextDocs } from "@/lib/hooks/context";
 import { useActiveRepo, useRepoNotFound } from "@/lib/repo-context";
 import { DocActionBar } from "./_components/DocActionBar";
 import { DocList } from "./_components/DocList";

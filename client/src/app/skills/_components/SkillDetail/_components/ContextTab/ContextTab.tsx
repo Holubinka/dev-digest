@@ -12,8 +12,9 @@ import { Badge } from "@devdigest/ui";
 import type { Skill } from "@devdigest/shared";
 import { BudgetFooter, ContextDocList } from "@/components/context-docs";
 import { s } from "@/components/context-docs/styles";
-import { useContextDocs } from "@/lib/hooks";
-import { useSetSkillContextDocs, useSkillContextDocs } from "@/lib/hooks/context";
+
+import { useContextDocs, useSetSkillContextDocs, useSkillContextDocs } from "@/lib/hooks/context";
+import { PROMPT_SECTION_HEADING, promptDocHeading } from "./constants";
 import { useActiveRepo } from "@/lib/repo-context";
 
 export function ContextTab({ skill }: { skill: Skill }) {
@@ -66,7 +67,7 @@ export function ContextTab({ skill }: { skill: Skill }) {
       <div style={s.serializes}>
         <h3 style={s.inheritedTitle}>{t("attach.serializesAs")}</h3>
         <pre className="mono" style={s.serializesPre}>
-          {["## Project context", ...ordered.map((doc) => `### ${doc.path}`)].join("\n")}
+          {[PROMPT_SECTION_HEADING, ...ordered.map((doc) => promptDocHeading(doc.path))].join("\n")}
         </pre>
       </div>
 

@@ -12,15 +12,15 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import type { Agent } from "@devdigest/shared";
-import messages from "../../../../../../../../messages/en/context.json";
+import messages from "@/../messages/en/context.json";
 import type { AgentContextDocs, ContextDocsPage, SpecFile } from "@/lib/types";
 
 const save = vi.fn();
 const readDoc = vi.fn();
 
 vi.mock("@/lib/repo-context", () => ({ useActiveRepo: () => ({ repoId: "repo-1" }) }));
-vi.mock("@/lib/hooks", () => ({ useContextDocs: () => pageQuery }));
 vi.mock("@/lib/hooks/context", () => ({
+  useContextDocs: () => pageQuery,
   useAgentContextDocs: () => docsQuery,
   useSetAgentContextDocs: () => ({ mutate: save, isPending: false }),
   // The preview reads one document. Mocked here rather than in a second

@@ -12,8 +12,8 @@ import { Badge } from "@devdigest/ui";
 import type { Agent } from "@devdigest/shared";
 import { BudgetFooter, ContextDocList } from "@/components/context-docs";
 import { InheritedGroup } from "./_components/InheritedGroup";
-import { useContextDocs } from "@/lib/hooks";
-import { useAgentContextDocs, useSetAgentContextDocs } from "@/lib/hooks/context";
+
+import { useAgentContextDocs, useContextDocs, useSetAgentContextDocs } from "@/lib/hooks/context";
 import { useActiveRepo } from "@/lib/repo-context";
 import { s } from "@/components/context-docs/styles";
 

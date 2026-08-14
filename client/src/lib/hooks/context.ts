@@ -9,6 +9,7 @@ import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tansta
 import { api } from "../api";
 import type {
   AgentContextDocs,
+  ContextDocsPage,
   ContextFolderCreated,
   SkillContextDocs,
   SpecFile,
@@ -204,5 +205,42 @@ export function useSetSkillContextDocs() {
       qc.invalidateQueries({ queryKey: ["agent-context-docs"] });
       qc.invalidateQueries({ queryKey: ["context-docs", repoId] });
     },
+  });
+}
+
+/**
+ * The Project Context page in one document: the scan's state and output, plus
+ * the documents it found.
+ *
+ * The name and the call site survive from the A3 scaffolding; the path does not.
+ * `GET /repos/:id/context` was written against a server that never shipped, and
+ * the endpoint that exists returns the whole page rather than a bare array —
+ * the scan state, the roots and the last-scanned time are what the four empty
+ * states are decided from, and none of them can be inferred from a list.
+ */
+export function useContextDocs(repoId: string | null | undefined) {
+  return useQuery({
+    queryKey: ["context-docs", repoId],
+    queryFn: () => api.get<ContextDocsPage>(`/repos/${repoId}/context/docs`),
+    enabled: !!repoId,
+    // A scan runs in the background; poll while it is in flight so the page
+    // fills in without the user pressing anything.
+    refetchInterval: (query) => (query.state.data?.state === "scanning" ? 2_000 : false),
+  });
+}
+
+/**
+ * Re-scan the clone.
+ *
+ * Deliberately NOT `useReindexContext`: "reindex" is the vocabulary of the
+ * chunk-and-embed feature this lesson puts out of scope, and keeping the word
+ * would make the empty half of `IndexStatus` look implemented.
+ */
+export function useRescanContextDocs() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (repoId: string) =>
+      api.post<{ status: "scanning" }>(`/repos/${repoId}/context/rescan`),
+    onSuccess: (_d, repoId) => qc.invalidateQueries({ queryKey: ["context-docs", repoId] }),
   });
 }

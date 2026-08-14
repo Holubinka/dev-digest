@@ -10,7 +10,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import type { InheritedContextDoc, SpecFile } from "@/lib/types";
-import messages from "../../../../../../../../../../messages/en/context.json";
+import messages from "@/../messages/en/context.json";
 
 vi.mock("@/lib/hooks/context", () => ({ useContextDoc: () => docQuery }));
 

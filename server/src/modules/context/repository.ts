@@ -121,7 +121,7 @@ export class ContextRepository implements ContextRepo {
     ]);
 
     const byPath = new Map<string, number>();
-    for (const row of usage as unknown as { path: string; agents: number }[]) {
+    for (const row of usage) {
       byPath.set(row.path, Number(row.agents));
     }
 
@@ -182,7 +182,7 @@ export class ContextRepository implements ContextRepo {
          WHERE scd.repo_id = ${repoId} AND scd.path = ${path}
       ) u
     `);
-    const [row] = rows as unknown as { agents: number }[];
+    const [row] = rows;
     return Number(row?.agents ?? 0);
   }
 

@@ -14,12 +14,8 @@
 import React from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@devdigest/ui";
-import { useRescanContextDocs } from "@/lib/hooks";
-import {
-  useCreateContextDoc,
-  useCreateContextFolder,
-  useUploadContextDoc,
-} from "@/lib/hooks/context";
+
+import { useCreateContextDoc, useCreateContextFolder, useRescanContextDocs, useUploadContextDoc } from "@/lib/hooks/context";
 import { writeErrorKey } from "../../helpers";
 import { s } from "../../styles";
 import { PathPromptModal } from "../PathPromptModal";

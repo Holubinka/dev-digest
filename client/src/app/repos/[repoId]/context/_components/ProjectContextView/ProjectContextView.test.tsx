@@ -9,7 +9,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import { MAX_DOC_CHARS } from "@devdigest/shared";
-import messages from "../../../../../../../messages/en/context.json";
+import messages from "@/../messages/en/context.json";
 import { ApiError } from "@/lib/api";
 import type { ContextDocsPage, SpecFile } from "@/lib/types";
 
@@ -26,11 +26,9 @@ vi.mock("@/lib/repo-context", () => ({
   useRepoNotFound: () => false,
   useActiveRepo: () => ({ activeRepo: { default_branch: "main" } }),
 }));
-vi.mock("@/lib/hooks", () => ({
+vi.mock("@/lib/hooks/context", () => ({
   useContextDocs: () => pageQuery,
   useRescanContextDocs: () => ({ mutate: rescanMutate, isPending: false }),
-}));
-vi.mock("@/lib/hooks/context", () => ({
   useContextDoc: () => docQuery,
   useCreateContextDoc: () => ({ mutateAsync: createMutate, isPending: false }),
   useUploadContextDoc: () => ({ mutateAsync: uploadMutate, isPending: false }),
