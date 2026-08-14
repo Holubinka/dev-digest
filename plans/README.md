@@ -44,3 +44,5 @@ with, `LNN-` included; a new plan takes the next free `NN`.
 | [`05-intent-layer.md`](05-intent-layer.md) | repo-wide | legacy | Implemented 2026-08-05 |
 | [`06-mcp-server.md`](06-mcp-server.md) | repo-wide | legacy | In progress 2026-08-08 |
 | [`07-blast-radius.md`](07-blast-radius.md) | repo-wide | legacy | In progress 2026-08-09 |
+| [`08-project-context.md`](08-project-context.md) | repo-wide | single-agent | Planned 2026-08-13 |
+| [`09-project-context-authoring.md`](09-project-context-authoring.md) | server · client | multi-agent | Planned 2026-08-14 |

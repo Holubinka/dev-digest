@@ -15,3 +15,4 @@ README — link to it instead of copying it.
 |---|---|
 | [`architecture.md`](architecture.md) | How a review is produced end to end, and how the packages talk |
 | [`agent-prompts/`](agent-prompts/README.md) | The built-in reviewer prompts and how to choose a model |
+| [`project-context.md`](project-context.md) | How a `.md` file in a cloned repo is written, becomes text in a review prompt, and is traced afterward |

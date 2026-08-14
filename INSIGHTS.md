@@ -506,6 +506,76 @@ that a body agrees with the insight it cites, and `registry.sh` reads `.claude/s
 no gate will ever notice. This is the second instance of the class already recorded at
 *An agent body restates rules it does not own, and nothing notices when they drift*.
 
+### "Check the reviewer cites the document" passes vacuously unless the diff really violates it
+
+`specs/SPEC-01-project-context.md` ends in the verification the feature exists for: attach a
+document stating an invariant, open a PR that breaks it, confirm the review names that document.
+Run on 2026-08-13 against a real PR, it produced zero findings — and that proved nothing, because
+the invariants attached (`docs/agent-prompts/README.md`-style rules about page-size constants and
+bounded paging loops) were rules the diff **already obeyed**: it defined `const PAGE_SIZE = 100`
+and `MAX_PR_FILES`/`MAX_PR_COMMITS`. A silent reviewer was the correct answer to a badly built
+test.
+
+Rewriting the document around something the diff visibly does — it reaches Octokit's `paginate`
+through `as never`, so the invariant became "an adapter MUST NOT reach a third-party library API
+through a type assertion" — produced, on the same PR and the same agent, a `WARNING` that names
+`specs/adapter-invariants.md`, quotes the sentence, and cites lines 97, 98 and 99-108.
+
+So an end-to-end scenario of this shape has to name **both** halves: the document and the line of
+the diff that contradicts it. Without the second half it is green when the feature works and green
+when it does nothing, which is the same failure mode as a vacuous assertion — recorded above at
+*Build the fixture …* — reached through a spec rather than through a test.
+
+### A document that documents the untrusted-wrapper format is a free adversarial input
+
+Attaching `docs/agent-prompts/README.md` to a review put literal `<untrusted source="…">` and
+`</untrusted>` into the assembled `## Project context` block, because that file documents the
+wrapper format itself. The block came out with **9 opening tags, 7 closing tags and 2 escaped
+`<\/untrusted>`** — `wrapUntrusted` (`reviewer-core/src/prompt.ts`) neutralises closing delimiters
+in content, so no document can close another's wrapper, and the two stray openings are inert text.
+
+Worth knowing for two reasons. The containment guarantee is that **closings** are escaped and
+openings are not, so counting tags in a block will not balance and that is correct, not a defect.
+And when this needs an adversarial fixture, this repo already ships one — no crafted payload
+required.
+
+### A fix brief inherits the gates it names, including the one it forgot
+
+On 2026-08-14 a fix round shipped with `pnpm arch`, `pnpm typecheck`, 778 server tests, 638 client
+tests, the integration split and the vendored mirror all green — and the Project Context page
+rendered nothing but `Module not found: Can't resolve './contracts/findings.js'`. The cause is
+recorded in `client/INSIGHTS.md`; what belongs here is why nothing caught it. **The gate list at the
+bottom of the brief did not include `cd client && pnpm build`, so the implementer never ran it**, and
+`tsc` and vitest both resolve the `.js` specifier that webpack cannot. The implementer had even named
+the risk in its own report, under "what reviewers should look at" — and then verified against the
+gates it was given rather than against the risk it had named.
+
+Two rules follow, and the second is the one that actually saved this.
+
+**A brief that changes how a module is built, imported or bundled must name the build in its gates.**
+The default gate list in `.claude/skills/implement/fix-rounds.md` and in the plans is a *typecheck +
+test* list; it is right for logic changes and blind to resolution, bundling and config. The trigger is
+not "did I touch the config" — it is "did I change what gets imported at runtime".
+
+**And stage 2 is not a formality.** `.claude/skills/implement/SKILL.md` says gates "prove nothing
+about a real provider, a real database or a real browser". This is that sentence collecting: a single
+page load found what eleven green gates and three review agents did not. Every browser-dependent
+verification in that session was reported `NOT_VERIFIED` by `plan-verifier` — correctly, since it has
+no browser — and a plan whose `## Verification` needs a running app leaves most of itself unprovable
+in a headless pipeline. Somebody has to open the page, and if the orchestrator does not, nobody does.
+
+**Correction, same day: a gate you add also has to be checked against the environment it runs in.**
+Having learned the above, the next brief made `cd client && pnpm build` mandatory — and that gate
+breaks the running dev server, because `next build` and `next dev` share `client/.next` and the build
+empties `.next/server/vendor-chunks/`. Every route the dev server had not already compiled then
+answers 500 with `Cannot find module './vendor-chunks/*.js'`, including routes nobody touched. The
+implementer reported it and correctly refused to fix it, having been told not to restart servers;
+recovery is `rm -rf client/.next` and a fresh `next dev`, and it is the orchestrator's to do. What
+makes this worth recording is that the *previous* implementer had already hit the same collision and
+described it in its report — the lesson was available and went into the brief as a requirement
+without going into the brief as a warning. Read the reports you are briefing from for what they cost,
+not only for what they found.
+
 ## Codebase Patterns
 
 ### The two `docker-compose.yml` files are byte-identical duplicates
@@ -862,6 +932,65 @@ Smart Diff among the things "composed into PrBrief" — the comment is aspiratio
 not. And `SmartDiffFile` carries `pseudocode_summary`, which cannot be filled without a model
 call; Smart Diff is specified to make none, so it is written `null` on purpose
 (`modules/smart-diff/helpers.ts`), not left as a TODO.
+
+### An unused prompt socket proves the plumbing exists, not that it carries what you need
+
+The entry above says grep before designing, because the scaffolding is usually already there.
+The corollary, found writing `specs/SPEC-01-project-context.md` on 2026-08-13: finding it is not
+the same as being able to use it.
+
+`PromptParts.specs` in `reviewer-core/src/prompt.ts` looks finished. It renders a
+`## Project context` section, wraps every entry with `wrapUntrusted()`, and sits under the shared
+`INJECTION_GUARD`; `run-executor.ts`, `prompt-log.ts` and `trace-builder.ts` all pass
+`specs: null`, so it reads as a socket waiting for its feature. Attaching project documents to a
+review through it as-is fails twice, and both failures are in what the socket says to the model
+rather than in whether it is wired:
+
+- `INJECTION_GUARD` tells the model that untrusted data does **not** define its job. An attached
+  specification exists precisely to define what counts as correct, so the guard can make the model
+  disregard the documents the user attached — the feature defeated by its own defence.
+- `wrapUntrusted('spec-N', …)` labels each block with an ordinal, not a path. The model
+  physically cannot cite the document it relied on, which is the one observable that proves
+  attached context did anything.
+
+The resolution the spec records is to emit a trusted preamble line between the `## Project
+context` heading and the first wrapper — outside `<untrusted>` — and to carry the path inside the
+wrapper next to the content. Not to amend `INJECTION_GUARD`: it is the one shared defence and it
+runs on every review path, the GitHub/CI runner included (`prompt.ts:12-14`).
+
+So when a socket turns up unused, read what it passes to the model, not just that it is there.
+
+### A cap the server refuses on and the client must obey belongs in `vendor/shared/contracts/`, not in `modules/*/constants.ts`
+
+**Symptom.** `ContextService.docContent` serves a document WHOLE up to `MAX_DOC_FILE_BYTES`
+(400 KB) while `persistWrite` refuses anything above `MAX_DOC_CHARS` (40 000 code points), so
+every document between the two caps was listed, opened, offered an `Edit`, and answered
+`400 too_large` on every `Save`. Under this repository's own scan roots 3 of 30 documents sit in
+that band: `docs/superpowers/plans/2026-08-01-pr-self-review.md` comes back as 74 636 code points
+from `GET /repos/:id/context/docs/content` (read off the running API, 2026-08-14).
+
+**Cause.** The number lived in `server/src/modules/context/constants.ts`, which no client file can
+import, so the editor had no way to refuse before the request. `contracts/context.ts` documents the
+opposite precedent one screen below — `512` typed twice with "change one and change the other",
+because a contract may not import a module — and copying a second number that way would have put
+the same disagreement one edit away again.
+
+**Fix.** Define it in `vendor/shared/contracts/context.ts` (both physical copies; `diff -r
+server/src/vendor/shared client/src/vendor/shared` is the gate) and re-export it from the module's
+constants file, which keeps that file readable as the one list of the feature's caps and leaves
+`MAX_DOC_BYTES = MAX_DOC_CHARS * 4` beside it. `contracts-stay-pure` permits this: the constant
+imports nothing. On the client, compare with `[...content].length` and never `String.length` — but
+test `content.length <= cap` first, which is exact rather than an approximation, since a string
+never holds more code points than UTF-16 units, and it keeps the spread off a 400 KB document on
+every render.
+
+**Amended 2026-08-14, same day:** doing this makes the client import a VALUE from
+`@devdigest/shared` for the first time, and that broke the Next build outright — webpack cannot
+resolve the barrel's own `./contracts/findings.js` specifiers, while `tsc` and vitest both can, so
+every gate stayed green and only the browser showed it. The one-line `resolve.extensionAlias` rule
+that fixes it, and why `pnpm build` now belongs in the gate list for any change like this, are in
+`client/INSIGHTS.md` → *Recurring Errors & Fixes*. Share the constant — but build the client
+before believing it works.
 
 ## Tool & Library Notes
 
@@ -1616,3 +1745,10 @@ signal for a test that never intended to push.
   and a decision-versus-edit tie-break; `implementer` may invoke `mermaid-diagram` when a plan
   names it in *Skills the implementer must invoke*. The `react-testing-library` line cap above is
   still open.
+- The three Project Context strings that name the write cap — `create.tooLarge`,
+  `reader.tooLongToEdit` and `reader.tooLongToSave` in `client/messages/en/context.json` — spell
+  "40 000" in prose, while the checks behind them now derive from `MAX_DOC_CHARS` in
+  `vendor/shared/contracts/context.ts`. Lower the constant and all three sentences lie. Passing it
+  as an ICU `{max, number}` was rejected on 2026-08-14 because `en` renders it "40,000" and the
+  rest of that file writes numbers with a space; a pre-formatted value would need every `t(errorKey)`
+  call site to pass it. Left as prose deliberately, and it is a real coupling, not an oversight.
