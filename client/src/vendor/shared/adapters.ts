@@ -213,6 +213,60 @@ export interface GitCommit {
   date: string;
 }
 
+/** One file found by a clone walk. `modified_at` is an ISO-8601 string. */
+export interface ClonedFile {
+  path: string;
+  size_bytes: number;
+  modified_at: string;
+}
+
+/** Why a bounded clone read produced nothing. */
+export type CloneReadRefusal = 'outside_clone' | 'git_dir' | 'not_found';
+
+/**
+ * A clone read that did not happen, with the reason as DATA.
+ *
+ * Matching on an `Error` message to tell "this file is not in the clone" from
+ * "the reader refused to leave the clone" is a distinction the next refactor
+ * silently inverts, and the two are reported to a user as different statuses.
+ * The class imports nothing, so `contracts-stay-pure` holds.
+ */
+export class CloneReadError extends Error {
+  constructor(
+    readonly reason: CloneReadRefusal,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'CloneReadError';
+  }
+}
+
+/**
+ * Why a bounded clone WRITE did not happen.
+ *
+ * The first three are the read's refusals restated for a write, because a write
+ * escapes the clone in exactly the same three ways. The last two are the write's
+ * own: a create must not silently replace something (`exists`), and the size has
+ * to be refused before anything is allocated or opened (`too_large`).
+ */
+export type CloneWriteRefusal = 'outside_clone' | 'git_dir' | 'symlink' | 'exists' | 'too_large';
+
+/**
+ * A clone write that did not happen, with the reason as DATA — the same shape
+ * and the same argument as `CloneReadError`. The service maps each reason to a
+ * different status code, and matching on a message to do that is a distinction
+ * the next reword silently inverts.
+ */
+export class CloneWriteError extends Error {
+  constructor(
+    readonly reason: CloneWriteRefusal,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'CloneWriteError';
+  }
+}
+
 export interface GitClient {
   clone(repo: RepoRef, url: string, opts?: CloneOptions): Promise<{ path: string }>;
   fetchPullHead(repo: RepoRef, n: number): Promise<void>;
@@ -246,6 +300,71 @@ export interface GitClient {
    * character budget afterwards.
    */
   readFile(repo: RepoRef, path: string, maxBytes: number): Promise<string>;
+  /**
+   * List files under `roots` inside the clone, bounded on every axis a walk over
+   * attacker-controlled repo content can be unbounded on.
+   *
+   * Every bound is a required argument for the same reason `readFile`'s is: an
+   * imported public repo decides how many files it commits, how deep it nests
+   * them, and how large each one is. A root that does not resolve inside the
+   * clone contributes nothing; a root that does not exist is not an error, it is
+   * simply empty. `bounded` reports that `maxFiles` fired and the list is a
+   * prefix of what is on disk. Paths come back posix-style and sorted, so
+   * "first N when bounded" is reproducible across runs.
+   *
+   * A missing clone directory THROWS — the caller maps that to "no clone yet",
+   * which is a different answer from "the clone has no documents".
+   */
+  listFiles(
+    repo: RepoRef,
+    opts: {
+      roots: string[];
+      /** Lower-cased, dot-prefixed, e.g. `['.md']`. Matched case-insensitively. */
+      extensions: string[];
+      maxFiles: number;
+      maxFileBytes: number;
+    },
+  ): Promise<{ files: ClonedFile[]; bounded: boolean }>;
+  /**
+   * Write one UTF-8 text file into the clone, refusing anything that resolves
+   * outside it, into its git directory, or THROUGH a symbolic link.
+   *
+   * A write is not a read with the arrow reversed. A read that follows a symlink
+   * out of the clone leaks a file; a write that follows one CREATES a file
+   * wherever the link points — `.devdigest/x.md` → `../../.git/config` replaces
+   * the remote URL that carries the stored PAT. So this refuses a symlinked
+   * component outright rather than resolving it, which is the stance the walk in
+   * `listFiles` already takes for every directory it descends.
+   *
+   * `maxBytes` is a required option for the same reason `readFile`'s bound is:
+   * the caller's character cap runs one step too late for an allocation, and
+   * bytes are what a write is measured in.
+   *
+   * `overwrite: false` is what makes a create atomic against a concurrent one —
+   * the existence check and the creation are one syscall, so "does it exist?"
+   * followed by "then write it" cannot interleave. `exists` comes back as a
+   * refusal rather than as a silent replacement.
+   *
+   * Returns the size and mtime the write produced, so the caller can persist a
+   * row without a second stat — which would otherwise be a second chance for the
+   * path to have become something else.
+   */
+  writeFile(
+    repo: RepoRef,
+    path: string,
+    content: string,
+    opts: { maxBytes: number; overwrite: boolean },
+  ): Promise<{ size_bytes: number; modified_at: string }>;
+  /**
+   * Create a directory inside the clone, parents included.
+   *
+   * The same containment walk as `writeFile`: a directory created through a
+   * symlinked component lands outside the clone just as a file does. Creating
+   * one that already exists is not an error — `mkdir -p` semantics — because the
+   * caller's "already exists" answer is about the DOCUMENT list, and is decided
+   * before this is reached.
+   */
+  makeDir(repo: RepoRef, path: string): Promise<void>;
   clonePathFor(repo: RepoRef): string;
 }
 

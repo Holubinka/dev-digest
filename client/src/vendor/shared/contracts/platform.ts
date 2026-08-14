@@ -96,6 +96,18 @@ export const SettingsKnown = z.object({
   automatic_reviews: z.boolean().default(false),
   /** Per-feature model overrides (provider+model), keyed by FeatureModelId. */
   feature_models: z.record(FeatureModelId, FeatureModelChoice).default({}),
+  /**
+   * Repo-relative folder names the Project Context scan walks for `.md`
+   * documents. Changing them invalidates every repo's persisted scan — the rows
+   * were produced under the old roots and nothing re-derives them — so the
+   * Settings screen says so and rescan stays the user's action.
+   */
+  context_scan_roots: z.array(z.string()).default(['specs', 'docs', 'insights']),
+  /**
+   * Token budget for the assembled `## Project context` section, per prompt.
+   * Under `map-reduce` the block is charged once per changed file.
+   */
+  context_token_budget: z.number().int().positive().default(16000),
 });
 export type SettingsKnown = z.infer<typeof SettingsKnown>;
 
@@ -275,11 +287,74 @@ export const PrCommentInput = z.object({
 export type PrCommentInput = z.infer<typeof PrCommentInput>;
 
 // ---- Project Context ----
+
+/**
+ * Which configured root a scanned document came from.
+ *
+ * FOUR values, and the fourth is a requirement rather than a fallback: a
+ * document found under a workspace-configured root whose folder name is not
+ * `specs`, `docs` or `insights` is kind `other` and gets its own badge. Anywhere
+ * this enum is restated — the Drizzle column's `{ enum: [...] }`, the badge map
+ * on the page, a test fixture — it carries all four. Three values plus a default
+ * is the version that silently mislabels every custom root.
+ */
+export const ContextDocKind = z.enum(['specs', 'docs', 'insights', 'other']);
+export type ContextDocKind = z.infer<typeof ContextDocKind>;
+
+/**
+ * Where a repo's document scan stands.
+ *
+ * Deliberately NOT `IndexStatus` below, and deliberately not named that either:
+ * that name already denotes three different shapes in this repo, and its
+ * `parsing` / `embedding` / `chunks_indexed` vocabulary describes the
+ * chunk-and-embed feature Project Context puts out of scope.
+ */
+export const ContextScanState = z.enum(['no_clone', 'scanning', 'scanned', 'failed']);
+export type ContextScanState = z.infer<typeof ContextScanState>;
+
+/** What happened to one attached document when a review's prompt was assembled. */
+export const ContextDocStatus = z.enum([
+  'included',
+  'truncated',
+  'dropped',
+  'missing',
+  'refused',
+  'binary',
+]);
+export type ContextDocStatus = z.infer<typeof ContextDocStatus>;
+
+/**
+ * One scanned project-context document.
+ *
+ * `content` is populated only by the single-document read; the list endpoints
+ * leave it null, so there is ONE document shape rather than a list shape and a
+ * detail shape that drift.
+ */
 export const SpecFile = z.object({
   path: z.string(),
   content: z.string().nullish(),
   size: z.number().int().nullish(),
   updated_at: z.string().nullish(),
+  /** The configured scan root this document was found under, e.g. `docs`. */
+  root: z.string(),
+  kind: ContextDocKind,
+  /** Counted at scan time by the SAME counter the run measures the budget with. */
+  tokens: z.number().int(),
+  /** Enabled agents whose effective set holds this document, directly or via a skill. */
+  used_by_agents: z.number().int(),
+  /**
+   * Created or uploaded through DevDigest rather than found in the repository.
+   * ABSENT MEANS FALSE — an ordinary scanned document omits it, which is what
+   * keeps every fixture written before documents could be authored valid.
+   */
+  local: z.boolean().optional(),
+  /**
+   * The disk no longer holds the text DevDigest saved here: a tracked file was
+   * edited and a later `git reset --hard` returned it to the branch. ABSENT
+   * MEANS FALSE, i.e. either nothing was ever saved for this path or what is on
+   * disk is still what was saved.
+   */
+  stale: z.boolean().optional(),
 });
 export type SpecFile = z.infer<typeof SpecFile>;
 

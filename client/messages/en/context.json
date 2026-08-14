@@ -1,24 +1,125 @@
 {
   "title": "Project Context",
-  "chunks": "{count} chunks",
-  "reindex": "Re-index",
-  "indexing": "Indexing…",
-  "resync": "Resync",
-  "resyncing": "Resyncing…",
-  "indexStatus": "Index status: {status}",
-  "loadError": "Couldn’t load specs",
-  "kb": "{kb}kb",
+  "subtitle": "Every .md document in this repository's clone. Read one, edit it, or write a new one — and attach any of them to an agent or a skill to put it into a review prompt.",
+  "rescan": "Rescan",
+  "rescanning": "Rescanning…",
+  "loadError": "Couldn’t load project context",
+  "kinds": {
+    "specs": "specs",
+    "docs": "docs",
+    "insights": "insights",
+    "other": "other"
+  },
+  "usedBy": "Used by {count} {count, plural, one {agent} other {agents}}",
+  "rootTitle": "Found under the {root} root",
+  "actions": {
+    "newDoc": "New document",
+    "newFolder": "New folder",
+    "upload": "Upload .md",
+    "rescan": "Rescan"
+  },
+  "footer": {
+    "files": "{count} {count, plural, one {document} other {documents}}",
+    "scannedAt": "Last scanned {when}",
+    "neverScanned": "Never scanned",
+    "bounded": "Only the first {count} documents were scanned",
+    "failedAt": "Last attempt failed {when}"
+  },
+  "state": {
+    "noCloneTitle": "Preparing the clone",
+    "noCloneBody": "DevDigest clones a repository in the background. This page fills in as soon as the clone is on disk.",
+    "retry": "Try again",
+    "scanningTitle": "Scanning the clone",
+    "scanningBody": "Looking for .md documents under {roots}.",
+    "failedTitle": "The last scan failed",
+    "failedBody": "The previous result is still shown below."
+  },
   "empty": {
-    "title": "No spec files yet",
-    "body": "Drop your PRDs, tech specs, and acceptance criteria under .devdigest/specs/. Every agent and the PR brief read them as grounding context."
+    "title": "No .md documents found",
+    "body": "Nothing under {roots} in this repository. Write a document here, upload a .md, or change the folders in Settings → Project Context."
   },
-  "mode": {
-    "preview": "preview",
-    "edit": "edit"
-  },
-  "editor": {
-    "loadError": "Couldn’t load spec",
+  "reader": {
+    "placeholder": "Select a document to read it.",
+    "loadError": "Couldn’t load this document",
+    "preview": "Preview",
+    "edit": "Edit",
+    "tooLongToEdit": "Longer than 40 000 characters, which is the most a save can write. This document can be read here, but not edited.",
     "save": "Save",
-    "saving": "Saving…"
+    "cancel": "Cancel",
+    "saving": "Saving…",
+    "saveError": "Couldn’t save this document",
+    "tooLongToSave": "Too long to save. A document is capped at 40 000 characters and this text is over it, so nothing was written.",
+    "saveOutsideRoots": "This document’s folder is not one of the scanned roots any more, so DevDigest will not write to it. Add the folder back in Settings → Project Context, or copy the text into a document under .devdigest/."
+  },
+  "read": {
+    "missing": "missing — this document is not in the clone",
+    "refused": "refused — DevDigest would not read this file",
+    "binary": "binary — this file is not text, so there is nothing to render"
+  },
+  "create": {
+    "title": "New document",
+    "pathLabel": "Path",
+    "pathHint": "Created under .devdigest/ in this repository's clone. Sub-folders are fine; the name has to end in .md.",
+    "submit": "Create",
+    "cancel": "Cancel",
+    "exists": "A document already exists at this path. Nothing was overwritten — pick another name.",
+    "invalidPath": "That path is not allowed. Use a relative path under .devdigest/ that ends in .md, with no .. segment.",
+    "tooLarge": "Too long to save. A document is capped at 40 000 characters."
+  },
+  "folder": {
+    "title": "New folder",
+    "pathLabel": "Folder",
+    "pathHint": "Created under .devdigest/ in this repository's clone. Nested folders are fine; a folder name does not end in .md.",
+    "submit": "Create folder",
+    "createdEmpty": "Folder created. It holds no .md yet, so the list will not show it until you put a document in it."
+  },
+  "upload": {
+    "invalidType": "Only .md files can be uploaded.",
+    "binary": "That file is not text. Upload a .md document."
+  },
+  "local": {
+    "badge": "Local to this machine",
+    "body": "This document exists only in this clone on this machine: it is not in the repository, no colleague and no other clone or run of DevDigest can see it, and it is gone if this repository ever has to be cloned again."
+  },
+  "stale": {
+    "badge": "Erased by a sync",
+    "body": "The text shown here came from the branch. The edit saved in DevDigest is gone — a resync returned the file to the state of the branch, and no copy of the edit was kept."
+  },
+  "tracked": {
+    "title": "This document is tracked by git",
+    "body": "It comes from the repository, not from .devdigest/. The next resync of this repository runs `git reset --hard origin/{branch}`, which returns the file to the state of the branch and erases this edit with no trace and no question. DevDigest keeps no copy of it.",
+    "confirm": "Save anyway",
+    "cancel": "Cancel"
+  },
+  "write": {
+    "cloneNotReady": "DevDigest is still preparing the clone of this repository. Creating, uploading and saving become available as soon as it is on disk."
+  },
+  "attach": {
+    "title": "Project context",
+    "skillTitle": "Project context to use",
+    "attachedCount": "{count} of {total} attached",
+    "skillAttachedCount": "{count} attached",
+    "orderHint": "Checked documents are sent in this order. Drag a row, or use the arrows.",
+    "filterPlaceholder": "Filter by path",
+    "empty": "This repository has no scanned documents yet.",
+    "loadError": "Couldn’t load the attachments",
+    "noRepo": "Select a repository to attach its documents.",
+    "missing": "not in the clone",
+    "moveUp": "Move up",
+    "moveDown": "Move down",
+    "inheritedTitle": "Inherited from skills",
+    "inheritedCount": "{count} inherited",
+    "inheritedHint": "These come from the skills bound to this agent. Edit them on the skill.",
+    "inheritedFrom": "from {skill}",
+    "alreadyAttached": "already attached",
+    "skillInherit": "Every agent that binds this skill inherits these documents, after its own.",
+    "serializesAs": "Serializes as",
+    "tokens": "≈ {count} tokens",
+    "budget": "of {budget}",
+    "overBudget": "Over budget by {overage} tokens. You can still save; documents that do not fit are dropped from the prompt, in order.",
+    "perPrompt": "Counted once per prompt. This agent runs {strategy}, so the block is assembled again for every changed file.",
+    "preview": "Preview",
+    "previewLabel": "Preview {path}",
+    "previewTitle": "Document preview"
   }
 }

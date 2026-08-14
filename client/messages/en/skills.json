@@ -39,6 +39,7 @@
     "tabs": {
       "config": "Config",
       "preview": "Preview",
+      "context": "Project Context",
       "versions": "Versions",
       "stats": "Stats"
     }

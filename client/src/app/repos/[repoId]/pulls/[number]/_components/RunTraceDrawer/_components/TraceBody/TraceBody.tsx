@@ -7,7 +7,7 @@ import { useTranslations } from "next-intl";
 import { Badge } from "@devdigest/ui";
 import type { RunTrace, FindingRecord } from "@devdigest/shared";
 import { formatCost, formatTokens } from "@/components/run-cost-badge";
-import { PROMPT_COLORS } from "../../constants";
+import { PROJECT_CONTEXT_STATUS_COLOR, PROMPT_COLORS } from "../../constants";
 import { formatSeconds } from "../../helpers";
 import { s } from "../../styles";
 import { TraceSection } from "../TraceSection";
@@ -68,6 +68,35 @@ export function TraceBody({ trace, findings }: { trace: RunTrace; findings: Find
           <Stat label={t("trace.stat.findings")} val={stats.findings} />
         </div>
       </TraceSection>
+
+      {/* Every document of the run's effective set, INCLUDING the ones that
+          never reached the prompt. `specs_read` above lists what went; this is
+          the only place a document that was dropped for budget, missing from
+          the clone or refused by the reader is explainable at all. Rendered
+          because the field existing and being typed on both sides is exactly
+          how a trace field ends up displayed nowhere. */}
+      {trace.project_context.length > 0 && (
+        <TraceSection
+          icon="FileText"
+          title={t("trace.projectContext.title")}
+          right={<Badge color="var(--text-muted)">{trace.project_context.length}</Badge>}
+        >
+          <div style={s.configList}>
+            {trace.project_context.map((doc) => (
+              <Row key={doc.path} label={doc.path}>
+                <span style={s.specsWrap}>
+                  <span className="mono" style={s.spec}>
+                    {t("trace.projectContext.tokens", { count: doc.tokens })}
+                  </span>
+                  <Badge color={PROJECT_CONTEXT_STATUS_COLOR[doc.status]}>
+                    {t(`trace.projectContext.status.${doc.status}`)}
+                  </Badge>
+                </span>
+              </Row>
+            ))}
+          </div>
+        </TraceSection>
+      )}
 
       <FindingsSection findings={findings} />
 

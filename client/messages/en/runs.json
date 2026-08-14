@@ -36,6 +36,19 @@
       "items": "{count, plural, one {# item} other {# items}}",
       "none": "none"
     },
+    "projectContext": {
+      "title": "Project context documents",
+      "none": "No documents were attached to this agent for this repository.",
+      "tokens": "{count} tokens",
+      "status": {
+        "included": "included",
+        "truncated": "truncated",
+        "dropped": "dropped (over budget)",
+        "missing": "missing from the clone",
+        "refused": "refused",
+        "binary": "binary"
+      }
+    },
     "stat": {
       "duration": "DURATION",
       "tokens": "TOKENS",
@@ -49,7 +62,7 @@
       "skills": "Skills (dynamic)",
       "memory": "Memory (dynamic)",
       "repoMap": "Repo skeleton — repo-intel (dynamic)",
-      "specs": "Project context (dynamic)",
+      "specs": "Project context — attached specs (untrusted)",
       "callers": "Callers of changed symbols — repo-intel (dynamic)",
       "user": "User / diff (dynamic)",
       "copy": "Copy",

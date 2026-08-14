@@ -19,6 +19,9 @@ import type {
   IssueMeta,
   GitClient,
   CloneOptions,
+  ClonedFile,
+  CloneReadRefusal,
+  CloneWriteRefusal,
   UnifiedDiff,
   BlameLine,
   GitCommit,
@@ -35,6 +38,7 @@ import type {
   FetchedMarkdown,
   PromptTemplates,
 } from '@devdigest/shared';
+import { CloneReadError, CloneWriteError } from '@devdigest/shared';
 import { parseUnifiedDiff } from './git/diff-parser.js';
 
 /**
@@ -252,14 +256,45 @@ export interface MockGitOptions {
   head?: string;
   /** Head `currentHead()` returns AFTER `sync()` runs — simulates fetch+reset advancing HEAD. */
   syncedHead?: string;
+  /**
+   * The clone's file tree for `listFiles`: repo-relative path → content. Kept
+   * separate from `files` so a test can express "this path is attached but no
+   * longer on disk" — the `missing` status has no other way to arise.
+   */
+  tree?: Record<string, string>;
+  /** `readFile` throws this refusal for the named paths (symlink-out, .git/, …). */
+  refuse?: Record<string, CloneReadRefusal>;
+  /**
+   * `writeFile` / `makeDir` throw this refusal for the named paths. Separate
+   * from `refuse` because the two vocabularies are different — a write can be
+   * refused for `symlink` and `exists`, which a read has no opinion about.
+   */
+  refuseWrite?: Record<string, CloneWriteRefusal>;
+  /** `listFiles` throws — the "no clone directory" case. */
+  noClone?: boolean;
 }
 
 export class MockGitClient implements GitClient {
   public cloned: { repo: RepoRef; url: string }[] = [];
   public syncs: { repo: RepoRef; branch: string }[] = [];
+  /** Directories `makeDir` was asked for, in order. A folder holds no file. */
+  public dirs: string[] = [];
   private syncedHead?: string;
+  private tree: Record<string, string>;
 
-  constructor(private opts: MockGitOptions = {}) {}
+  /**
+   * `opts.tree` is COPIED, not held.
+   *
+   * `writeFile` mutates it, and a test's fixture is normally a module-level
+   * constant shared by every case in the file. Holding the caller's object made
+   * two clients constructed from the same fixture one clone with two names —
+   * which silently broke the only test that needs them to differ ("a resync put
+   * the branch's text back"), and made every later case in the file depend on
+   * which earlier one had written.
+   */
+  constructor(private opts: MockGitOptions = {}) {
+    this.tree = { ...(opts.tree ?? {}) };
+  }
 
   clonePathFor(repo: RepoRef): string {
     return `/mock/clones/${repo.owner}/${repo.name}`;
@@ -294,11 +329,77 @@ export class MockGitClient implements GitClient {
     return [{ sha: 'a1b2c3d4', message: 'init', author: 'marisa.koch', date: '2026-06-01' }];
   }
   async readFile(_repo: RepoRef, path: string, maxBytes: number): Promise<string> {
+    const refusal = this.opts.refuse?.[path];
+    if (refusal) throw new CloneReadError(refusal, `mock refusal (${refusal}): ${path}`);
+    const content = this.opts.files?.[path] ?? this.tree[path];
+    // The real adapter cannot read a file that is not there, and the caller maps
+    // that reason to its own status. A mock returning '' for a missing path is
+    // how "the document vanished from the clone" becomes untestable.
+    if (content === undefined) throw new CloneReadError('not_found', `not in the clone: ${path}`);
     // Honour the cap. A mock that hands back more than the real adapter would is
     // how an unbounded read passes every test and still allocates in production.
-    return Buffer.from(this.opts.files?.[path] ?? '', 'utf8')
-      .subarray(0, maxBytes)
-      .toString('utf8');
+    return Buffer.from(content, 'utf8').subarray(0, maxBytes).toString('utf8');
+  }
+
+  /**
+   * Answers from the tree, filtered by root and extension, and honouring BOTH
+   * caps. A mock that returns more than the real adapter would is how an
+   * unbounded read passes every test — the same reasoning as `readFile`'s.
+   */
+  async listFiles(
+    _repo: RepoRef,
+    opts: { roots: string[]; extensions: string[]; maxFiles: number; maxFileBytes: number },
+  ): Promise<{ files: ClonedFile[]; bounded: boolean }> {
+    if (this.opts.noClone) throw new Error('ENOENT: no such file or directory');
+    const wanted = opts.extensions.map((e) => e.toLowerCase());
+    const all = Object.entries(this.tree)
+      .filter(([path]) => opts.roots.some((r) => path === r || path.startsWith(`${r}/`)))
+      .filter(([path]) => wanted.some((ext) => path.toLowerCase().endsWith(ext)))
+      .map(([path, content]) => ({
+        path,
+        size_bytes: Buffer.byteLength(content, 'utf8'),
+        modified_at: '2026-08-13T00:00:00.000Z',
+      }))
+      .filter((f) => f.size_bytes <= opts.maxFileBytes)
+      .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    const bounded = all.length > opts.maxFiles;
+    return { files: bounded ? all.slice(0, opts.maxFiles) : all, bounded };
+  }
+
+  /**
+   * Writes into the copied tree, so a later `listFiles` and `readFile` see the
+   * document exactly as a real clone would — "created, then in the list with no
+   * rescan" has no other way to be tested.
+   *
+   * Every bound the real adapter enforces is enforced here too: the byte cap
+   * BEFORE the tree is touched, `overwrite: false` refusing an existing path,
+   * and the injected refusals. A mock that accepts more than the adapter would
+   * is how an unbounded write passes every test and still lands in production —
+   * the same reasoning `readFile`'s cap above is written down for.
+   */
+  async writeFile(
+    _repo: RepoRef,
+    path: string,
+    content: string,
+    opts: { maxBytes: number; overwrite: boolean },
+  ): Promise<{ size_bytes: number; modified_at: string }> {
+    const refusal = this.opts.refuseWrite?.[path];
+    if (refusal) throw new CloneWriteError(refusal, `mock refusal (${refusal}): ${path}`);
+    const bytes = Buffer.byteLength(content, 'utf8');
+    if (bytes > opts.maxBytes) {
+      throw new CloneWriteError('too_large', `document is ${bytes} bytes, over ${opts.maxBytes}`);
+    }
+    if (!opts.overwrite && this.tree[path] !== undefined) {
+      throw new CloneWriteError('exists', `already in the clone: ${path}`);
+    }
+    this.tree[path] = content;
+    return { size_bytes: bytes, modified_at: new Date().toISOString() };
+  }
+
+  async makeDir(_repo: RepoRef, path: string): Promise<void> {
+    const refusal = this.opts.refuseWrite?.[path];
+    if (refusal) throw new CloneWriteError(refusal, `mock refusal (${refusal}): ${path}`);
+    this.dirs.push(path);
   }
 }
 

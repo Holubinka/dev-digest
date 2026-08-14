@@ -173,6 +173,28 @@ describe('AI contracts parse fixtures', () => {
     });
     expect(trace.tool_calls).toHaveLength(1);
   });
+
+  /**
+   * `run_traces` is parsed on read, so every key the contract requires must
+   * exist in every document ever persisted. Two do not: `project_context` post-
+   * dates most rows, and `cost_usd` was removed by `d45ab0d` (2026-06-14) and
+   * restored by `5e92756` (2026-07-28). Both are defaulted; drop either default
+   * and `GET /runs/:id/trace` 500s on a historical document.
+   */
+  it('RunTrace parses a document from an older contract generation', () => {
+    const legacy = RunTrace.parse({
+      config: { agent: 'a', model: 'm' },
+      stats: { duration_ms: 1, tokens_in: 1, tokens_out: 1, findings: 0, grounding: '0/0 passed' },
+      prompt_assembly: { system: 's', user: 'u' },
+      tool_calls: [],
+      raw_output: '',
+      memory_pulled: [],
+      specs_read: [],
+      log: [],
+    });
+    expect(legacy.stats.cost_usd).toBeNull();
+    expect(legacy.project_context).toEqual([]);
+  });
 });
 
 describe('platform DTOs', () => {

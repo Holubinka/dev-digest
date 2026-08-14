@@ -4,6 +4,11 @@ import {
   type IntentRecord,
 } from '@devdigest/shared';
 import { wrapUntrusted } from '../../platform/prompt.js';
+import { sanitizeRelativePath, truncateCodePoints } from '../_shared/repo-paths.js';
+
+/* Re-exported so the rest of this slice keeps importing from its own helpers:
+   where the rule lives is `_shared/`'s business, not every call site's. */
+export { truncateCodePoints };
 import type { PrIntentRow } from '../../db/rows.js';
 import type { IntentSources } from './types.js';
 import {
@@ -23,17 +28,6 @@ import {
  */
 
 /**
- * Truncate by CODE POINT.
- *
- * `String.slice` counts UTF-16 units and splits a surrogate pair, leaving a
- * replacement character mid-word (`server/INSIGHTS.md:103-114`).
- */
-export function truncateCodePoints(text: string, max: number): string {
-  const points = [...text];
-  return points.length <= max ? text : points.slice(0, max).join('');
-}
-
-/**
  * The path gate between an attacker-supplied PR body and `GitClient.readFile`.
  *
  * `SimpleGitClient.readFile` is `readFile(join(clonePathFor(repo), path))`
@@ -41,33 +35,18 @@ export function truncateCodePoints(text: string, max: number): string {
  * resolves outside the clone. On a public repo the body is attacker-supplied,
  * so this is a real traversal sink, not a theoretical one.
  *
- * Returns the normalised repo-relative path, or `null` when the input is not
- * one. `path.resolve` is deliberately NOT used: it would tie the answer to the
- * process CWD and stop this function being pure. The invariant the caller
- * relies on — "no `..` segment survives" — is decidable on the string alone.
+ * The string rules live in `_shared/repo-paths.ts`, shared with `modules/context`,
+ * which needs the same gate for a saved attachment. They were duplicated here
+ * until 2026-08-15 and had already drifted. What stays local is the `.md` rule
+ * and this slice's own `MAX_PATH_LENGTH`, which is deliberately lower than the
+ * other caller's: this path comes out of an attacker's PR body.
  */
 export function sanitizeRepoPath(raw: string): string | null {
-  if (raw.length === 0 || raw.length > MAX_PATH_LENGTH) return null;
-  // A NUL truncates the path at the syscall boundary; no other control
-  // character belongs in a repo-relative path either.
-  // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001F\u007F]/.test(raw)) return null;
-  // Absolute POSIX, absolute UNC, and Windows drive-letter forms.
-  if (raw.startsWith('/') || raw.startsWith('\\')) return null;
-  if (/^[A-Za-z]:/.test(raw)) return null;
-
-  const segments = raw
-    .replaceAll('\\', '/')
-    .split('/')
-    .filter((segment) => segment !== '' && segment !== '.');
-  if (segments.length === 0) return null;
-  if (segments.includes('..')) return null;
-
-  const normalised = segments.join('/');
+  const path = sanitizeRelativePath(raw, MAX_PATH_LENGTH);
+  if (path === null) return null;
   // One extension, one parser, one attack surface.
-  if (!normalised.toLowerCase().endsWith('.md')) return null;
-  if (normalised.toLowerCase().startsWith('.git/')) return null;
-  return normalised;
+  if (!path.toLowerCase().endsWith('.md')) return null;
+  return path;
 }
 
 /** Same-repo GitHub blob URLs. `[^\s)"'<>]` stops the match at a markdown-link or HTML boundary. */

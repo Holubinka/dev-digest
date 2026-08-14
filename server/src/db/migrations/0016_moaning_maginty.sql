@@ -1,0 +1,1 @@
+ALTER TABLE "repo_doc_scans" ADD COLUMN "scanning_at" timestamp with time zone;

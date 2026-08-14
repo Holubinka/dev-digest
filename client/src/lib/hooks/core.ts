@@ -17,8 +17,7 @@ import type {
   PrDetail,
   IntentRecord,
   SmartDiff,
-  SpecFile,
-  IndexStatus,
+  ContextDocsPage,
 } from "../types";
 
 // ---- Settings (F1: GET/PUT /settings, POST /settings/test-connection) ----
@@ -157,19 +156,41 @@ export function useRecomputeIntent(prId: string | null | undefined) {
   });
 }
 
-// ---- Project Context (A3 contract; safe to call once API exposes it) ----
-export function useContextFiles(repoId: string | null | undefined) {
+// ---- Project Context (08) ----
+
+/**
+ * The Project Context page in one document: the scan's state and output, plus
+ * the documents it found.
+ *
+ * The name and the call site survive from the A3 scaffolding; the path does not.
+ * `GET /repos/:id/context` was written against a server that never shipped, and
+ * the endpoint that exists returns the whole page rather than a bare array —
+ * the scan state, the roots and the last-scanned time are what the four empty
+ * states are decided from, and none of them can be inferred from a list.
+ */
+export function useContextDocs(repoId: string | null | undefined) {
   return useQuery({
-    queryKey: ["context", repoId],
-    queryFn: () => api.get<SpecFile[]>(`/repos/${repoId}/context`),
+    queryKey: ["context-docs", repoId],
+    queryFn: () => api.get<ContextDocsPage>(`/repos/${repoId}/context/docs`),
     enabled: !!repoId,
+    // A scan runs in the background; poll while it is in flight so the page
+    // fills in without the user pressing anything.
+    refetchInterval: (query) => (query.state.data?.state === "scanning" ? 2_000 : false),
   });
 }
 
-export function useReindexContext() {
+/**
+ * Re-scan the clone.
+ *
+ * Deliberately NOT `useReindexContext`: "reindex" is the vocabulary of the
+ * chunk-and-embed feature this lesson puts out of scope, and keeping the word
+ * would make the empty half of `IndexStatus` look implemented.
+ */
+export function useRescanContextDocs() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (repoId: string) => api.post<IndexStatus>(`/repos/${repoId}/context/reindex`),
-    onSuccess: (_d, repoId) => qc.invalidateQueries({ queryKey: ["context", repoId] }),
+    mutationFn: (repoId: string) =>
+      api.post<{ status: "scanning" }>(`/repos/${repoId}/context/rescan`),
+    onSuccess: (_d, repoId) => qc.invalidateQueries({ queryKey: ["context-docs", repoId] }),
   });
 }

@@ -149,7 +149,11 @@ d('a NUL in model output does not lose the review', () => {
       raw_output: '',
       memory_pulled: [],
       specs_read: [],
-      log: [{ t: 0, kind: 'result', msg: `grounding dropped "x${NUL}y": not in diff` }],
+      // `t` is a STRING in `RunLogLine`. It was written as `0` here and the
+      // `as unknown as RunTrace` cast hid it; `getRunTrace` now parses what it
+      // reads, so a fixture that does not satisfy the contract fails the read
+      // rather than being carried out of the database unchecked.
+      log: [{ t: '00.31', kind: 'result', msg: `grounding dropped "x${NUL}y": not in diff` }],
     } as unknown as RunTrace;
 
     await repo.saveRunTrace(run!.id, trace);

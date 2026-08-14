@@ -255,6 +255,25 @@
   }
 }
 
+/* Project Context, two panes. `flex-direction`, the list width and the page's
+   own height live ONLY here — an inline style beats a stylesheet rule whatever
+   the selector, so a property a breakpoint changes must not also be declared in
+   `styles.ts`. */
+
+/* The panes fill what is left of the viewport under the 52px topbar, so each
+   scrolls on its own and the list keeps its toolbar and its scan footer in view
+   however long the list is. `main` is already the app's scroll container, so
+   this ends the page exactly where that ends and adds no second scrollbar. */
+.dd-context-page {
+  height: calc(100vh - 52px);
+  padding-bottom: 24px;
+}
+
+.dd-context-list {
+  width: 360px;
+  flex-shrink: 0;
+}
+
 @media (max-width: 1024px) {
   /* Two cards this dense side by side leave neither readable once the tracks
      start shrinking — a caller list wraps to three lines per row. Stacked, each
@@ -293,5 +312,18 @@
   .dd-card-meta {
     flex-wrap: wrap;
     row-gap: 8px;
+  }
+  /* A 360px list beside a reader leaves neither readable on a phone. */
+  .dd-context-panes {
+    flex-direction: column;
+  }
+  .dd-context-list {
+    width: 100%;
+  }
+  /* Stacked, the PAGE scrolls again: two viewport-bounded panes one above the
+     other leave neither tall enough to read, and the list panel is then as tall
+     as its own content. */
+  .dd-context-page {
+    height: auto;
   }
 }

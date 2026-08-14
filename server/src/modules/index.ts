@@ -12,6 +12,7 @@ import intent from './intent/routes.js';
 import smartDiff from './smart-diff/routes.js';
 import conventions from './conventions/routes.js';
 import blast from './blast/routes.js';
+import context from './context/routes.js';
 
 /**
  * Module registry. Each feature module is a Fastify plugin in
@@ -40,4 +41,5 @@ export const modules: Record<string, FastifyPluginAsync> = {
   smartDiff,
   conventions,
   blast,
+  context,
 };

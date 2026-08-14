@@ -23,6 +23,11 @@ export const NAV: NavGroup[] = [
     section: "WORKSPACE",
     items: [
       { key: "pulls", label: "Pull Requests", icon: "GitPullRequest", href: "/repos/:repoId/pulls", gKey: "p" },
+      // `key: "context"` is not a free choice: `activeKeyFor()` already returns
+      // "context" for a /context path and `messages/en/shell.json` already holds
+      // `nav.context`. `g d` because p, s, a, c and , are taken — and `c` is the
+      // easy collision, since it is Conventions.
+      { key: "context", label: "Project Context", icon: "FileText", href: "/repos/:repoId/context", gKey: "d" },
     ],
   },
   {
@@ -46,9 +51,17 @@ export const SETTINGS_ITEM: NavItemDef = {
 export const SETTINGS_SECTIONS = [
   { key: "api-keys", label: "API Keys" },
   { key: "models", label: "Feature Models" },
+  { key: "project-context", label: "Project Context" },
 ] as const;
 
-/** Keyboard shortcut registry. Wiring is finalized by A6. */
+/**
+ * Keyboard shortcut registry. Wiring is finalized by A6.
+ *
+ * NOT derived from `NAV.items[].gKey` — it is hand-maintained, and
+ * `ShortcutsHelp.tsx` renders it in the `?` modal. Adding a row to `NAV` alone
+ * gives you a shortcut that works and never appears in the help; every nav row
+ * with a `gKey` needs an entry here too.
+ */
 export interface ShortcutDef {
   keys: string;
   label: string;
@@ -59,6 +72,7 @@ export const SHORTCUTS: ShortcutDef[] = [
   { keys: "⌘K", label: "Open command palette", group: "Global" },
   { keys: "?", label: "Show keyboard shortcuts", group: "Global" },
   { keys: "g p", label: "Go to Pull Requests", group: "Navigation" },
+  { keys: "g d", label: "Go to Project Context", group: "Navigation" },
   { keys: "g s", label: "Go to Skills", group: "Navigation" },
   { keys: "g a", label: "Go to Agents", group: "Navigation" },
   { keys: "g c", label: "Go to Conventions", group: "Navigation" },

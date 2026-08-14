@@ -34,6 +34,9 @@ import { RepoIntelService } from '../modules/repo-intel/service.js';
 import type { IntentDeriver } from '../modules/intent/types.js';
 import { IntentService } from '../modules/intent/service.js';
 import { IntentRepository } from '../modules/intent/repository.js';
+import type { ProjectContextResolver } from '../modules/context/types.js';
+import { ContextService } from '../modules/context/service.js';
+import { ContextRepository } from '../modules/context/repository.js';
 import { type DepGraph, DepCruiseGraph } from '../adapters/depgraph/index.js';
 import { type Tokenizer, TiktokenTokenizer } from '../adapters/tokenizer/index.js';
 import { HttpSkillFetcher } from '../adapters/skill-fetch/index.js';
@@ -79,6 +82,11 @@ export interface ContainerOverrides {
   repoIntel?: RepoIntel;
   /** PR intent derivation (05) — tests inject a canned deriver. */
   intent?: IntentDeriver;
+  /**
+   * Project Context (08) — a review test injects a canned resolver and reaches
+   * no clone and no `repo_docs` row at all.
+   */
+  projectContext?: ProjectContextResolver;
   /** repo-intel T3 adapters — only the indexer pipeline reads these. */
   depgraph?: DepGraph;
   tokenizer?: Tokenizer;
@@ -111,6 +119,7 @@ export class Container {
   private _settingsRepo?: SettingsRepository;
   private _repoIntel?: RepoIntel;
   private _intentService?: IntentDeriver;
+  private _projectContext?: ProjectContextResolver;
   private _depgraph?: DepGraph;
   private _tokenizer?: Tokenizer;
   private _skillFetcher?: SkillFetcher;
@@ -205,6 +214,19 @@ export class Container {
     // concrete type is the composition root's job, and it is what keeps `Db`
     // off `IntentContainer`, the port `IntentService` codes against.
     return (this._intentService ??= new IntentService(this, new IntentRepository(this.db)));
+  }
+
+  /**
+   * Project Context (08). The review executor resolves an agent's effective set
+   * through this interface rather than an import: `modules/reviews/**` may not
+   * reach into `modules/context/**` (`no-cross-module`).
+   */
+  get projectContext(): ProjectContextResolver {
+    if (this.overrides.projectContext) return this.overrides.projectContext;
+    // The repository is built HERE, not defaulted inside the service: naming a
+    // concrete type is the composition root's job, and it is what keeps `Db`
+    // off `ContextContainer`, the port `ContextService` codes against.
+    return (this._projectContext ??= new ContextService(this, new ContextRepository(this.db)));
   }
 
   /** Import-graph builder (dependency-cruiser). T3 indexer pipeline only. */
