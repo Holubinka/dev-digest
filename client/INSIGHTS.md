@@ -915,6 +915,34 @@ in-memory asset state still believes it emitted them, so neither a source `touch
 run `pnpm build` when nothing is serving that checkout — and if a gate list demands the build
 (the `client` gates do), expect to hand the page back with "restart dev before you look".
 
+**Second form, 2026-08-15 — same cause, different directory, and `curl` says it is fine.**
+The next `pnpm build` on this branch produced no 500 at all. Every route answered **200**, and
+the page rendered as unstyled HTML: serif body text, blue underlined links, no layout, and an
+empty content area. `curl -o /dev/null -w '%{http_code}'` reported `200` for the document and
+was the only check run, so the page was reported working when nothing on it was.
+
+The document is served by the dev server from memory; what 404s is everything it references.
+`list_network_requests` in a real browser shows it in one screen:
+
+```
+/_next/static/css/app/layout.css   404   ← the unstyled page
+/_next/static/chunks/main-app.js   404
+/_next/static/chunks/app/layout.js 404
+/_next/static/chunks/webpack.js    200   ← the only survivor
+```
+
+`next build` had overwritten `.next/static/` with its own content-hashed output, so the dev
+server's `?v=<timestamp>` chunk names no longer exist. Same collision, same fix — `rm -rf
+client/.next` and a fresh `next dev` — but two rules follow that the first form did not teach:
+
+- **A 200 on the document proves nothing about the page.** Assets are separate requests, and a
+  dev server will happily serve HTML whose every chunk is missing. `curl` cannot see that;
+  a browser's network panel sees it immediately. This is the third time on this branch that
+  opening the page found what a status code hid.
+- **The symptom is not always an error.** The first form threw; this one rendered. A page that
+  looks like 1996 rather than like a stack trace is the same defect wearing different clothes,
+  and it is easy to read as a CSS regression in the change you just made.
+
 ### An unexpected `severity` value takes down the whole findings page
 
 **Symptom.** The PR detail page renders only a Next.js error overlay:
