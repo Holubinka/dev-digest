@@ -38,9 +38,11 @@ the plan before any code exists. By the time you run, both decisions are made.
 Stop before stage 1, having dispatched nothing, when:
 
 - no plan path was given, or it does not resolve. Ask for one; never plan the work yourself;
-- the plan still carries `## Open questions`, or `## Requirements as understood` rows whose
-  `Status` is `assumed` and which nobody confirmed. That is a planning problem, and building on it
-  is how a whole feature is thrown away;
+- the plan still carries an **unanswered entry under** `## Open questions`, or
+  `## Requirements as understood` rows whose `Status` is `assumed` and which nobody confirmed. That
+  is a planning problem, and building on it is how a whole feature is thrown away. The heading
+  itself is always present — `implementation-planner`'s template mandates it — so read the body:
+  `_None._` is the passing value, and refusing on the heading alone would refuse every plan;
 - `.branch` is `main`. Branch first, or `pr-self-review` refuses at the end and the run has
   nowhere to land.
 

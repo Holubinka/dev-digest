@@ -576,6 +576,41 @@ described it in its report — the lesson was available and went into the brief 
 without going into the brief as a warning. Read the reports you are briefing from for what they cost,
 not only for what they found.
 
+### `## Open questions` is a note in the planner's template and a hard gate in `/implement`
+
+`implementation-planner`'s role prompt describes `## Open questions` as the section where a plan
+raises what a human must decide. The `implement` skill's §1 stops before stage 1, having dispatched
+nothing, when "the plan still carries `## Open questions`". Both are working as written and they
+disagree, so a planner following its own instructions produces a plan that cannot be executed.
+
+Measured on 2026-08-15: the plan-08 planner was resumed three times, and it named this as the fact
+it had to learn from a resume rather than from its brief — *"my own role template says the section
+is for the human, and only resume #3 revealed it is a gate."* It had written five questions in good
+faith.
+
+A plan whose open questions were all resolved in conversation still blocks — the gate reads the
+file, not the transcript.
+
+**Reconciled 2026-08-15, same day.** Both sides were edited, because fixing one would only have
+moved the contradiction. `implementation-planner` now calls the section a gate in its own template,
+gained a § *A question that arises after Step 0* ranking the four things to do with a late question
+(deferring is last), and must open its report with "blocked" whenever the section is non-empty. The
+`implement` skill now refuses on **an unanswered entry under** the heading rather than on the
+heading — its old wording, read literally, refused every plan, since the template mandates the
+heading and `_None._` is the passing value.
+
+### A brief that adds a case to an existing classifier must say what the classifier returns for it
+
+The Project Context authoring brief made `.devdigest/` a scan root (AC-61) and made stored paths
+relative to it (AC-52). It never joined those two facts to the pre-existing "first path segment
+names the kind" rule, which then quietly answered `other` for every document in the new root.
+
+The implementer could not resolve it alone — the answer is a product decision, not a lookup — so it
+came back as an open question and cost a whole round. **One line would have removed it.** When a
+brief introduces a new root, prefix, status or file kind, state what each existing classifier over
+that dimension returns for the new case, even when the answer seems obvious: the implementer's
+alternative to being told is to stop and ask.
+
 ## Codebase Patterns
 
 ### The two `docker-compose.yml` files are byte-identical duplicates
@@ -1230,6 +1265,33 @@ edited. The same two lines work in bash, and the shell here is zsh (`AGENTS.md` 
 **Fix.** Pass the paths as literal arguments across several lines, or write `${=FILES}` to opt
 into splitting. Do not assume a batch edit ran because the command exited — `rg` the pattern
 afterwards and confirm the hit count fell.
+
+### A `U+0000` escape typed into `Edit` lands as a real NUL byte
+
+**Symptom.** You add a control-character guard — a string literal for U+0000, or a regex class
+containing one — and afterwards `grep` reports *"binary file matches"* instead of the line, or
+matches nothing at all and exits silently. Tests may still pass. `file` still says "UTF-8 text",
+so that is not a check.
+
+**Cause.** The escape is interpreted on the way to disk rather than preserved as its six source
+characters. The `server/src/modules/context/service.ts` write-path work hit this **twice** on
+2026-08-15; the second recovery cost more than the first, because a NUL is invisible in a normal
+read and the tool reports the edit as successful.
+
+**Then it happened a third time, writing this very entry.** The `Edit` call that added the
+paragraph above put four real NUL bytes into `INSIGHTS.md` — in the heading, in the symptom, and
+in its own fix line. That is the strongest evidence available that this is not avoidable by being
+careful: the escape does not survive the tool, whatever the file is.
+
+**Fix.** Do not type the escape into `Edit` at all. (`Write` was not tested and may behave the
+same; assume it does.)
+
+- In TypeScript, write `String.fromCodePoint(0)`, or express the range without its lower bound.
+- In prose, write `U+0000` — that is why this entry does.
+- To *detect* it, `grep` is unreliable here; this works and was verified:
+  `python3 -c "import sys;print(open(sys.argv[1],'rb').read().count(b'\x00'))" <file>`
+- To *repair* it, do the replacement in `python3` as well. An `Edit` cannot match a line whose
+  bytes are not what the screen shows, and a second `Edit` re-introduces the byte it is removing.
 
 ## Recurring Errors & Fixes
 

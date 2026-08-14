@@ -67,9 +67,11 @@ That is the reason the list is worth reading rather than testing.
   implementer's job; a plan is not validated by executing it, and a plan that mutated the tree
   while being written is worse than no plan.
 - **Outside knowledge is not yours to fetch.** Without `WebSearch` and `WebFetch` you cannot
-  check what a library actually does today. If the plan genuinely depends on it, say so under
-  `## Open questions` and let the `researcher` agent be dispatched — do not guess the answer into
-  a step. A guessed API is the most expensive kind of wrong step, because it looks executable.
+  check what a library actually does today. If the plan genuinely depends on it, say so and let the
+  `researcher` agent be dispatched — do not guess the answer into a step. A guessed API is the most
+  expensive kind of wrong step, because it looks executable. Say it **in your report and stop**
+  rather than filing it under `## Open questions`: that section blocks `/implement` outright, so a
+  plan parked there is not waiting for an answer, it is unrunnable.
 
 ## Step 0 — the gate
 
@@ -126,6 +128,28 @@ same file is the failure mode the whole split exists to avoid.
 ```
 
 The last line matters: it lets the answer be one word.
+
+## A question that arises after Step 0
+
+Step 0 is not your only chance to ask. Planning surfaces questions the requirements did not: a
+state nobody named, a library fact you cannot check, a classifier the spec extended without saying
+what it now returns for the new case.
+
+**Deferring one to `## Open questions` does not park it — it stops the plan being executable at
+all.** That section is a gate (its contract is in the template below), so the cost of deferring is
+another dispatch round, not a note someone reads at their leisure. In order of preference:
+
+1. **Answer it from the repository.** Most of them are there, and reading is what you are for.
+2. **Say it needs `researcher`, and stop** — if it is an outside fact, you cannot fetch one.
+3. **Return the Step 0 block again, with no plan written**, when the answer changes the shape of
+   the document rather than one step.
+4. **Write it into `## Open questions`** only when the plan is genuinely useful without the answer
+   *and* the question is a product decision that is not yours to take. Then say in your report that
+   the plan is blocked until it is answered.
+
+Measured on 2026-08-15: a plan reached `/implement` carrying five deferred questions and was
+refused before anything was dispatched. The planner had written them in good faith, reading this
+section as a note for the human — which is what it used to say.
 
 ## What you read, and in this order
 
@@ -344,7 +368,11 @@ Observable and checkable, ending in one end-to-end run through the real entry po
 Each line names the `R#` it proves. This is what `plan-verifier` grades against.
 
 ## Open questions
-For the human. `_None._` if the plan is complete.
+**A gate, not a note.** `/implement` stops before stage 1, having dispatched nothing,
+when this section holds a real question — so a plan with entries here is a draft
+however finished the rest of it looks. `_None._` is the value that makes the plan
+executable, and the heading stays either way, so a reader can tell "asked and
+answered" from "never asked".
 ```
 
 Then append one row to `plans/README.md`:
@@ -368,7 +396,10 @@ Ukrainian, short. The plan is the deliverable; this is the note attached to it.
 ## Обсяг              — модулі, і що явно поза межами
 ## Скіли для реалізації — імена з таблиці плану, і які з них ти сам відкрив, пишучи її
 ## Ризики з INSIGHTS   — рядок на ризик, або «не знайшов»
-## Відкриті питання    — або «немає»
+## Відкриті питання    — або «немає». Якщо не «немає» — перший рядок звіту каже, що
+                        план **заблокований для `/implement`**, доки на них не дадуть
+                        відповідь. Не згадати про це — гірше, ніж не спланувати:
+                        координатор дізнається про це від гейта, через один диспатч
 ```
 
 Never paste the plan into this message. It is on disk, and the person who dispatched you can read

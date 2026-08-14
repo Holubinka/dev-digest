@@ -309,7 +309,7 @@ they answer the question every plan answers: where the code goes. Eight more are
 | **In** | a path to a spec under `specs/`, or a request in natural language; optionally a `researcher` report, and the execution mode if it is already decided |
 | **Out** | `plans/NN-topic.md` — one folder for every package, the scope recorded in the header |
 | | one appended row in `plans/README.md`, status `Planned <date>` |
-| | a Ukrainian report — what was planned, the path, the mode and why, requirement counts with every `assumed` named, **AC coverage when a spec exists**, recommendations, scope, skills, risks, open questions |
+| | a Ukrainian report — what was planned, the path, the mode and why, requirement counts with every `assumed` named, **AC coverage when a spec exists**, recommendations, scope, skills, risks, and open questions — which, when there are any, the report must open by saying block `/implement` |
 | **Never** | a specification in any folder, any spec prose, code, `AGENTS.md`, `INSIGHTS.md`, `docs/`, `vendor/**`, `e2e/specs/*.flow.json`, another agent's plan, the status `Implemented` |
 | **Except** | the one spec `**Status:**` line it is planning against, `draft` → `approved`, and that spec's row in `specs/README.md` |
 | **Blocked** | returns the clarification block as its whole output and stops, with no plan written |
