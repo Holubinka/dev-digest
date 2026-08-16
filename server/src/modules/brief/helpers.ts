@@ -5,10 +5,12 @@ import {
   Risk,
   RiskBriefInput,
   RiskBriefInputId,
+  RiskBriefRefLine,
   RiskBriefTokenizer,
   type BlastRadiusView,
   type RiskBrief,
   type RiskBriefRecord,
+  type RiskBriefRefLineSource,
 } from '@devdigest/shared';
 import { escapeUntrusted, wrapUntrusted } from '../../platform/prompt.js';
 import { truncateCodePoints } from '../_shared/repo-paths.js';
@@ -197,9 +199,41 @@ function diffStatsBlock(sources: BriefSources, keep = sources.filePaths.length):
  *
  * `test/brief-allowed-refs.test.ts` asserts the invariant itself over a hostile
  * view. It is not maintained by reading this paragraph.
+ *
+ * THE LINE NUMBERS COME FROM HERE AND FROM NOWHERE ELSE (R14). Each of the three
+ * structures this function walks carries its own `line` on `BlastRadiusView`
+ * (`contracts/blast.ts:41,54,77`), recorded by the indexer against `link_sha`, so
+ * a number collected here is a number something measured. The model is shown none
+ * of them — the rendered text is byte-identical to what it was before `refLines`
+ * existed — and `RiskBrief` has no field one could arrive in (AC-57).
+ *
+ * FIRST OCCURRENCE OF A PATH WINS, in the order this block prints its facts, so
+ * the number a reader is shown is the one carried by the first fact they read
+ * about that file. A path that is both a caller and a symbol gets the symbol's
+ * line, because the symbol line is printed first.
+ *
+ * An endpoint LABEL gets no entry. It is a member of the allowed set — a focus
+ * item may legitimately name `POST /pulls/:id/brief` — but it is not a path, and
+ * `POST /pulls/:id/brief:45` is not a thing that exists.
+ *
+ * A NON-POSITIVE LINE IS NOT A LINE, and this is the one rule the plan's step did
+ * not name because nothing in a fixture carries one. Against the real index of
+ * this repository on 2026-08-16, ALL 125 endpoints of the blast answer for PR #20
+ * report `line: 0` — the indexer knows the file an endpoint is in and not the
+ * offset, and it spells that `0`. Storing it would put `path:0` on the card, which
+ * is a placeholder wearing a number: AC-62 admits a suffix only where the number
+ * is "known and valid", AC-60 forbids a placeholder outright, and the client's own
+ * definition of a usable line (`/^[1-9][0-9]{0,6}$/`) rejects it one layer later —
+ * so the text would claim a line the jump then refuses to go to. A file whose
+ * first fact carries no usable number may still get one from a LATER fact, which
+ * is why the guard sits inside `noteLine` rather than around the loop.
  */
 function blastBlock(view: BlastRadiusView): BriefBlock {
   const refs = new Set<string>();
+  const refLines = new Map<string, RiskBriefRefLine>();
+  const noteLine = (ref: string, line: number, source: RiskBriefRefLineSource) => {
+    if (line > 0 && !refLines.has(ref)) refLines.set(ref, { ref, line, source });
+  };
   const lines = [
     `Index status: ${view.status}${view.reason ? ` (${clamp(view.reason)})` : ''}`,
     `Index commit: ${view.link_sha ?? 'unknown'}${view.index_matches_head ? '' : ' (NOT the PR head)'}`,
@@ -213,12 +247,14 @@ function blastBlock(view: BlastRadiusView): BriefBlock {
     for (const symbol of view.symbols.slice(0, MAX_BLAST_SYMBOLS)) {
       const file = part(symbol.file);
       refs.add(file);
+      noteLine(file, symbol.line, 'blast_symbol');
       lines.push(
         `${BULLET} ${part(symbol.name)} (${part(symbol.kind)}) in ${file} — ${symbol.caller_count} caller(s)`,
       );
       for (const caller of symbol.callers.slice(0, MAX_BLAST_CALLERS)) {
         const callerFile = part(caller.file);
         refs.add(callerFile);
+        noteLine(callerFile, caller.line, 'blast_caller');
         lines.push(`    called by ${part(caller.symbol)} in ${callerFile}`);
       }
       for (const endpoint of symbol.endpoints.slice(0, MAX_BLAST_ENDPOINTS)) {
@@ -226,6 +262,7 @@ function blastBlock(view: BlastRadiusView): BriefBlock {
         const endpointFile = part(endpoint.file);
         refs.add(endpointFile);
         refs.add(label);
+        noteLine(endpointFile, endpoint.line, 'blast_endpoint');
         lines.push(
           `    reaches ${endpoint.kind === 'http' ? 'endpoint' : 'cron'} ${label} in ${endpointFile}`,
         );
@@ -240,6 +277,7 @@ function blastBlock(view: BlastRadiusView): BriefBlock {
     id: 'blast',
     text: `## Blast radius\n${wrapUntrusted('blast-facts', lines.join('\n'))}`,
     refs: [...refs],
+    refLines: [...refLines.values()],
     detail: view.status,
   };
 }
@@ -553,9 +591,60 @@ export function buildAllowedRefs(included: BriefBlock[]): Set<string> {
   return allowed;
 }
 
+/**
+ * The line numbers the same blocks licensed — the exact mirror of
+ * `buildAllowedRefs`, over the same `included` list (R14, R15).
+ *
+ * Same parameter, same reason, and the reason is stronger here. A blast answer
+ * the budget dropped licenses no reference; it must license no NUMBER either, or
+ * a `path:line` would be rendered off facts that never reached the model while
+ * the path beside it came from somewhere else entirely. Building this from the
+ * gathered sources instead would do exactly that, and nothing downstream could
+ * tell: a line looks equally plausible whichever block it came from.
+ *
+ * First occurrence wins across blocks as it does inside one, so this stays a
+ * function of the printed order and of nothing else. Only `blast` sets `refLines`
+ * today; the loop does not assume it, because a second producer would otherwise
+ * silently depend on iteration order to decide whose number a reader sees.
+ */
+export function buildRefLines(included: BriefBlock[]): RiskBriefRefLine[] {
+  const lines = new Map<string, RiskBriefRefLine>();
+  for (const block of included) {
+    for (const entry of block.refLines ?? []) {
+      if (entry.ref.length > 0 && !lines.has(entry.ref)) lines.set(entry.ref, entry);
+    }
+  }
+  return [...lines.values()];
+}
+
 /* --------------------------------------------------------------- grounding */
 
 const SEVERITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
+
+/**
+ * `src/x.ts:12` and `src/x.ts:12-18` → `src/x.ts`. The number is DISCARDED (R13).
+ *
+ * The prompt asks for paths and the model writes what it likes; a trailing line
+ * suffix is the form it reaches for most often, because that is how a file:line
+ * reads everywhere else. Without this the whole reference is dropped as ungrounded
+ * — the correct path refused over a tail nothing was looking for.
+ *
+ * THE NUMBER IS NOT KEPT, and that is the point rather than a detail. A line the
+ * model wrote is a line nobody measured (AC-57); the ones that are shown come off
+ * the blast answer through `buildRefLines`, which never reads this function's
+ * input. So this cut can only ever remove a claim, never introduce one.
+ *
+ * ANCHORED AT THE END AND APPLIED ONCE. `src/x.ts:12:34` loses only `:34` and is
+ * then tested as `src/x.ts:12`, which is a member only if some block printed that
+ * exact string. Anything else — stripping repeatedly, or matching anywhere in the
+ * string — would let the cut manufacture a member out of a name that was not one,
+ * and the allowed set is the only thing standing between a model's invention and
+ * a rendered link. `\d` is ASCII-only in JavaScript, so a digit-shaped code point
+ * from another script is not a line number here either.
+ */
+export function stripLineSuffix(ref: string): string {
+  return ref.replace(/:\d+(?:-\d+)?$/, '');
+}
 
 export interface GroundedBrief {
   what: string;
@@ -575,6 +664,11 @@ export interface GroundedBrief {
  * end state is the same — a claim with nothing behind it — so it gets the same
  * answer. Both are counted, because a silent drop is indistinguishable from a
  * model that found nothing.
+ *
+ * Every reference is passed through `stripLineSuffix` FIRST, so a model that
+ * writes `src/x.ts:12` is grounded on `src/x.ts` and the tail costs it nothing.
+ * The set it is tested against is the same one, and the number is thrown away
+ * where it stands — read that function for why both halves matter (R13).
  *
  * MEMBERSHIP IS NOT A BOUND, which is the second thing this function does.
  * Filtering by the allowed set says every name is one the model was shown; it
@@ -612,7 +706,14 @@ export function groundBrief(model: RiskBrief, allowed: Set<string>): GroundedBri
   for (const risk of model.risks) {
     const refs = new Set<string>();
     for (const ref of risk.file_refs) {
-      if (allowed.has(ref)) refs.add(ref);
+      // Cut, then test, then store the CUT form — three separate decisions (R13,
+      // R17). The set is unchanged, so `src/x.ts:12` is admitted only because
+      // `src/x.ts` is a member; the `Set` de-duplicates AFTER the cut, so
+      // `a.ts` and `a.ts:3` are one reference and the card draws one control; and
+      // what `dropped_refs` records below is the model's ORIGINAL string, because
+      // that array is the evidence of what it said, not of what we made of it.
+      const stripped = stripLineSuffix(ref);
+      if (allowed.has(stripped)) refs.add(stripped);
       else droppedRefs.add(ref);
     }
     if (refs.size === 0) {
@@ -642,13 +743,17 @@ export function groundBrief(model: RiskBrief, allowed: Set<string>): GroundedBri
   const seenFocus = new Set<string>();
   const review_focus: ReviewFocusItem[] = [];
   for (const item of model.review_focus) {
-    if (!allowed.has(item.ref)) {
+    // Cut before the membership test here too, and de-duplicate after it: two
+    // items naming `a.ts` and `a.ts:3` are one place to look, and the first
+    // reason is the one the prompt asked to be the most important.
+    const ref = stripLineSuffix(item.ref);
+    if (!allowed.has(ref)) {
       droppedRefs.add(item.ref);
       continue;
     }
-    if (seenFocus.has(item.ref)) continue;
-    seenFocus.add(item.ref);
-    review_focus.push({ ...item, reason: truncateCodePoints(item.reason, MAX_LINE_CHARS) });
+    if (seenFocus.has(ref)) continue;
+    seenFocus.add(ref);
+    review_focus.push({ ...item, ref, reason: truncateCodePoints(item.reason, MAX_LINE_CHARS) });
   }
 
   return {
@@ -709,6 +814,7 @@ export function toRiskBriefRecord(row: PrBriefRow): RiskBriefRecord {
     link_sha: row.linkSha,
     index_matches_head: row.indexMatchesHead,
     inputs: RiskBriefInput.array().catch([]).parse(row.inputs),
+    ref_lines: RiskBriefRefLine.array().catch([]).parse(row.refLines),
     dropped_refs: row.droppedRefs,
     dropped_risks: row.droppedRisks,
     budget: row.budget,

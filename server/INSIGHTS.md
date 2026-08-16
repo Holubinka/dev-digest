@@ -354,6 +354,32 @@ field added off a `*Row` would have shipped over the wire with no contract decla
 `toCandidateDto` (line 235) already does. The annotation is the only place the shape is checked;
 it is not documentation.
 
+### Second occurrence (2026-08-16), from the other side — a contract field the route never serves
+
+**Symptom.** `ReviewRecord` gained `head_sha`: the Zod contract, both vendored copies, the
+`reviews` table, migration `0020`, and a passing `test/contracts.test.ts`. `pnpm arch`,
+`pnpm typecheck`, 900 unit tests, `reviewer-core` and `diff -r` on the vendored pair were all
+green in three packages — and `GET /pulls/:id/reviews` still answered with the same 12 keys it
+answered with before, `head_sha` not among them. In the browser the field read `undefined`
+rather than `null`, because `client/src/lib/api.ts` parses nothing at runtime, so no layer
+between the column and the component had anything to say.
+
+**Cause.** The same root cause as the entry above, mirrored. `ReviewDto`
+(`modules/reviews/helpers.ts:22`) is a hand-written interface rather than `ReviewRecord`, and
+`GET /pulls/:id/reviews` (`modules/reviews/routes.ts:165`) declares no `schema.response`, so the
+contract and the payload are two independent declarations that merely happen to agree. The
+entry above measured the extra-field direction, where a field ships that no contract declares;
+this is the missing-field direction, and it is the more expensive of the two — an undeclared
+extra is noise, whereas a declared field that never arrives is a feature that silently does not
+exist, in a shape every typecheck endorses.
+
+**Fix.** Widening a record contract in `vendor/shared` is not done until the mapper that serves
+it is widened too — `reviewToDto`, `toScanDto`, and their kin. Confirm on the wire, not in the
+type: `curl -s localhost:3001/pulls/<id>/reviews | python3 -c "import sys,json;
+print(sorted(json.load(sys.stdin)[0]))"` prints the key list the client will really see. The
+structural fix is the annotation the entry above already prescribes; `ReviewDto` still does not
+carry it as of 2026-08-16, so the next widening of `ReviewRecord` has the same hole waiting.
+
 ### Truncate untrusted text BEFORE `wrapUntrusted`, never after
 
 The order looks like a style choice and is not. `wrapUntrusted(label, text)`
@@ -770,6 +796,27 @@ The logger moved from the constructor to `compute(workspaceId, prId, log)` in th
 composition root has no logger of its own, and `req.log` is a better one than `app.log` anyway.
 `ReviewService`'s `logger?: Logger` method parameter is the existing precedent.
 
+### `BlastEndpoint.line` is 0 for every endpoint the indexer produces — treat it as "unknown"
+
+**Symptom.** `BlastRadiusView.symbols[].endpoints[].line` is typed `z.number().int()` and reads as a
+real offset. Against the live index on 2026-08-16, the blast answer for `Holubinka/dev-digest` PR #20
+(`curl localhost:3001/pulls/<id>/blast`) carries **125 endpoints and all 125 have `line: 0`**, while
+symbol and caller lines are genuine. Every fixture in `server/test/` uses positive endpoint lines, so
+nothing in the suite can express this.
+
+**Cause.** The indexer resolves which FILE an endpoint sits in and not where inside it, and spells the
+absent offset `0` rather than making the field nullable. `0` passes `z.number().int()`, so no parse and
+no typecheck objects.
+
+**Fix.** Any consumer deriving a displayable line must test `line > 0` and treat everything else as
+"no line", not as line zero. `modules/brief/helpers.ts` · `blastBlock` does this in `noteLine`, which is
+why a blast-admitted brief reference can end up with no `ref_lines` entry while still being a perfectly
+good reference. Rendering `path:0` would be a placeholder wearing a number: AC-62 admits a suffix only
+where the number is valid, and the client's own definition of a usable line (`/^[1-9][0-9]{0,6}$/`,
+`plans/11` P4·8) rejects `0` one layer later — so the text would claim a line the jump then refuses.
+The guard belongs per FACT, not per file: a file whose endpoint entry has no line may still get one
+from a later symbol or caller fact about the same path.
+
 ## Tool & Library Notes
 
 ### `break` out of a `for await` destroys the stream, so teardown errors land inside the `try`
@@ -951,6 +998,23 @@ switched the key, run 2 (`0019`) dropped `json`.
 and the client had computed a brief through the new module. Useful (the real entry point exercises
 itself), but it also means a "pre-existing" row may be yours: check `computed_at` against the
 session, remembering the column is UTC and the shell is not.
+
+### The unrunnable `pr_brief` migration was a constraint change, not a `pr_brief` change (2026-08-16)
+
+Complement to the composite-PK entry above, so the next agent does not hand-edit a file that needs
+no editing. Adding `pr_brief.ref_lines` (jsonb, `NOT NULL DEFAULT '[]'`) and `reviews.head_sha`
+(text, nullable) in one run emitted `0020_broad_steel_serpent.sql` as exactly two `ADD COLUMN`
+statements — no constraint statement, no `<constraint_name>` placeholder, no reordering needed, and
+no TTY prompt, because the run dropped no column for a new one to be a rename of. The 0018 hazard
+belongs to `PRIMARY KEY` / constraint edits, which drizzle-kit 0.30 emits before the columns they
+depend on; an add-only run does not reach that path.
+
+**Reading the SQL is still how you know**, and it is two commands:
+`grep -cE 'ADD COLUMN' <file>` against `grep -nE 'CONSTRAINT|PRIMARY KEY|DROP' <file>` — the second
+printing nothing is the all-clear. Prove the `DEFAULT` reached existing rows against the database
+rather than the file: `SELECT count(*) FILTER (WHERE ref_lines = '[]'::jsonb) FROM pr_brief` returned
+2 of 2, which is what makes "old rows read as `[]`, no data migration" a measurement instead of a
+claim.
 
 ## Recurring Errors & Fixes
 
@@ -1214,6 +1278,29 @@ route into a memoised container getter adds no module and no cycle; when the two
 file is not the cause. Verified 2026-08-16 with round 4 fully in place: 3x
 `pnpm exec vitest run .it.test --fileParallelism=false` → 20 files / 162 tests / 0 skips, and 5x
 the single file at ~4.5 s.
+
+### Seeing the type errors in `test/` at all — one throwaway tsconfig
+
+**Symptom.** A fixture that has gone stale — a required field added to a contract or to a `*Values`
+interface, and the hand-written literal in `test/` never updated — is invisible to every gate.
+`pnpm typecheck` does not read `test/` (recorded above, 2026-07-27) and vitest checks runtime, so
+`test/brief-service.test.ts:99` sat on a TS2741 with a green board on 2026-08-16.
+
+**Cause.** `tsconfig.json` sets `"include": ["src/**/*.ts"]`, and no second config covers `test/`.
+
+**Fix.** From `server/`, one throwaway config and one run:
+
+```sh
+printf '{"extends":"./tsconfig.json","include":["src/**/*.ts","test/**/*.ts"]}' > tsconfig.tests.tmp.json
+pnpm exec tsc --noEmit -p tsconfig.tests.tmp.json; rm tsconfig.tests.tmp.json
+```
+
+Do this after widening any contract or any `*Values`/`*Row` interface. Expect pre-existing noise —
+on 2026-08-16 it reported 20 errors, of which 17 were long-standing (heterogeneous
+`new Map([[t.pullRequests, …], [t.prBrief, …]])` fixtures in `brief-routes.test.ts`, a loosely typed
+`req?.headers` in `brief-rate-limit.it.test.ts`, `defaultBranch` in `repo-intel-facade-degraded.test.ts`).
+Grep for the files you touched rather than reading the whole list, and do not "fix" the rest on sight:
+that is a separate pass, and making the run green is not the point of it.
 
 ## Session Notes
 

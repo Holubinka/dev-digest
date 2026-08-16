@@ -16,6 +16,8 @@ export async function insertReview(
     prId: string;
     agentId: string | null;
     runId: string | null;
+    /** WHICH STATE of the PR this review describes; null = unknown. */
+    headSha: string | null;
     kind: 'summary' | 'review';
     verdict: string | null;
     summary: string | null;
@@ -28,6 +30,8 @@ export async function insertReview(
   // `z.string().min(1)` from POST/PUT /agents, with no charset constraint, so a
   // workspace user who saves an agent whose slug holds a NUL would lose every
   // review that agent produces. `verdict` is a zod enum and the ids are uuids.
+  // `headSha` is neither: it is `pull_requests.head_sha`, which this server wrote
+  // from a git ref, so it needs no `stripNul` either.
   const [row] = await db
     .insert(t.reviews)
     .values({

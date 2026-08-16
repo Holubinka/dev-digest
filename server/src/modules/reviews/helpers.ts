@@ -25,6 +25,12 @@ export interface ReviewDto {
   agent_id: string | null;
   run_id: string | null;
   agent_name?: string | null;
+  /**
+   * WHICH STATE of the PR this review describes. `null` means the row predates
+   * the column, and a reader must treat that as "unknown", never as "the current
+   * head" — see `ReviewRecord.head_sha` in the contract.
+   */
+  head_sha: string | null;
   kind: 'summary' | 'review';
   verdict: string | null;
   summary: string | null;
@@ -67,6 +73,7 @@ export function reviewToDto(
     agent_id: review.agentId,
     run_id: review.runId,
     agent_name: agentName ?? null,
+    head_sha: review.headSha,
     kind: review.kind as 'summary' | 'review',
     verdict: review.verdict,
     summary: review.summary,

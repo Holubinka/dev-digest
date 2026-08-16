@@ -105,6 +105,7 @@ function rowFrom(prId: string, headSha: string, values: BriefValues): PrBriefRow
     risks: values.risks,
     reviewFocus: values.reviewFocus,
     inputs: values.inputs,
+    refLines: values.refLines,
     droppedRefs: values.droppedRefs,
     droppedRisks: values.droppedRisks,
     intentComputedAt: values.intentComputedAt,
@@ -351,6 +352,76 @@ describe('BriefService.compute — exactly one call, and what it records', () =>
     expect(out.record.index_matches_head).toBe(false);
     expect(byId(out.record.inputs).blast?.status).toBe('included');
     expect(llm.calls).toHaveLength(1);
+  });
+
+  /**
+   * P2 step 5. The line numbers on a blast answer were recorded against
+   * `link_sha` and are true at that commit and no other, so a stale index stores
+   * NO number rather than a number the card would have to remember to hide. The
+   * pair is written together on purpose: without the fresh case the stale one
+   * passes for a feature that never derives anything at all (R16).
+   */
+  it('a fresh index persists the line the blast answer carried (R14)', async () => {
+    const { container } = fakeContainer({
+      llm: fakeLlm().provider,
+      blastView: blast({
+        symbols: [
+          {
+            name: 'run',
+            kind: 'method',
+            file: 'server/src/modules/brief/service.ts',
+            line: 128,
+            callers: [],
+            caller_count: 0,
+            truncated: false,
+            endpoints: [],
+            endpoint_count: 0,
+            endpoints_truncated: false,
+          },
+        ],
+      }),
+    });
+    const { repo, writes } = fakeRepo();
+    const out = await new BriefService(container, repo).compute(WS, PR, fakeLog().log);
+    if (!out.ok) throw new Error(out.reason);
+
+    expect(out.record.index_matches_head).toBe(true);
+    expect(writes[0]!.values.refLines).toEqual([
+      { ref: 'server/src/modules/brief/service.ts', line: 128, source: 'blast_symbol' },
+    ]);
+    expect(out.record.ref_lines).toEqual(writes[0]!.values.refLines);
+  });
+
+  it('a stale index persists ref_lines: [] for the same answer (R16)', async () => {
+    const { container } = fakeContainer({
+      llm: fakeLlm().provider,
+      blastView: blast({
+        index_matches_head: false,
+        link_sha: 'an-older-commit',
+        symbols: [
+          {
+            name: 'run',
+            kind: 'method',
+            file: 'server/src/modules/brief/service.ts',
+            line: 128,
+            callers: [],
+            caller_count: 0,
+            truncated: false,
+            endpoints: [],
+            endpoint_count: 0,
+            endpoints_truncated: false,
+          },
+        ],
+      }),
+    });
+    const { repo, writes } = fakeRepo();
+    const out = await new BriefService(container, repo).compute(WS, PR, fakeLog().log);
+    if (!out.ok) throw new Error(out.reason);
+
+    // The reference itself survives — it is still a name the model was shown.
+    expect(out.record.risks[0]!.file_refs).toEqual(['server/src/modules/brief/service.ts']);
+    expect(writes[0]!.values.refLines).toEqual([]);
+    expect(out.record.ref_lines).toEqual([]);
   });
 
   it('no blast answer at all → computed, blast reported missing', async () => {

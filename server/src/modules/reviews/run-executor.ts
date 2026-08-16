@@ -494,6 +494,10 @@ export class ReviewRunExecutor {
       prId: pull.id,
       agentId: agent.id,
       runId,
+      // The state this review describes. Same value, from the same place, as the
+      // `markReviewed` call below — taking it from anywhere else is how the two
+      // start disagreeing about which commit was reviewed.
+      headSha: pull.headSha,
       kind: 'review',
       verdict: outcome.review.verdict,
       summary: outcome.review.summary,

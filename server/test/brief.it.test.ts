@@ -110,6 +110,7 @@ function values(over: Partial<BriefValues> = {}): BriefValues {
     risks: [],
     reviewFocus: [],
     inputs: [],
+    refLines: [],
     droppedRefs: [],
     droppedRisks: 0,
     intentComputedAt: null,
@@ -156,6 +157,57 @@ d('10 risk brief — the state-keyed table (Testcontainers pg)', () => {
 
     const get = await app.inject({ method: 'GET', url: `/pulls/${pr.id}/brief` });
     expect(get.json()).toEqual(record);
+    await app.close();
+  });
+
+  /**
+   * P2 step 6 — `ref_lines` is jsonb, and jsonb round-trips are a property of
+   * Postgres and of the parse on the way back, not of the service that wrote it.
+   */
+  it('GET returns the stored ref_lines for a row written with them', async () => {
+    const { app } = await appWith();
+    const { pr } = await setupPr(workspaceId, 'sha-with-lines');
+    const repo = new BriefRepository(pg.handle.db);
+    const refLines = [
+      { ref: 'server/src/config.ts', line: 12, source: 'blast_symbol' as const },
+      { ref: 'src/api/public/webhooks.ts', line: 45, source: 'blast_caller' as const },
+    ];
+
+    await repo.upsertBrief(
+      pr.id,
+      pr.headSha,
+      values({ refLines, linkSha: pr.headSha, indexMatchesHead: true, blastStatus: 'full' }),
+      BRIEF_MAX_STATES,
+    );
+
+    const get = await app.inject({ method: 'GET', url: `/pulls/${pr.id}/brief` });
+    expect(get.json().ref_lines).toEqual(refLines);
+    await app.close();
+  });
+
+  /**
+   * R19 — a row written BEFORE this column existed. `NOT NULL DEFAULT '[]'::jsonb`
+   * is what makes it read back as a brief without numbers instead of as a row the
+   * parse rejects, and there is no data migration behind that.
+   */
+  it('GET returns [] for a row written without them', async () => {
+    const { app } = await appWith();
+    const { pr } = await setupPr(workspaceId, 'sha-without-lines');
+    const { refLines: _absent, ...asWrittenBeforeTheColumn } = values();
+
+    await pg.handle.db
+      .insert(t.prBrief)
+      .values({ prId: pr.id, headSha: pr.headSha, ...asWrittenBeforeTheColumn });
+
+    const [row] = await pg.handle.db
+      .select()
+      .from(t.prBrief)
+      .where(eq(t.prBrief.prId, pr.id));
+    expect(row!.refLines).toEqual([]);
+
+    const get = await app.inject({ method: 'GET', url: `/pulls/${pr.id}/brief` });
+    expect(get.statusCode).toBe(200);
+    expect(get.json().ref_lines).toEqual([]);
     await app.close();
   });
 

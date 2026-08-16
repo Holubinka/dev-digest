@@ -23,6 +23,7 @@ import {
 import {
   buildAllowedRefs,
   buildBlocks,
+  buildRefLines,
   fitToBudget,
   groundBrief,
   intentFreshness,
@@ -182,6 +183,29 @@ export class BriefService {
     const intentComputedAt = sources.intent ? new Date(sources.intent.computed_at) : null;
     const headCommittedAt = await this.repo.getHeadCommittedAt(pull.id, pull.headSha);
 
+    // A stored line is a line something will show, so the gate is HERE as well as
+    // on the client. Every number came off the index at `link_sha` and is true at
+    // that commit and no other: with `index_matches_head` false it points into a
+    // tree the reviewer is not reading, and with `link_sha` null there is no
+    // commit at which it was ever true. Persisting it anyway leaves a plausible
+    // number in jsonb for the next reader of this record to render, and
+    // `contracts/blast.ts:92-109` records what that already cost once — the link
+    // opened, the file existed, the line existed, and it was a comment two lines
+    // above the call site.
+    const linkSha = sources.blast?.link_sha ?? null;
+    const indexMatchesHead = sources.blast?.index_matches_head ?? false;
+    // Only the references that SURVIVED grounding: a number for a ref the filter
+    // removed belongs to nothing on the record, and `ref_lines` is matched by
+    // exact `ref` value.
+    const groundedRefs = new Set([
+      ...grounded.risks.flatMap((risk) => risk.file_refs),
+      ...grounded.review_focus.map((item) => item.ref),
+    ]);
+    const refLines =
+      indexMatchesHead && linkSha !== null
+        ? buildRefLines(fit.included).filter((entry) => groundedRefs.has(entry.ref))
+        : [];
+
     const row = await this.repo.upsertBrief(
       pull.id,
       pull.headSha,
@@ -195,13 +219,14 @@ export class BriefService {
         risks: grounded.risks,
         reviewFocus: grounded.review_focus,
         inputs: mergeInputs(fit.inputs, this.missingInputs(sources)),
+        refLines,
         droppedRefs: grounded.dropped_refs,
         droppedRisks: grounded.dropped_risks,
         intentComputedAt,
         intentFreshness: intentFreshness(intentComputedAt, headCommittedAt),
         blastStatus: sources.blast?.status ?? 'degraded',
-        linkSha: sources.blast?.link_sha ?? null,
-        indexMatchesHead: sources.blast?.index_matches_head ?? false,
+        linkSha,
+        indexMatchesHead,
         budget: BRIEF_TOKEN_BUDGET,
         inputTokensCounted,
         tokenizer,

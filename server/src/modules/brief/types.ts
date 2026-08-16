@@ -9,6 +9,7 @@ import type {
   RiskBriefInput,
   RiskBriefInputId,
   RiskBriefRecord,
+  RiskBriefRefLine,
   RiskBriefTokenizer,
 } from '@devdigest/shared';
 import type { PrBriefRow } from '../../db/rows.js';
@@ -107,6 +108,24 @@ export interface BriefBlock {
   id: RiskBriefInputId;
   text: string;
   refs: string[];
+  /**
+   * A line number for some of this block's OWN references, and the structure it
+   * was read off.
+   *
+   * ONLY the blast block ever sets it, for the same reason `refs` exists at all:
+   * what a block PRINTED is what it licenses. A line is a stronger claim than a
+   * reference — it says "this fact is at this offset of this file" — and the only
+   * blocks that ever knew one are the three `BlastRadiusView` structures
+   * `blastBlock` walks. `diff_stats` prints a path list and knows no offsets; a
+   * spec block knows its own path and nothing more. Neither may invent one, and a
+   * reference admitted through them therefore carries no number at all (R15).
+   *
+   * Optional, and shorter than `refs` even on the block that fills it: an endpoint
+   * LABEL is a member of the allowed set without being a path, so it gets no entry.
+   * A block the budget dropped contributes neither, because `buildRefLines` reads
+   * the same `included` list `buildAllowedRefs` does.
+   */
+  refLines?: RiskBriefRefLine[];
   /** What it was, in one line — echoed into `RiskBriefInput.detail`. */
   detail: string | null;
   /**
@@ -144,6 +163,13 @@ export interface BriefValues {
   risks: unknown[];
   reviewFocus: unknown[];
   inputs: unknown[];
+  /**
+   * Typed, unlike its jsonb neighbours above, because this list is DERIVED here
+   * rather than parsed off a model answer: nothing upstream of it is `unknown`,
+   * so widening it to match the neighbours would only lose the one check that
+   * says a source outside the enum never reaches the column.
+   */
+  refLines: RiskBriefRefLine[];
   droppedRefs: string[];
   droppedRisks: number;
   intentComputedAt: Date | null;

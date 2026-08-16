@@ -159,6 +159,127 @@ describe('groundBrief — only what the input can vouch for', () => {
 });
 
 /**
+ * P2 step 3 — the model writes `src/x.ts:12` because that is how a file:line
+ * reads everywhere else, and the whole reference used to be dropped as ungrounded
+ * over a tail nothing was looking for (R13, R17).
+ *
+ * Three separate decisions, one per case below: the suffix is cut BEFORE the
+ * membership test, the cut form is what is STORED, and the original is what
+ * `dropped_refs` reports. The number itself is discarded at the cut — the numbers
+ * that reach a reader come off the blast answer through `buildRefLines`, which
+ * never sees this function's input (AC-57).
+ *
+ * NEGATIVE CONTROLS, run on 2026-08-16. Make `stripLineSuffix` the identity and
+ * the first four cases fail here, plus the one in `brief-allowed-refs.test.ts`.
+ * Drop the `$` from its regex and exactly one case fails: the colon-and-digits
+ * INSIDE a path. Not the endpoint label — `:id` carries no digits, so a label
+ * survives an unanchored cut too, and a suite that pinned only the label would
+ * have called the anchor tested while it was not.
+ */
+describe('groundBrief — a line suffix is cut before membership, and discarded', () => {
+  const ROUTES = 'server/src/modules/brief/routes.ts';
+
+  it('admits src/x.ts:12 because src/x.ts is a member, and stores the path alone', () => {
+    const out = groundBrief(brief({ risks: [risk({ file_refs: [`${ROUTES}:12`] })] }), ALLOWED);
+    expect(out.risks[0]!.file_refs).toEqual([ROUTES]);
+    expect(out.dropped_refs).toEqual([]);
+  });
+
+  it('cuts a RANGE suffix the same way', () => {
+    const out = groundBrief(brief({ risks: [risk({ file_refs: [`${ROUTES}:12-18`] })] }), ALLOWED);
+    expect(out.risks[0]!.file_refs).toEqual([ROUTES]);
+  });
+
+  it('cuts it on a review-focus ref too', () => {
+    const out = groundBrief(
+      brief({ review_focus: [{ ref: `${ROUTES}:52`, kind: 'file', reason: 'the 429 branch' }] }),
+      ALLOWED,
+    );
+    expect(out.review_focus[0]!.ref).toBe(ROUTES);
+  });
+
+  /**
+   * `a.ts` and `a.ts:3` are one file and get one row and one control. The
+   * de-duplication has to happen AFTER the cut or the card draws the same place
+   * twice under two spellings.
+   */
+  it('de-duplicates after the cut: a.ts and a.ts:3 are one reference and one focus row', () => {
+    const out = groundBrief(
+      brief({
+        risks: [risk({ file_refs: [ROUTES, `${ROUTES}:3`, `${ROUTES}:10-20`] })],
+        review_focus: [
+          { ref: `${ROUTES}:3`, kind: 'file', reason: 'the first reason' },
+          { ref: ROUTES, kind: 'file', reason: 'a repeat' },
+        ],
+      }),
+      ALLOWED,
+    );
+    expect(out.risks[0]!.file_refs).toEqual([ROUTES]);
+    expect(out.review_focus).toHaveLength(1);
+    expect(out.review_focus[0]!.reason).toBe('the first reason');
+  });
+
+  /**
+   * The security half. The cut may only ever REMOVE a claim: the result is tested
+   * against the same set, so a suffix cannot turn a name the prompt never printed
+   * into a member.
+   */
+  it('the cut cannot manufacture a member — evil.ts:1 is still dropped', () => {
+    const out = groundBrief(brief({ risks: [risk({ file_refs: ['evil.ts:1'] })] }), ALLOWED);
+    expect(out.risks).toEqual([]);
+    expect(out.dropped_risks).toBe(1);
+  });
+
+  /**
+   * The other half of "anchored at the end", and the one with teeth. An
+   * unanchored cut would rewrite `…/brief:1/routes.ts` into `…/brief/routes.ts`
+   * — a member — and grounding would then stamp a path the prompt never printed
+   * as vouched for. The cut may only ever remove a claim.
+   */
+  it('a colon-and-digits INSIDE a path is not a suffix, and cannot be cut into a member', () => {
+    const out = groundBrief(
+      brief({ risks: [risk({ file_refs: ['server/src/modules/brief:1/routes.ts'] })] }),
+      ALLOWED,
+    );
+    expect(out.risks).toEqual([]);
+    expect(out.dropped_refs).toEqual(['server/src/modules/brief:1/routes.ts']);
+  });
+
+  /** Applied once, at the end: `x.ts:12:34` is tested as `x.ts:12`, which is nobody's member. */
+  it('is applied once and anchored at the end, so x.ts:12:34 does not become x.ts', () => {
+    const out = groundBrief(brief({ risks: [risk({ file_refs: [`${ROUTES}:12:34`] })] }), ALLOWED);
+    expect(out.risks).toEqual([]);
+    expect(out.dropped_refs).toEqual([`${ROUTES}:12:34`]);
+  });
+
+  /** A colon that is not a line suffix is not a line suffix. Endpoint labels are full of them. */
+  it('leaves an endpoint label alone', () => {
+    const out = groundBrief(
+      brief({
+        review_focus: [{ ref: 'POST /pulls/:id/brief', kind: 'endpoint', reason: 'the spend' }],
+      }),
+      ALLOWED,
+    );
+    expect(out.review_focus[0]!.ref).toBe('POST /pulls/:id/brief');
+  });
+
+  /**
+   * `dropped_refs` is evidence of what the MODEL said, not of what we made of it.
+   * Recording the stripped form would quietly rewrite the disclosure.
+   */
+  it('a dropped ref keeps the string the model wrote, suffix and all', () => {
+    const out = groundBrief(
+      brief({
+        risks: [risk({ file_refs: ['src/invented.ts:41-52'] })],
+        review_focus: [{ ref: 'src/also/invented.ts:7', kind: 'file', reason: 'nope' }],
+      }),
+      ALLOWED,
+    );
+    expect(out.dropped_refs.sort()).toEqual(['src/also/invented.ts:7', 'src/invented.ts:41-52']);
+  });
+});
+
+/**
  * Membership is not a bound. Everything below is a grounded answer — every name
  * is one the model was shown — that is still too big to write, because a filter
  * on names says nothing about counts, repetition or prose length. The upstream

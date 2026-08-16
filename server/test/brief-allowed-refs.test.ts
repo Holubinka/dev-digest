@@ -17,7 +17,12 @@
  */
 import { describe, it, expect } from 'vitest';
 import type { BlastRadiusView } from '@devdigest/shared';
-import { buildAllowedRefs, buildBlocks, fitToBudget } from '../src/modules/brief/helpers.js';
+import {
+  buildAllowedRefs,
+  buildBlocks,
+  fitToBudget,
+  groundBrief,
+} from '../src/modules/brief/helpers.js';
 import type { BriefFit, BriefSources } from '../src/modules/brief/types.js';
 import {
   MAX_BLAST_CALLERS,
@@ -179,6 +184,44 @@ describe('buildAllowedRefs — membership follows what actually reached the prom
     expect(allowed.has(`src/f${MAX_FILE_PATHS}.ts`)).toBe(false);
     expect(allowed.has('src/f399.ts')).toBe(false);
     expect(allowed.size).toBe(MAX_FILE_PATHS);
+  });
+
+  /**
+   * P2 step 3, against a REAL set rather than a hand-written one: the suffix is
+   * cut before membership, and the set it is tested against is the same set. So
+   * `src/config.ts:12` is admitted because the diff-stats block printed
+   * `src/config.ts`, and `evil.ts:1` is admitted by nothing — the cut can only
+   * remove a claim, never create a member (R13).
+   */
+  it('a line suffix is cut before membership, and cannot widen it', () => {
+    const allowed = allowedFor(
+      sources({ blast: null, filePaths: ['src/config.ts'], diff: { files: 1, additions: 1, deletions: 0 } }),
+      100_000,
+    );
+    const out = groundBrief(
+      {
+        what: 'w',
+        why: 'y',
+        risk_level: 'medium',
+        risks: [
+          {
+            kind: 'secret',
+            title: 'A live key',
+            explanation: 'committed in plaintext',
+            severity: 'high',
+            file_refs: ['src/config.ts:12', 'evil.ts:1'],
+          },
+        ],
+        review_focus: [{ ref: 'src/config.ts:12', kind: 'file', reason: 'the key' }],
+      },
+      allowed,
+    );
+
+    expect(allowed.has('src/config.ts')).toBe(true);
+    expect(allowed.has('src/config.ts:12')).toBe(false);
+    expect(out.risks[0]!.file_refs).toEqual(['src/config.ts']);
+    expect(out.review_focus[0]!.ref).toBe('src/config.ts');
+    expect(out.dropped_refs).toEqual(['evil.ts:1']);
   });
 
   it('prose blocks contribute no references at all', () => {
