@@ -9,6 +9,12 @@ import type {
 } from './types.js';
 import { DEVDIGEST_ROOT, MAX_PATH_LENGTH } from './constants.js';
 import { sanitizeRelativePath, truncateCodePoints } from '../_shared/repo-paths.js';
+import {
+  selectWithinBudget,
+  truncateToBudget,
+  type BudgetCandidate as SharedBudgetCandidate,
+  type BudgetSelection as SharedBudgetSelection,
+} from '../_shared/budget.js';
 
 /* Re-exported so the rest of this slice keeps importing from its own helpers:
    where the rule lives is `_shared/`'s business, not every call site's. */
@@ -275,106 +281,22 @@ export function effectiveSet(own: ContextAttachment[], bySkill: BoundSkillDocs[]
   return out;
 }
 
-/** A read that succeeded, or the reason it did not. Order is the effective set's. */
-export type BudgetCandidate =
-  | { path: string; rendered: string }
-  | { path: string; failure: Extract<ContextDocStatus, 'missing' | 'refused' | 'binary'> };
-
-export interface BudgetSelection {
-  /** The rendered documents that actually go into the prompt, in order. */
-  blocks: string[];
-  /** Every candidate, in the same order, with what happened to it. */
-  results: ProjectContextDocResult[];
-}
-
 /**
- * Take documents in set order until the budget is exhausted.
+ * The budget walk moved to `_shared/budget.ts` on 2026-08-16, when
+ * `modules/brief` needed the same one for its elastic spec inputs and
+ * `no-cross-module` forbade it importing this file. The names are re-exported so
+ * the rest of this slice keeps importing from its own helpers — where the rule
+ * lives is `_shared/`'s business, not every call site's, exactly as
+ * `truncateCodePoints` above.
  *
- * **The walk STOPS at the first document that does not fit**, and that document
- * and every readable one after it are recorded `dropped`. A later, smaller
- * document does NOT get to jump the queue: one explainable cut point beats a
- * knapsack whose result nobody can predict from the list they are looking at.
- *
- * If the FIRST document alone exceeds the budget it is included truncated rather
- * than dropped, so an agent whose single attachment is large still gets some of
- * it. A candidate that could not be read at all is reported with its read
- * failure wherever it sits: it never entered the budget walk, so calling it
- * `dropped` would hide the fact that the file is gone.
- *
- * `count` is a PARAMETER, which is what keeps this file free of the tokenizer
- * and testable with `s => s.length`.
+ * `ContextDocStatus`'s three failure members are what this slice binds the type
+ * parameter to, so `BudgetSelection.results` is still `ProjectContextDocResult[]`
+ * structurally and no caller here changed.
  */
-export function selectWithinBudget(
-  candidates: BudgetCandidate[],
-  budget: number,
-  count: (text: string) => number,
-): BudgetSelection {
-  const blocks: string[] = [];
-  const results: ProjectContextDocResult[] = [];
-  let remaining = budget;
-  let stopped = false;
-
-  for (const candidate of candidates) {
-    if ('failure' in candidate) {
-      results.push({ path: candidate.path, tokens: 0, status: candidate.failure });
-      continue;
-    }
-    const tokens = count(candidate.rendered);
-    if (stopped) {
-      results.push({ path: candidate.path, tokens, status: 'dropped' });
-      continue;
-    }
-    if (tokens <= remaining) {
-      blocks.push(candidate.rendered);
-      results.push({ path: candidate.path, tokens, status: 'included' });
-      remaining -= tokens;
-      continue;
-    }
-    if (blocks.length === 0) {
-      const cut = truncateToBudget(candidate.rendered, remaining, count);
-      blocks.push(cut);
-      results.push({ path: candidate.path, tokens: count(cut), status: 'truncated' });
-      remaining = 0;
-      stopped = true;
-      continue;
-    }
-    results.push({ path: candidate.path, tokens, status: 'dropped' });
-    stopped = true;
-  }
-
-  return { blocks, results };
-}
-
-/**
- * The longest prefix of `text`, by CODE POINT, that `count` puts within `budget`.
- *
- * Binary search rather than a proportional guess, and at most 12 probes — the
- * same shape as the repo-map budget search, and for the same reason: a real
- * tokenizer's chars-per-token ratio varies enough across a document that a
- * single estimate overshoots. `lo` is only ever moved to a value already proven
- * to fit, so the answer is never over budget even when the probe budget runs out.
- *
- * At least one code point comes back: a zero-length block reported as
- * `truncated` is a document that contributed nothing, which is `dropped` wearing
- * the wrong name.
- */
-export function truncateToBudget(
-  text: string,
-  budget: number,
-  count: (text: string) => number,
-): string {
-  const points = [...text];
-  if (count(text) <= budget) return text;
-
-  let lo = 0;
-  let hi = points.length;
-  for (let probe = 0; probe < 12 && hi - lo > 1; probe += 1) {
-    const mid = Math.floor((lo + hi) / 2);
-    if (count(points.slice(0, mid).join('')) <= budget) lo = mid;
-    else hi = mid;
-  }
-  return points.slice(0, Math.max(lo, 1)).join('');
-}
+export type ContextBudgetFailure = Extract<ContextDocStatus, 'missing' | 'refused' | 'binary'>;
+export type BudgetCandidate = SharedBudgetCandidate<ContextBudgetFailure>;
+export type BudgetSelection = SharedBudgetSelection<ContextBudgetFailure>;
+export { selectWithinBudget, truncateToBudget };
 
 /**
  * Row record → the wire DTO. A `*Row` never leaves this module.

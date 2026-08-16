@@ -4,7 +4,11 @@ import {
   type IntentRecord,
 } from '@devdigest/shared';
 import { wrapUntrusted } from '../../platform/prompt.js';
-import { sanitizeRelativePath, truncateCodePoints } from '../_shared/repo-paths.js';
+import { truncateCodePoints } from '../_shared/repo-paths.js';
+import {
+  parsePlanRefs as parseSharedPlanRefs,
+  sanitizeMarkdownRepoPath,
+} from '../_shared/plan-refs.js';
 
 /* Re-exported so the rest of this slice keeps importing from its own helpers:
    where the rule lives is `_shared/`'s business, not every call site's. */
@@ -28,86 +32,22 @@ import {
  */
 
 /**
- * The path gate between an attacker-supplied PR body and `GitClient.readFile`.
- *
- * `SimpleGitClient.readFile` is `readFile(join(clonePathFor(repo), path))`
- * (`adapters/git/simple-git.ts:129-131`), and `join('/clones/o/r', '../../etc/passwd')`
- * resolves outside the clone. On a public repo the body is attacker-supplied,
- * so this is a real traversal sink, not a theoretical one.
- *
- * The string rules live in `_shared/repo-paths.ts`, shared with `modules/context`,
- * which needs the same gate for a saved attachment. They were duplicated here
- * until 2026-08-15 and had already drifted. What stays local is the `.md` rule
- * and this slice's own `MAX_PATH_LENGTH`, which is deliberately lower than the
- * other caller's: this path comes out of an attacker's PR body.
+ * The path gate and the body scan moved to `_shared/plan-refs.ts` on 2026-08-16,
+ * when `modules/brief` needed the same two for the spec files it puts in front of
+ * the model and `no-cross-module` forbade it importing this file. Both are
+ * re-exported bound to THIS slice's caps, so every call site here and in
+ * `test/intent-helpers.test.ts` is unchanged — which is the proof the move was
+ * behaviour-preserving.
  */
 export function sanitizeRepoPath(raw: string): string | null {
-  const path = sanitizeRelativePath(raw, MAX_PATH_LENGTH);
-  if (path === null) return null;
-  // One extension, one parser, one attack surface.
-  if (!path.toLowerCase().endsWith('.md')) return null;
-  return path;
+  return sanitizeMarkdownRepoPath(raw, MAX_PATH_LENGTH);
 }
 
-/** Same-repo GitHub blob URLs. `[^\s)"'<>]` stops the match at a markdown-link or HTML boundary. */
-const BLOB_URL = /https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)\/blob\/([^\s)"'<>]+)/gi;
-
-/**
- * Path-like tokens ending in `.md`. Backticks, parentheses and `:` are outside
- * the class, so a backticked path and a markdown link's target both fall out of
- * the same scan, while any absolute URL leaves a leading `//` that
- * `sanitizeRepoPath` rejects. Bounded repetition keeps it linear on a long body.
- */
-const MD_PATH = /[A-Za-z0-9._\-/]{0,200}\.md\b/gi;
-
-/**
- * Repo-relative plan/spec paths referenced by a PR body, at most
- * `MAX_PLAN_FILES` of them, de-duplicated and normalised.
- *
- * SUPPORTED
- *   - a bare repo-relative `.md` path, plain or in backticks;
- *   - a markdown link whose target is such a path;
- *   - a GitHub blob URL for THIS repo — owner/name compared case-insensitively,
- *     the `<ref>` segment discarded (the clone's current checkout is read), and
- *     a `#L12-L40` anchor or `?plain=1` query stripped.
- *
- * NOT SUPPORTED, deliberately
- *   - a blob URL for any other repo, and any gist: there is no clone to read
- *     them from and this function makes no network calls;
- *   - anything that is not `.md` — `.txt`, `.adoc`, `.rst`, source files;
- *   - Notion, Linear, Jira, Confluence and Google Docs URLs: no adapter, no
- *     credential, and no plan to add one;
- *   - issue and PR links beyond the single `#\d+` `resolveLinkedIssue` handles;
- *   - `../` traversal, absolute paths, and anything outside the clone. Those
- *     are not merely unsupported — `sanitizeRepoPath` rejects them.
- *
- * A branch name containing `/` in a blob URL is read as ref + path at the first
- * slash, so `blob/feat/x/specs/p.md` yields `x/specs/p.md` and simply fails to
- * read. GitHub's own URLs give no way to tell the two apart.
- */
 export function parsePlanRefs(body: string, repo: { owner: string; name: string }): string[] {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  const push = (candidate: string): boolean => {
-    const path = sanitizeRepoPath(candidate);
-    if (path && !seen.has(path)) {
-      seen.add(path);
-      out.push(path);
-    }
-    return out.length >= MAX_PLAN_FILES;
-  };
-
-  for (const [, owner, name, rest] of body.matchAll(BLOB_URL)) {
-    if (owner?.toLowerCase() !== repo.owner.toLowerCase()) continue;
-    if (name?.toLowerCase() !== repo.name.toLowerCase()) continue;
-    const withoutAnchor = (rest ?? '').split('#')[0]?.split('?')[0] ?? '';
-    if (push(withoutAnchor.split('/').slice(1).join('/'))) return out;
-  }
-
-  for (const [match] of body.matchAll(MD_PATH)) {
-    if (push(match)) return out;
-  }
-  return out;
+  return parseSharedPlanRefs(body, repo, {
+    maxFiles: MAX_PLAN_FILES,
+    maxPathLength: MAX_PATH_LENGTH,
+  });
 }
 
 /** The three documentary sources. `title` and `commits_files` always exist, so neither can raise the band. */

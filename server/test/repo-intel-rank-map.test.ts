@@ -10,8 +10,12 @@ import { approxTokens, TiktokenTokenizer } from '../src/adapters/tokenizer/index
 import type { Tokenizer } from '../src/adapters/tokenizer/index.js';
 import type { RepoMapCandidateRow } from '../src/modules/repo-intel/repository.js';
 
-/** Deterministic char-count tokenizer so budgets are exact in tests. */
-const charTokenizer: Tokenizer = { count: (t) => t.length };
+/**
+ * Deterministic char-count tokenizer so budgets are exact in tests. `id` is
+ * required on the interface (2026-08-16) precisely so a fake has to say which
+ * counter it is pretending to be rather than defaulting to the encoder.
+ */
+const charTokenizer: Tokenizer = { count: (t) => t.length, id: 'heuristic' };
 
 describe('computeFileRank (Option B: rank = pagerank, hotness = 0)', () => {
   it('returns [] for no files', () => {

@@ -4,8 +4,6 @@ import type { BlastRadiusView, BlastSummaryResponse } from '@devdigest/shared';
 import { getContext } from '../_shared/context.js';
 import { IdParams } from '../_shared/schemas.js';
 import { NotFoundError } from '../../platform/errors.js';
-import { BlastRepository } from './repository.js';
-import { BlastService } from './service.js';
 
 /**
  * blast module.
@@ -28,11 +26,13 @@ const SUMMARY_RATE_LIMIT = { rateLimit: { max: 6, timeWindow: '1 minute' } };
 export default async function blastRoutes(appBase: FastifyInstance) {
   const app = appBase.withTypeProvider<ZodTypeProvider>();
   const { container } = app;
-  // Constructed here rather than on the container because nothing outside this
-  // module reaches the service — `ConventionsService` in `conventions/routes.ts`
-  // is the same call. The repository is passed IN, which is the seam
-  // `blast-service.test.ts` uses (`onion-architecture` §3.3).
-  const service = new BlastService(container, new BlastRepository(container.db));
+  // Reached through the composition root rather than constructed here, since
+  // 2026-08-16: the Risk Brief needs the same answer and `no-cross-module`
+  // forbids it importing this slice. Constructing a second instance beside the
+  // container's would give one question two owners — the drift
+  // `container.intentService` exists to prevent. The repository is still passed
+  // IN, one level up, which is the seam `blast-service.test.ts` uses.
+  const service = container.blastService;
 
   // A pure read: it resolves tenancy, reads Postgres and returns. No rate limit
   // beyond the app-wide 120/min, and no model call under any input.

@@ -68,6 +68,7 @@ flowchart TB
     pulls["pulls<br/>/pulls/:id · /pulls/:id/comments"]
     intent["intent<br/>/pulls/:id/intent"]
     blast["blast<br/>/pulls/:id/blast · /pulls/:id/blast/summary"]
+    brief["brief<br/>GET /pulls/:id/brief (cached, zero LLM)<br/>POST /pulls/:id/brief (one call, 20/min per workspace)"]
     smartDiff["smart-diff<br/>/pulls/:id/smart-diff"]
     polling["polling<br/>/repos/:id/poll"]
   end

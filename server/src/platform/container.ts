@@ -32,6 +32,9 @@ import { SettingsRepository } from '../modules/settings/repository.js';
 import type { RepoIntel } from '../modules/repo-intel/types.js';
 import { RepoIntelService } from '../modules/repo-intel/service.js';
 import type { IntentDeriver } from '../modules/intent/types.js';
+import type { BlastReader } from '../modules/blast/types.js';
+import { BlastService } from '../modules/blast/service.js';
+import { BlastRepository } from '../modules/blast/repository.js';
 import { IntentService } from '../modules/intent/service.js';
 import { IntentRepository } from '../modules/intent/repository.js';
 import type { ProjectContextResolver } from '../modules/context/types.js';
@@ -82,6 +85,8 @@ export interface ContainerOverrides {
   repoIntel?: RepoIntel;
   /** PR intent derivation (05) — tests inject a canned deriver. */
   intent?: IntentDeriver;
+  /** Blast radius (07) — the brief's tests inject a canned view instead of an index. */
+  blast?: BlastReader;
   /**
    * Project Context (08) — a review test injects a canned resolver and reaches
    * no clone and no `repo_docs` row at all.
@@ -119,6 +124,7 @@ export class Container {
   private _settingsRepo?: SettingsRepository;
   private _repoIntel?: RepoIntel;
   private _intentService?: IntentDeriver;
+  private _blastService?: BlastReader;
   private _projectContext?: ProjectContextResolver;
   private _depgraph?: DepGraph;
   private _tokenizer?: Tokenizer;
@@ -214,6 +220,20 @@ export class Container {
     // concrete type is the composition root's job, and it is what keeps `Db`
     // off `IntentContainer`, the port `IntentService` codes against.
     return (this._intentService ??= new IntentService(this, new IntentRepository(this.db)));
+  }
+
+  /**
+   * Blast radius (07). The Risk Brief reads it through this interface rather
+   * than an import: `modules/brief/**` may not reach into `modules/blast/**`
+   * (`no-cross-module`), and `import type` counts.
+   *
+   * `blast/routes.ts` uses this getter too, instead of constructing its own
+   * instance. One owner is the point: two live `BlastService`s answering the
+   * same question is the drift `intentService` was created to prevent.
+   */
+  get blastService(): BlastReader {
+    if (this.overrides.blast) return this.overrides.blast;
+    return (this._blastService ??= new BlastService(this, new BlastRepository(this.db)));
   }
 
   /**
