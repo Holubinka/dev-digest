@@ -12,7 +12,25 @@ _Nothing recorded yet._
 
 ## What Doesn't Work
 
-_Nothing recorded yet._
+### An assertion written in the implementation's own vocabulary cannot fail on the gap
+
+**Symptom.** `test/prompt.test.ts` enumerated seven hostile attempts to close the `<untrusted>`
+fence and all seven passed, while `</UNTRUSTED>`, `</Untrusted>`, `</untrusted >`, `</ untrusted>`,
+`< /untrusted>` and `</untrusted\t>` reached the model verbatim. Found by review on 2026-08-16,
+not by the suite.
+
+**Cause.** `escapeUntrusted` matched the byte-exact literal `</untrusted>`, and the assertion that
+checked it — `wrapped.match(/<\/untrusted>/g)` — was byte-exact too. Every fixture was lowercase,
+so the escape and its test agreed with each other about a spelling the model does not care about.
+The suite read as coverage of fence-breaking and could not fail on a single variant; a test shaped
+like the code it guards proves the code is self-consistent, not that it is right.
+
+**Fix.** Write the assertion in the ATTACKER's vocabulary, not the implementation's — here
+`/<\s*\/\s*untrusted\s*>/gi` against a rule that is now `content.replace(/<\s*\/\s*untrusted\s*>/gi,
+'<\\/untrusted>')`. Verify by running the new cases against the OLD body first: on 2026-08-16 that
+took one temporary revert and showed 9 red / 7 green, which is the only evidence that a new case
+tests anything. It stays a delimiter rule and never becomes a keyword blocklist (`AGENTS.md`) —
+what widened is which spellings of OUR fence are recognised, not the vocabulary being scanned for.
 
 ## Codebase Patterns
 
@@ -26,6 +44,22 @@ a second, stale copy.
 
 **Fix.** Nothing. If you need to verify consumers still compile, run the server's
 `pnpm typecheck` instead.
+
+### `escapeUntrusted` may now SHRINK its input, not only grow it
+
+**Symptom.** Nothing yet — this is the trap the next optimisation walks into.
+
+**Cause.** Since 2026-08-16 the rule normalises every spelling of the fence to the one escaped
+form, so `< / untrusted >` (15 code points) ships as `<\/untrusted>` (13). Worst-case GROWTH is
+unchanged at 12 → 13 (+8.3%), which is the figure `server/INSIGHTS.md` quotes, but the transform
+is no longer monotone.
+
+**Fix.** Never assume `escapeUntrusted(x).length >= x.length`. The budget contract is unaffected
+because `server/src/modules/brief/helpers.ts` measures the ESCAPED form and ships it; the property
+it actually rests on is idempotence, and that survives because the replacement's `<` is followed by
+`\` where the pattern demands `/`, so a rewrite can never re-match. Checked on 2026-08-16 over
+200 000 generated strings drawn from `< > / \ ␣ \t \n untrusted` fragments: zero non-idempotent,
+zero residual fences.
 
 ### Findings vanish between the LLM response and the result
 
