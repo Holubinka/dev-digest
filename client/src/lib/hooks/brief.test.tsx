@@ -17,7 +17,12 @@ const get = vi.hoisted(() => vi.fn());
 const post = vi.hoisted(() => vi.fn());
 vi.mock("../api", () => ({ api: { get, post } }));
 
-import { briefQueryKey, usePrBrief, useComputeBrief } from "./brief";
+import {
+  briefQueryKey,
+  useBriefComputeAttempted,
+  usePrBrief,
+  useComputeBrief,
+} from "./brief";
 
 const HEAD = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432";
 const NEXT_HEAD = "0011223344556677889900112233445566778899";
@@ -92,5 +97,47 @@ describe("useComputeBrief", () => {
     // route must have been called exactly once, by the initial read.
     expect(invalidate).not.toHaveBeenCalled();
     expect(get).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * The pair `useComputeBrief` / `useBriefComputeAttempted` is one mechanism held
+ * together by a shared key, and `tsc` cannot see either half of that: a
+ * `mutationKey` that drifts from `briefQueryKey` compiles, and so does a
+ * `find()` that never matches. What it buys is the thing `OverviewTab` needs —
+ * a "already computed for this state" fact that survives the unmount a tab
+ * switch causes, where a `useRef` did not and a failed compute paid twice.
+ */
+describe("useBriefComputeAttempted", () => {
+  it("still answers for the state after the mount that fired it is gone", async () => {
+    post.mockRejectedValue(new Error("no key configured for openrouter"));
+    const { Wrapper } = wrap();
+    const first = renderHook(
+      () => ({
+        compute: useComputeBrief("pr-1", HEAD),
+        attempted: useBriefComputeAttempted("pr-1", HEAD),
+      }),
+      { wrapper: Wrapper },
+    );
+
+    expect(first.result.current.attempted()).toBe(false);
+    first.result.current.compute.mutate();
+    await waitFor(() => expect(first.result.current.compute.isError).toBe(true));
+    first.unmount();
+
+    const next = renderHook(
+      () => ({
+        same: useBriefComputeAttempted("pr-1", HEAD),
+        otherHead: useBriefComputeAttempted("pr-1", NEXT_HEAD),
+        otherPr: useBriefComputeAttempted("pr-2", HEAD),
+      }),
+      { wrapper: Wrapper },
+    );
+
+    expect(next.result.current.same()).toBe(true);
+    // Keyed by the state, not by the PR: a new head has no brief of its own and
+    // has not been computed for (AC-7).
+    expect(next.result.current.otherHead()).toBe(false);
+    expect(next.result.current.otherPr()).toBe(false);
   });
 });

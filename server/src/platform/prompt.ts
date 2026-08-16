@@ -5,6 +5,7 @@
  */
 export {
   assemblePrompt,
+  escapeUntrusted,
   wrapUntrusted,
   type PromptParts,
   type AssembledPrompt,

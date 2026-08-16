@@ -10,7 +10,7 @@ import {
   type RiskBrief,
   type RiskBriefRecord,
 } from '@devdigest/shared';
-import { wrapUntrusted } from '../../platform/prompt.js';
+import { escapeUntrusted, wrapUntrusted } from '../../platform/prompt.js';
 import { truncateCodePoints } from '../_shared/repo-paths.js';
 import { selectWithinBudget } from '../_shared/budget.js';
 import type { PrBriefRow } from '../../db/rows.js';
@@ -99,14 +99,30 @@ export function buildBlocks(sources: BriefSources): BriefBlock[] {
   }
 
   for (const spec of sources.specs) {
+    // ESCAPED HERE, per file, not by the section's own `wrapUntrusted`.
+    //
+    // The specs are the one input `fitToBudget` measures BEFORE wrapping — every
+    // other block is wrapped in this function and counted afterwards — and the
+    // escape is not length-preserving. Measured 2026-08-16 with the real encoder
+    // and the real 914-token system prompt: three spec files of repeated
+    // `</untrusted>` count 4521 tokens raw and ship as 6021, i.e. 9202 against a
+    // budget of 8000. `escapeUntrusted` is idempotent, so the fence added after
+    // the cut finds nothing left to rewrite and the walk counts what is sent.
+    //
+    // Both parts are escaped separately and composed afterwards, so `refs` holds
+    // the string the block PRINTS whatever the path contains — the asymmetry
+    // logged in `server/INSIGHTS.md` ("registered in one form and printed in
+    // another") cannot arise for this input. In practice the path is unchanged:
+    // `sanitizeMarkdownRepoPath`'s character class has no `<` or `>`.
+    const path = escapeUntrusted(spec.path);
     blocks.push({
       id: 'specs',
       // INNER text: `fitToBudget` wraps the survivors in one `plan-spec` fence.
       // The path leads the section on purpose — a prefix cut keeps it, which is
       // what makes a truncated spec still able to vouch for its own path.
-      text: `### ${spec.path}\n${spec.text}`,
-      refs: [spec.path],
-      detail: spec.path,
+      text: `### ${path}\n${escapeUntrusted(spec.text)}`,
+      refs: [path],
+      detail: path,
     });
   }
 
@@ -388,7 +404,20 @@ export function fitToBudget(
     // The fence is paid for BEFORE the walk, not after it. Measuring the inner
     // text and wrapping afterwards would put the assembled input over the ceiling
     // by exactly the overhead nobody counted.
-    const remaining = budget - total() - count(renderSpecsSection('')) - joinCost;
+    //
+    // The fence has TWO costs and this line is only the first: the delimiters,
+    // subtracted here, and the escape `wrapUntrusted` applies to the content,
+    // which `buildBlocks` has already applied to each spec block so that the
+    // strings measured below are the strings sent.
+    //
+    // The blank line BETWEEN two surviving spec blocks is the third thing added
+    // after the measurement, and `selectWithinBudget` counts only the blocks. It
+    // is reserved for every candidate rather than for the survivors, because the
+    // survivor count is what the walk is about to decide: over-reserving costs
+    // `joinCost` of headroom, and under-reserving is an assembled input over the
+    // ceiling — measured at +2 with three spec files before this term existed.
+    const innerJoins = (specs.length - 1) * joinCost;
+    const remaining = budget - total() - count(renderSpecsSection('')) - joinCost - innerJoins;
     const selection =
       remaining > 0
         ? selectWithinBudget(

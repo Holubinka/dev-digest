@@ -2,7 +2,7 @@
 
 import React from "react";
 import { Markdown, SectionLabel } from "@devdigest/ui";
-import { usePrBrief, useComputeBrief } from "@/lib/hooks/brief";
+import { useBriefComputeAttempted, usePrBrief, useComputeBrief } from "@/lib/hooks/brief";
 import { usePrIntent, useRecomputeIntent } from "@/lib/hooks/core";
 import type { PrFile } from "@/lib/types";
 import { BlastRadiusCard } from "../BlastRadiusCard";
@@ -44,13 +44,15 @@ export function OverviewTab({
   const { data: briefData } = brief;
 
   /**
-   * Which `(prId, headSha)` this tab has already fired the automatic
-   * computation for. A ref rather than state because nothing renders from it,
-   * and a ref rather than nothing at all because a re-render, a refetch and
-   * StrictMode's deliberate double-invoke would each otherwise start a second
-   * paid computation for the same state.
+   * Whether the automatic computation has already been fired for this
+   * `(prId, headSha)` — asked of the mutation cache, which outlives this mount.
+   *
+   * It used to be a `useRef`, and the mismatch was the whole bug: the fact is
+   * about the PR state, the ref's lifetime is one mount, and `page.tsx` renders
+   * this tab as `{tab === "overview" && …}`, so it is unmounted on every switch
+   * to Files changed. See `lib/hooks/brief.ts` for why it is a callback.
    */
-  const autoComputed = React.useRef<string | null>(null);
+  const alreadyComputed = useBriefComputeAttempted(prId, headSha);
 
   /**
    * The one `useEffect` in this tab, and the external system it synchronises is
@@ -64,19 +66,19 @@ export function OverviewTab({
    * calls, however many times it is read).
    *
    * There is no "and no mutation is in flight" condition because there cannot
-   * be one: this effect is the only automatic trigger, and it marks the state
-   * as fired in the same tick it fires. A failed computation therefore does NOT
-   * retry itself either — the button is the retry, and a self-retrying loop on
-   * a route that costs money is the opposite of what AC-3 asks for.
+   * be one: `alreadyComputed()` is true from the moment `mutate` registers the
+   * mutation, in flight or settled. A failed computation therefore does NOT
+   * retry itself — not on a re-render, not on StrictMode's deliberate
+   * double-invoke, and not on the remount a tab switch causes. The button is the
+   * retry, and a self-retrying loop on a route that costs money is the opposite
+   * of what AC-3 asks for.
    */
   React.useEffect(() => {
     if (!prId || !headSha) return;
     if (briefData !== null) return;
-    const state = `${prId}:${headSha}`;
-    if (autoComputed.current === state) return;
-    autoComputed.current = state;
+    if (alreadyComputed()) return;
     computeBrief();
-  }, [prId, headSha, briefData, computeBrief]);
+  }, [prId, headSha, briefData, computeBrief, alreadyComputed]);
 
   // The mutation's failure is the interesting one — it is the paid path, and it
   // carries `config_error` — but a failed GET must not read as an empty card.

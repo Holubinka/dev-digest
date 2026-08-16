@@ -15,6 +15,7 @@
 export {
   assemblePrompt,
   describePromptSection,
+  escapeUntrusted,
   wrapUntrusted,
   type PromptParts,
   type AssembledPrompt,

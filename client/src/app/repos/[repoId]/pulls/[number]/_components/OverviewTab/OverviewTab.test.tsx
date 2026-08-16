@@ -1,26 +1,40 @@
 import React from "react";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { PrFile, RiskBriefRecord } from "@/lib/types";
 
 const hooks = vi.hoisted(() => ({
   usePrIntent: vi.fn(),
   useRecomputeIntent: vi.fn(),
-  usePrBrief: vi.fn(),
-  useComputeBrief: vi.fn(),
 }));
 
+/**
+ * The brief hooks are NOT mocked, and that is the point of this file.
+ *
+ * They were, until round 5: `usePrBrief` and `useComputeBrief` were both
+ * `vi.fn()`, so every fact the tab's automatic computation depends on — the
+ * cached `null` for a state, the record of a compute already fired — lived in
+ * the test rather than in a cache. A guard that reset on remount was therefore
+ * invisible to six cases, and a failed compute shipped paying for itself again
+ * on every tab switch. The boundary here is the HTTP client, one layer lower.
+ */
+const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
+vi.mock("@/lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api")>()),
+  api,
+}));
 // The specifier must be the one the component imports, not the barrel that
 // re-exports it: a mock registered under `@/lib/hooks` does not intercept a
 // component importing `@/lib/hooks/core` — Vitest keys the registry by
 // resolved module, and the two resolve to different files.
+//
+// Intent stays mocked: it is not what this file is about, and leaving it real
+// would put its own reads into `api.get` and make the brief's call counts
+// ambiguous.
 vi.mock("@/lib/hooks/core", () => ({
   usePrIntent: hooks.usePrIntent,
   useRecomputeIntent: hooks.useRecomputeIntent,
-}));
-vi.mock("@/lib/hooks/brief", () => ({
-  usePrBrief: hooks.usePrBrief,
-  useComputeBrief: hooks.useComputeBrief,
 }));
 // All three cards in the row have their own tests and want providers this file
 // does not supply — next-intl for each, plus a QueryClient for BLAST RADIUS,
@@ -58,45 +72,50 @@ const HEAD = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432";
 /** Only the fields this tab reads; the card's own test carries a full record. */
 const BRIEF = { head_sha: HEAD, risk_level: "high" } as unknown as RiskBriefRecord;
 
-let computeBrief: ReturnType<typeof vi.fn>;
+/**
+ * ONE client for the whole test, across every mount inside it.
+ *
+ * That is what a browser has: the provider sits above the router, so unmounting
+ * the tab does not take the caches with it. A client rebuilt per render would
+ * make the remount case below pass for the wrong reason.
+ */
+let client: QueryClient;
 
 beforeEach(() => {
   hooks.usePrIntent.mockReturnValue({ data: null, isLoading: false, isError: false });
   hooks.useRecomputeIntent.mockReturnValue({ mutate: vi.fn(), isPending: false });
-  computeBrief = vi.fn();
-  hooks.usePrBrief.mockReturnValue({
-    data: null,
-    isLoading: false,
-    isError: false,
-    error: null,
-  });
-  hooks.useComputeBrief.mockReturnValue({
-    mutate: computeBrief,
-    isPending: false,
-    error: null,
+  api.get.mockReset().mockResolvedValue(null);
+  api.post.mockReset().mockResolvedValue(BRIEF);
+  client = new QueryClient({
+    // No `gcTime` overrides: the automatic computation's guard lives in the
+    // mutation cache and its window IS the default five minutes.
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
 });
 afterEach(cleanup);
 
 /**
- * StrictMode is not decoration here. It is the cheapest reproduction of the
- * failure this tab's `useRef` guard exists for: React deliberately runs an
- * effect's setup, cleanup and setup again on mount, so an unguarded
- * "compute when there is none" starts TWO paid model calls for one PR state.
+ * StrictMode is not decoration here. It is the cheapest reproduction of one of
+ * the two ways this tab could pay twice: React deliberately runs an effect's
+ * setup, cleanup and setup again on mount, so an unguarded "compute when there
+ * is none" starts TWO paid model calls for one PR state. The other way is the
+ * remount, which needs `unmount()` and has its own case below.
  */
 function renderTab(props: Partial<React.ComponentProps<typeof OverviewTab>> = {}) {
   return render(
-    <React.StrictMode>
-      <OverviewTab
-        prBody={null}
-        prId="pr-1"
-        headSha={HEAD}
-        prFiles={FILES}
-        repoFullName="acme/payments-api"
-        onOpenFile={vi.fn()}
-        {...props}
-      />
-    </React.StrictMode>,
+    <QueryClientProvider client={client}>
+      <React.StrictMode>
+        <OverviewTab
+          prBody={null}
+          prId="pr-1"
+          headSha={HEAD}
+          prFiles={FILES}
+          repoFullName="acme/payments-api"
+          onOpenFile={vi.fn()}
+          {...props}
+        />
+      </React.StrictMode>
+    </QueryClientProvider>,
   );
 }
 
@@ -174,83 +193,105 @@ describe("OverviewTab — description", () => {
   });
 });
 
-describe("OverviewTab — the automatic first computation", () => {
-  it("computes a brief for a state the server holds none for, exactly once", () => {
-    renderTab();
-    expect(computeBrief).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not fire again when the tab re-renders for another reason", () => {
-    const { rerender } = renderTab();
-    expect(computeBrief).toHaveBeenCalledTimes(1);
-
-    rerender(
+/** The tab as `page.tsx` re-renders it: same mount, different props. */
+function tabWith(props: Partial<React.ComponentProps<typeof OverviewTab>>) {
+  return (
+    <QueryClientProvider client={client}>
       <React.StrictMode>
         <OverviewTab
-          prBody={BODY}
+          prBody={null}
           prId="pr-1"
           headSha={HEAD}
           prFiles={FILES}
           repoFullName="acme/payments-api"
           onOpenFile={vi.fn()}
+          {...props}
         />
-      </React.StrictMode>,
-    );
-    expect(computeBrief).toHaveBeenCalledTimes(1);
+      </React.StrictMode>
+    </QueryClientProvider>
+  );
+}
+
+describe("OverviewTab — the automatic first computation", () => {
+  it("computes a brief for a state the server holds none for, exactly once", async () => {
+    renderTab();
+
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1));
+    expect(api.post).toHaveBeenCalledWith("/pulls/pr-1/brief");
   });
 
-  it("computes nothing when the server already holds a brief for this head", () => {
+  it("does not fire again when the tab re-renders for another reason", async () => {
+    const { rerender } = renderTab();
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1));
+
+    rerender(tabWith({ prBody: BODY }));
+    expect(api.post).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The case the guard is really for, and the one every other case here missed
+   * until 2026-08-16: `page.tsx:171` renders this tab as
+   * `{tab === "overview" && <OverviewTab …/>}`, so a look at Files changed and
+   * back UNMOUNTS it. A guard whose lifetime is the mount is reset by that,
+   * while the fact it records — "this `(prId, headSha)` has been computed for" —
+   * is not; the query cache still holds `null`, and the tab fired a second paid
+   * `POST /pulls/:id/brief` nobody asked for.
+   *
+   * The failure is the expensive one to observe: the second computation replaces
+   * the error the reader needed with a fresh spinner, because the remounted
+   * mutation starts at `error: null`. `config_error` is the one failure a human
+   * can act on (AC-42).
+   */
+  it("does not compute again when a failed state's tab is left and reopened", async () => {
+    api.post.mockRejectedValue(new Error("no key configured for openrouter"));
+    const view = renderTab();
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1));
+
+    // Leave the tab, come back to it — same client, same PR, same head.
+    view.unmount();
+    renderTab();
+
+    expect(await screen.findByTestId("pr-brief-card")).toBeInTheDocument();
+    expect(api.post).toHaveBeenCalledTimes(1);
+  });
+
+  it("computes nothing when the server already holds a brief for this head", async () => {
     // AC-28: a stored record is served with zero model calls, however many times
     // it is read.
-    hooks.usePrBrief.mockReturnValue({
-      data: BRIEF,
-      isLoading: false,
-      isError: false,
-      error: null,
-    });
+    api.get.mockResolvedValue(BRIEF);
     renderTab();
 
-    expect(computeBrief).not.toHaveBeenCalled();
-    expect(screen.getByTestId("pr-brief-card")).toHaveAttribute("data-has-brief", "true");
+    await waitFor(() =>
+      expect(screen.getByTestId("pr-brief-card")).toHaveAttribute("data-has-brief", "true"),
+    );
+    expect(api.post).not.toHaveBeenCalled();
   });
 
-  it("computes nothing before the query has settled", () => {
+  it("computes nothing before the query has settled", async () => {
     // `undefined` is "we have not asked yet", and firing on it would spend a
     // model call on every mount, including the ones the cache would have served.
-    hooks.usePrBrief.mockReturnValue({
-      data: undefined,
-      isLoading: true,
-      isError: false,
-      error: null,
-    });
+    api.get.mockReturnValue(new Promise(() => {}));
     renderTab();
 
-    expect(computeBrief).not.toHaveBeenCalled();
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(1));
+    expect(api.post).not.toHaveBeenCalled();
   });
 
-  it("computes again when the pull request moves to a new head", () => {
-    // The guard is keyed by `(prId, headSha)`, not a once-per-mount latch: a new
+  it("computes again when the pull request moves to a new head", async () => {
+    // The guard is keyed by `(prId, headSha)`, not a once-per-PR latch: a new
     // head is a new state, and it has no brief of its own.
     const { rerender } = renderTab();
-    expect(computeBrief).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1));
 
-    rerender(
-      <React.StrictMode>
-        <OverviewTab
-          prBody={null}
-          prId="pr-1"
-          headSha="0000000000000000000000000000000000000000"
-          prFiles={FILES}
-          repoFullName="acme/payments-api"
-          onOpenFile={vi.fn()}
-        />
-      </React.StrictMode>,
-    );
-    expect(computeBrief).toHaveBeenCalledTimes(2);
+    rerender(tabWith({ headSha: "0000000000000000000000000000000000000000" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(2));
   });
 
-  it("computes nothing while the pull request id is still being resolved", () => {
+  it("computes nothing while the pull request id is still being resolved", async () => {
     renderTab({ prId: null });
-    expect(computeBrief).not.toHaveBeenCalled();
+
+    await waitFor(() => expect(screen.getByTestId("pr-brief-card")).toBeInTheDocument());
+    expect(api.get).not.toHaveBeenCalled();
+    expect(api.post).not.toHaveBeenCalled();
   });
 });

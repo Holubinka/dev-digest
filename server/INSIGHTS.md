@@ -271,6 +271,34 @@ be added without it. The signal that the fixture was the problem and not the cod
 cases failed against the code as shipped, while the eight old ones passed through two of the
 three holes. Cost of skipping this: rounds two and three of a review that was capped at two.
 
+### A budget measured before an escape is not a budget
+
+**Symptom.** `BRIEF_TOKEN_BUDGET` is 8000 and AC-18 counts the first assembled input against it
+before the call. Measured 2026-08-16 with `TiktokenTokenizer` and the real 914-token
+`risk-brief.system.md`: three linked spec files of `MAX_SPEC_FILE_CHARS` of the literal
+`</untrusted>` count **4521 tokens** in the budget walk and ship as **6021**, assembling to
+**9202 against 8000**. Both halves are attacker-controlled on a public repo — the `.md` is
+repository content and the PR body is what `parsePlanRefs` scans to choose it.
+
+**Cause.** `wrapUntrusted` rewrites `</untrusted>` to `<\/untrusted>` inside the content, which is
+not length-preserving (+8.3% at worst, +19% in tokens on this input). Every fixed block is wrapped
+inside `buildBlocks` and therefore measured after the rewrite; the specs were the one input handed
+to `selectWithinBudget` raw and wrapped afterwards, and nothing re-measured. A second, smaller
+leak of the same shape sat beside it: `selection.blocks.join('\n\n')` adds a blank line between
+survivors that the walk never counted, worth +2 with three spec files.
+
+**Fix.** Escape ONCE, per spec file, in `buildBlocks`, so the string the walk measures is the
+string sent — `escapeUntrusted` is now exported from `reviewer-core/src/prompt.ts` (and re-exported
+by `platform/prompt.ts`) precisely so a caller that measures can measure what ships. It is
+idempotent, so the `wrapUntrusted` that adds the fence afterwards finds nothing left to rewrite;
+`reviewer-core/test/prompt.test.ts` pins that over overlapping and nested attempts rather than
+assuming it. The inner joins are reserved for every candidate, conservatively, before the walk.
+
+**The rule the two leaks share, worth more than either.** Anything that TRANSFORMS text after the
+count is part of the count: a fence, an escape, a separator. `test/brief-budget.test.ts` had no
+fixture containing the fence literal, so the escape was a no-op in every case the suite exercised
+and only the fixture stood between this and shipping.
+
 ## Codebase Patterns
 
 ### The allowed-refs invariant is checkable in one line against a real PR
@@ -1526,3 +1554,11 @@ the single file at ~4.5 s.
   while fixing the third break of the invariant, and both are the same family: a caller declaring
   a name printed without asking the rendered text. The enforcement test would catch either the
   moment a fixture expresses it.
+  - **Half-answered 2026-08-16, round 5.** (2) is closed FOR SPECS and only for specs: the escape
+    now runs per spec file in `buildBlocks`, on the path and the body separately, so `refs[0]` is
+    the string the block prints whatever the path contains. It cannot arise there anyway —
+    `sanitizeMarkdownRepoPath`'s character class (`plan-refs.ts:51`) has no `<` or `>`. The BLAST
+    half is untouched and still open: `blastBlock` adds `part(symbol.file)` and
+    `part(endpoint.label)` to `refs` raw while `wrapUntrusted` escapes the printed line, and those
+    strings come from the indexer over repository content, which has no such character class.
+    (1) is untouched. Both were out of the round-5 brief.

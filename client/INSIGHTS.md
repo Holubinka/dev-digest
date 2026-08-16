@@ -436,6 +436,49 @@ helper for exactly this). Also make the loading-state stand-in *faithful* — th
 had no `data-file-path`, which would have made the new test pass for the wrong reason. Both new
 cases were confirmed to fail against the unfixed component before being left green.
 
+### A `useRef` guard cannot hold a fact about a cached PR state
+
+**Symptom.** `OverviewTab` computes a brief when the server holds none for the current
+`(prId, headSha)`, guarded by `autoComputed = useRef<string|null>(null)` so it fires once. Six
+cases covered the guard and all six passed while a FAILED computation paid for itself again on
+every tab switch — a second `POST /pulls/:id/brief`, with the error message replaced by a fresh
+spinner because the remounted `useMutation` starts at `error: null`.
+
+**Cause.** Two lifetimes that look the same and are not. `page.tsx:171` renders the tab as
+`{tab === "overview" && <OverviewTab …/>}`, so Files changed and back UNMOUNTS it and the ref
+returns to `null`; the fact it recorded — "a compute has been fired for this state" — is about
+the PR state, which the query cache still holds `null` for. Every existing case re-rendered in
+place with `rerender()`, and a re-render does not reset a ref.
+
+**Fix.** Put the fact where facts about a state live. `useComputeBrief` now carries
+`mutationKey: briefQueryKey(prId, headSha)`, and `useBriefComputeAttempted` reads it back with
+`queryClient.getMutationCache().find({ mutationKey, exact: true })`. A CALLBACK, not a boolean:
+`mutate()` registers the mutation synchronously, so a value captured at render is a commit stale,
+and StrictMode's double-invoke runs the effect's setup twice in one commit — reading at call time
+is what lets one guard replace the ref instead of standing beside it. Its window is the mutation's
+`gcTime` (five minutes after the last observer unmounts, `query-core/removable.js:18-22`), the same
+span the query cache holds its `null` for.
+
+**And the test rule that follows.** A guard whose scope is the mount is only observable by a case
+that leaves the mount: `render()` → `unmount()` → `render()` on the SAME `QueryClient`. `rerender()`
+cannot see it, which is exactly why six cases did not. 2026-08-16, round 5 of `plans/10`.
+
+### A mocked hook is a mocked cache, and the cache was where the bug was
+
+**Symptom.** The defect above survived four review rounds with `OverviewTab.test.tsx` at twelve
+green cases.
+
+**Cause.** The file mocked `@/lib/hooks/brief` wholesale — `usePrBrief` and `useComputeBrief` both
+`vi.fn()`. Every fact the automatic computation depends on (the cached `null` for a state, the
+record of a compute already fired) then lived in the test's `beforeEach` rather than in a cache, so
+no unmount could lose anything and no remount could remember anything.
+
+**Fix.** Mock the boundary one layer lower — `@/lib/api` — and render inside a real
+`QueryClientProvider` whose client is built once per test and shared across mounts. The hooks then
+run for real and the assertions move from `computeBrief` to `api.post`, which is the number that
+costs money anyway. `hooks/core` stays mocked deliberately: leaving it real would put the intent's
+own reads into `api.get` and make the brief's call counts ambiguous.
+
 ## Codebase Patterns
 
 ### A security predicate gets exported, not restated — `hasDotSegment` is the dot-segment rule
