@@ -43,4 +43,4 @@ the header alone. `Modules` is the same list the spec carries in its `**Modules:
 | Spec | Modules | Status |
 |---|---|---|
 | [`SPEC-01-project-context.md`](SPEC-01-project-context.md) | server, client, reviewer-core | Approved 2026-08-13 |
-| [`SPEC-02-pr-why-risk-brief.md`](SPEC-02-pr-why-risk-brief.md) | server, client | Draft 2026-08-16 |
+| [`SPEC-02-pr-why-risk-brief.md`](SPEC-02-pr-why-risk-brief.md) | server, client | Approved 2026-08-16 |

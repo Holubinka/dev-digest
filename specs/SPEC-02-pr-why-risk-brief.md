@@ -1,7 +1,7 @@
 # Spec: PR Why + Risk Brief
 
 **Spec ID:** SPEC-02
-**Status:** draft
+**Status:** approved
 **Created:** 2026-08-16
 **Supersedes:** _Немає._
 **Modules:** server, client
@@ -619,15 +619,19 @@ sequenceDiagram
     alt запис є
         S-->>API: збережений бриф
         API-->>W: бриф
-        Note over API,M: жодного виклику моделі
+        Note over API,M: жодного виклику моделі —<br/>друге і n-те відкриття (AC-28)
+        W-->>U: картка
     else запису немає
-        API-->>W: «для цього стану брифу немає»
-        W-->>U: порожній стан із дією
+        Note over W,API: обчислення починається САМО,<br/>без окремої дії користувача (AC-2)
+        W->>API: обчислення для цього стану
     end
 
-    U->>W: натискає обчислити / регенерувати
-    W->>API: обчислення для поточного стану
-    Note over API: орендар і межа частоти —<br/>ДО будь-якої витрати
+    opt рев'юер натискає регенерувати
+        U->>W: регенерувати
+        W->>API: обчислення для цього стану
+    end
+
+    Note over API: орендар, межа частоти і замок на стан —<br/>ДО будь-якої витрати (AC-45)
     API->>DB: заголовок, тіло, issue, diff stats
     API->>CR: intent (порт) + blast (порт)
     CR-->>API: IntentRecord · BlastRadiusView
