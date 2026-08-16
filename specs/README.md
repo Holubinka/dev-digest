@@ -20,6 +20,15 @@ boundary either agent has.
 Naming: `SPEC-NN-topic.md`, the next free two-digit number in this folder. The document carries
 the same id in its `**Spec ID:**` header. Headings are English, prose is Ukrainian.
 
+`assets/` holds design artefacts a spec is written against — a mockup cited by a spec lives here,
+not in the conversation it arrived in. Name it for the spec that owns it
+(`SPEC-NN-topic-view.png`) and reference it by repository path from `## Sources`. A screenshot
+that stays in the chat is readable by the human who pasted it and by nobody downstream: on
+2026-08-16 one never reached `spec-creator`, the spec recorded honestly that no design had been
+provided, and 111 verified items plus five review runs later the feature still had the wrong
+shape. `.claude/agents/README.md` § *Four habits that outrank every agent here* carries the
+dispatch rule; this folder is where the artefact lands so the rule has something to point at.
+
 **Status** moves `Draft` → `Approved` → `Implemented`. `spec-creator` only ever writes `Draft`;
 approval is the human's act, `implementation-planner` records it when it starts planning, and
 the implementer flips the last one when the code lands.

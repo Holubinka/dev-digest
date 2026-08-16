@@ -611,6 +611,38 @@ brief introduces a new root, prefix, status or file kind, state what each existi
 that dimension returns for the new case, even when the answer seems obvious: the implementer's
 alternative to being told is to stop and ask.
 
+### A mockup is usually drawn from components that already exist — grep the label before specifying "new"
+
+Specifying the PR Brief layout from `specs/assets/SPEC-02-pr-brief-overview.png` on 2026-08-16, the
+`61 / PR SCORE` gauge read as a new widget the feature had to invent. It is not. `Review.score`
+(`contracts/findings.ts:69-76`), `CircularScore.tsx` and the i18n key `verdict.prScore` were all
+already there, and the decisive proof was in a test: the existing component's own case calls it with
+`costUsd={0.014} tokensIn={8200} tokensOut={1300}` — the exact figures printed on the mockup. The
+banner in the picture is the existing `VerdictBanner`, hoisted to PR level.
+
+Had that gone unchecked, the feature would have specified a second 0-100 number under a caption the
+repo already spends on a different quantity. **Before writing a criterion for something a design
+shows, grep the caption, the number's range and the i18n key.** A design is drawn in the product's
+own vocabulary, so a label that looks new is more often a label that is taken.
+
+### Two contracts, opposite doctrines about a model-reported number
+
+`brief.ts:35-41` says of `IntentConfidence`: *"derived deterministically from which documentary
+sources were present — **never self-reported by the model**. Small models pin verbal confidence
+near-constant regardless of accuracy, so a number from one is not evidence."*
+
+`findings.ts:69-76` gives `Review.score` a `.describe()` that is an instruction **to the model** —
+*"Overall PR quality from 0 to 100, where HIGHER is better… Must be consistent with `findings`"* —
+so the number arrives inside the structured answer. That is precisely the thing the paragraph two
+files away calls not-evidence, and it is the number the UI puts in the largest glyph on the PR page.
+
+Neither file is wrong on its own terms and both were reviewed; the contradiction survived because
+**nobody read them together.** Found on 2026-08-16 only because a feature needed to decide whether
+to add a third number. Recorded, not resolved: changing `Review.score` is a product decision about
+an existing shipped surface, and it belongs to whoever owns the review verdict. When adding any
+scalar a human will act on, check what the neighbouring contracts already promise about numbers of
+that kind — the doctrine may already exist, and may already be broken.
+
 ## Codebase Patterns
 
 ### The two `docker-compose.yml` files are byte-identical duplicates
