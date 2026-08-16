@@ -15,6 +15,9 @@ import {
   Settings,
   Repo,
   PrDetail,
+  RiskBrief,
+  RiskBriefRecord,
+  RiskBriefTimeline,
 } from '@devdigest/shared';
 
 /**
@@ -194,6 +197,157 @@ describe('AI contracts parse fixtures', () => {
     });
     expect(legacy.stats.cost_usd).toBeNull();
     expect(legacy.project_context).toEqual([]);
+  });
+});
+
+/**
+ * Risk Brief (10) — the contract P2 persists and P3 renders. `RiskBriefRecord` is
+ * parsed on read out of `pr_brief.json`, so every field it requires must be present
+ * in every row ever written; the enums are what stop a model's free string from
+ * reaching the card as a level or a freshness the UI has no branch for.
+ */
+describe('Risk Brief contracts', () => {
+  const record = {
+    what: 'Adds a per-workspace rate limit to the brief route.',
+    why: 'The paid path was keyed by IP, which throttled unrelated workspaces.',
+    risk_level: 'medium',
+    risks: [
+      {
+        kind: 'security',
+        title: 'Limit evaded by a distributed caller',
+        explanation: 'Keying on IP lets a caller spread the spend across addresses.',
+        severity: 'high',
+        file_refs: ['server/src/modules/brief/routes.ts'],
+      },
+    ],
+    review_focus: [
+      {
+        ref: 'server/src/modules/brief/routes.ts',
+        kind: 'file',
+        reason: 'The keyGenerator resolves tenancy twice per POST.',
+      },
+      { ref: 'POST /pulls/:id/brief', kind: 'endpoint', reason: 'The only paid route here.' },
+    ],
+    head_sha: 'a'.repeat(40),
+    intent_computed_at: '2026-08-16T09:00:00.000Z',
+    intent_freshness: 'stale',
+    blast_status: 'partial',
+    link_sha: 'b'.repeat(40),
+    index_matches_head: false,
+    inputs: [
+      { id: 'diff_stats', status: 'included', tokens: 320, detail: '12 files, +840/-96' },
+      { id: 'intent', status: 'included', tokens: 210, detail: null },
+      { id: 'specs', status: 'truncated', tokens: 1200, detail: 'specs/SPEC-02-pr-why-risk-brief.md' },
+      { id: 'linked_issue', status: 'missing', tokens: 0, detail: 'no linked issue' },
+    ],
+    dropped_refs: ['../../etc/passwd'],
+    dropped_risks: 2,
+    budget: 8000,
+    input_tokens_counted: 4310,
+    tokenizer: 'cl100k_base',
+    attempts: 2,
+    tokens_in: 4402,
+    provider: 'openai',
+    model: 'gpt-4.1',
+    cost_usd: 0.031,
+    computed_at: '2026-08-16T09:05:00.000Z',
+  };
+
+  it('RiskBrief — the flat schema handed to the model', () => {
+    const brief = RiskBrief.parse({
+      what: record.what,
+      why: record.why,
+      risk_level: record.risk_level,
+      risks: record.risks,
+      review_focus: record.review_focus,
+    });
+    expect(brief.risks).toHaveLength(1);
+    expect(brief.review_focus[1]!.kind).toBe('endpoint');
+  });
+
+  it('RiskBriefRecord round-trips a full row', () => {
+    const parsed = RiskBriefRecord.parse(record);
+    expect(parsed.head_sha).toBe('a'.repeat(40));
+    expect(parsed.attempts).toBe(2);
+    expect(parsed.tokens_in).toBe(4402);
+    expect(parsed.inputs).toHaveLength(4);
+    expect(parsed.index_matches_head).toBe(false);
+  });
+
+  it('cost_usd and link_sha are nullable — an unpriced model and a missing index are rows, not errors', () => {
+    const parsed = RiskBriefRecord.parse({
+      ...record,
+      cost_usd: null,
+      link_sha: null,
+      intent_computed_at: null,
+      intent_freshness: 'unknown',
+    });
+    expect(parsed.cost_usd).toBeNull();
+    expect(parsed.link_sha).toBeNull();
+  });
+
+  it('a fourth risk_level is rejected', () => {
+    expect(() => RiskBriefRecord.parse({ ...record, risk_level: 'critical' })).toThrow();
+    expect(() =>
+      RiskBriefRecord.parse({
+        ...record,
+        risks: [{ ...record.risks[0]!, severity: 'critical' }],
+      }),
+    ).toThrow();
+  });
+
+  it('a fourth intent_freshness is rejected', () => {
+    expect(() => RiskBriefRecord.parse({ ...record, intent_freshness: 'maybe' })).toThrow();
+    // A boolean would spell "unknown" as false, i.e. "not stale" — the one thing
+    // this field exists to avoid claiming.
+    expect(() => RiskBriefRecord.parse({ ...record, intent_freshness: false })).toThrow();
+  });
+
+  it('an input id or status outside its enum is rejected', () => {
+    expect(() =>
+      RiskBriefRecord.parse({
+        ...record,
+        inputs: [{ id: 'patch', status: 'included', tokens: 1, detail: null }],
+      }),
+    ).toThrow();
+    expect(() =>
+      RiskBriefRecord.parse({
+        ...record,
+        inputs: [{ id: 'specs', status: 'partial', tokens: 1, detail: null }],
+      }),
+    ).toThrow();
+    expect(() => RiskBriefRecord.parse({ ...record, tokenizer: 'o200k_base' })).toThrow();
+  });
+
+  it('RiskBriefTimeline with two entries parses', () => {
+    const timeline = RiskBriefTimeline.parse({
+      entries: [
+        {
+          head_sha: 'c'.repeat(40),
+          what: 'First state.',
+          risk_level: 'low',
+          computed_at: '2026-08-15T10:00:00.000Z',
+          on_branch: false,
+          level_changed: false,
+        },
+        {
+          head_sha: 'd'.repeat(40),
+          what: 'Second state.',
+          risk_level: 'high',
+          computed_at: '2026-08-16T10:00:00.000Z',
+          on_branch: true,
+          level_changed: true,
+        },
+      ],
+      commits_without_brief: 3,
+      evicted: 0,
+      max_states: 20,
+    });
+    expect(timeline.entries).toHaveLength(2);
+    expect(timeline.entries[1]!.level_changed).toBe(true);
+    // `evicted` is the count carried on the rows, never inferred from entries.length:
+    // a PR at exactly max_states has evicted nothing.
+    expect(timeline.evicted).toBe(0);
   });
 });
 

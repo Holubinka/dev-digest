@@ -66,6 +66,18 @@ export type {
   IntentEvidenceSource,
 } from "@devdigest/shared";
 
+/** PR Why + Risk Brief (10) — the per-head_sha brief card and its history. */
+export type {
+  RiskBrief,
+  RiskBriefRecord,
+  RiskBriefTimeline,
+  RiskBriefTimelineEntry,
+  RiskBriefInput,
+  ReviewFocusItem,
+  RiskBriefTokenizer,
+  IntentFreshness,
+} from "@devdigest/shared";
+
 /** UI-only view model for a PR list row (derives display fields from PrMeta). */
 export interface PrRowView {
   number: number;
