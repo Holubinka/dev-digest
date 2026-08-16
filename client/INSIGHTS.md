@@ -66,6 +66,25 @@ same node count. The general shape: when a capped list repeats across the things
 capping, a per-item cap spends the budget on duplicates. Count what the render actually costs —
 distinct nodes — and cap that.
 
+### `<React.StrictMode>` in the render is how a "fire once on mount" guard gets a failing test
+
+An effect that starts something expensive when data arrives — `OverviewTab`'s automatic first
+Risk Brief computation, 2026-08-16 — is guarded by a `useRef` holding the
+`` `${prId}:${headSha}` `` it already fired for. Testing that guard with a plain `render()` is
+close to vacuous: nothing in a single mount re-runs the effect, so the assertion
+`expect(mutate).toHaveBeenCalledTimes(1)` passes with the ref deleted.
+
+Wrapping the tree in `<React.StrictMode>` fixes that for one line. React deliberately runs an
+effect's setup, cleanup and setup again on mount in development, which is exactly the failure
+the ref exists for. Measured: deleting the guard turns **three** tests in
+`OverviewTab.test.tsx` red, and the count on the first one goes 1 → 2. Refs survive it, because
+StrictMode re-runs the effects of the *same* component instance — which is also why a
+module-level flag would be the wrong guard.
+
+Pair it with a second test that re-renders under a *different* `headSha` and asserts the count
+goes to 2. Together they say the guard is keyed by state rather than being a once-per-mount
+latch, and that pair is what a plain "called once" assertion cannot distinguish.
+
 ## What Doesn't Work
 
 ### A popover anchored inside a PR-list row gets clipped
@@ -378,6 +397,44 @@ test file is invisible in every diff, so build the hostile inputs with `String.f
 instead (`helpers.test.ts` → "refuses a scheme spelled with a control character inside it").
 Not exploitable when found: `react-markdown` v9's `defaultUrlTransform` blanks all nine already,
 measured 2026-08-14. This layer exists so the refusal does not depend on that default.
+
+### A jump effect keyed only on its target scrolls inside the tree that is about to be replaced
+
+**Symptom.** `DiffTab`'s jump from a Risk Brief review-focus item (`DiffTab.tsx:82`) opened the
+right file and left the reader looking at an unrelated one, silently — nothing errors, the card
+really is expanded, just far off-screen. Found in review 2026-08-16, on the feature's headline
+interaction.
+
+**Cause.** The effect depended on `[targetFile]` alone, but the component swaps its whole child
+tree when a query resolves: `showSmart = smartOrder && smartDiff !== undefined`, so the FIRST
+render after a cold arrival is always the plain `DiffViewer`. `FileCard` carries `data-file-path`
+in *both* trees (`components/diff-viewer/FileCard/FileCard.tsx:144`), so `querySelector` found a
+card, scrolled to it, and the effect never ran again once `SmartDiffViewer` replaced the list.
+Timing is not the variable — the swap is unconditional on a first visit to the tab, and the
+request takes ~8 ms locally, which is a window the effect loses 100% of the time, not sometimes.
+
+**Fix.** Key the effect on the render state as well as the target — `[targetFile, showSmart]`,
+the same reason `FindingsPanel.tsx:68-76` keys on `shown`. Then make it idempotent per
+`(viewer, target)` pair (a `Set` in a ref): `?file=` is never cleared, so a plain
+`[targetFile, showSmart]` re-runs on an order toggle minutes later and drags the reader back to
+the brief's file. Rule of thumb for this codebase: if a component chooses between two subtrees on
+query state, every effect that reaches into the DOM must name that choice in its deps.
+
+### Mocking a query hook as already-resolved stages away every cold-path bug in the component
+
+**Symptom.** `DiffTab.test.tsx` mocked `useSmartDiff` as `() => ({ data: smartDiffData.current })`
+with the holder seeded to a full `SmartDiff` in `beforeEach`. Five cases covered the jump; none
+could see the defect above, because the component never rendered its loading tree while a target
+was set.
+
+**Cause.** A hoisted constant return value gives the component ONE state for the whole test. The
+real hook has at least two, and the interesting bugs live in the transition between them.
+
+**Fix.** Keep the holder mutable and re-render in place to move it: seed `undefined`, render, then
+set the resolved value and `rerender` the same tree (`renderTab` returns a `rerenderTab(patch)`
+helper for exactly this). Also make the loading-state stand-in *faithful* — the plain-viewer mock
+had no `data-file-path`, which would have made the new test pass for the wrong reason. Both new
+cases were confirmed to fail against the unfixed component before being left green.
 
 ## Codebase Patterns
 
@@ -1423,6 +1480,37 @@ for page: /` — which looks like a code fault and is not. Build into another di
 (`distDir` behind an env var, removed afterwards) or stop the dev server. Next also appends
 `"<distDir>/types/**/*.ts"` to `tsconfig.json` `include` on every build, so a temporary `distDir`
 leaves a temporary line in `tsconfig.json` that has to come back out.
+
+### `setQueryData` writes nothing you can read back when the test client has `gcTime: 0`
+
+**Symptom.** `brief.test.tsx` asserted that `useComputeBrief`'s `onSuccess` writes the record
+into `["brief", prId, headSha]`, and `client.getQueryData(...)` came back `undefined` while the
+mutation itself reported `isSuccess`. Hit 2026-08-16.
+
+**Cause.** The test wrapper was copied from `lib/hooks/core.test.tsx`, which builds its
+`QueryClient` with `gcTime: 0` — correct there, because every test in that file mounts the query
+it asserts on. `setQueryData` creates a cache entry with **no observer**, and at `gcTime: 0`
+TanStack collects it immediately. The write happened; the entry was gone before the assertion.
+
+**Fix.** Mount the query alongside the mutation, the way the component does —
+`renderHook(() => ({ read: usePrBrief(id, sha), compute: useComputeBrief(id, sha) }))` — and
+assert on `result.current.read.data`. That is the better assertion anyway: what a
+"the mutation writes where the query reads" test should prove is that the READER now has it,
+not that a cache key momentarily held it. Raising `gcTime` would have hidden the question.
+
+### RTL's default text matcher collapses the exact whitespace a control-character test is about
+
+**Symptom.** `screen.getByText(path)` failed with *"normalized from 'server/…/brief\t/service.ts'"*
+on a case whose whole point was the TAB — and the tempting fix, matching the collapsed
+`brief /service.ts`, would have passed against a card that silently dropped the character.
+
+**Cause.** `getByText` runs both the element's text and the expected string through
+`getDefaultNormalizer`, which collapses runs of whitespace and trims. A control character in the
+middle of a path is whitespace to it.
+
+**Fix.** `screen.getByText(value, { normalizer: (v) => v })`. Build the hostile input with
+`String.fromCodePoint(9)` rather than a literal — the existing rule at `:365` — so the test
+source stays ASCII and the character is visible in a diff.
 
 ## Open Questions
 

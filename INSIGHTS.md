@@ -1512,6 +1512,23 @@ collides, qualify the new one by what distinguishes it rather than renaming the 
 `PrBrief` payload and carries no line numbers. Both copies are then mirrored and re-checked
 with `diff -r server/src/vendor/shared client/src/vendor/shared`.
 
+**Correction, 2026-08-16.** The `export const <Name>` grep above has a blind spot worth 41
+names. `adapters.ts` declares its interfaces as `export interface`, never as a Zod schema, so
+`LLMProvider`, `StructuredResult`, `CompletionResult`, `CodeReference`, `SecretsProvider`,
+`UnifiedDiff` and 35 others are star-exported from the same barrel and answer that grep with
+silence. TS2308 does not care which keyword introduced the name. Grep every declaration form,
+in one pass, before writing the first export of a new contract file:
+
+```sh
+grep -rhoE "^export (const|type|interface|class|function|enum) [A-Za-z0-9_]+" \
+  --include='*.ts' server/src/vendor/shared | awk '{print $3}' | sort -u \
+  | grep -xE 'Name1|Name2|Name3'
+```
+
+A printed name is the collision; empty output is the all-clear. Checked while adding the Risk
+Brief block to `contracts/brief.ts` — that grep is also how you learn the file you are about to
+extend already imports nothing, so a new `import … from './blast.js'` stays acyclic.
+
 ### The push gate fires on a banned command appearing as data, not only as a call
 
 **Symptom.** 2026-08-13, a Bash call that ran no git command at all was refused with *"PR

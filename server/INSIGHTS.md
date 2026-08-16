@@ -574,6 +574,37 @@ the row and the badge disagreeing about one document. BOTH callers must pass the
 just labelled correctly; `test/context.it.test.ts` asserts create and rescan agree. Decided by the
 human on 2026-08-14 after the question below was raised.
 
+### The allowed-refs set is the PROMPT's inventory, not the gatherer's
+
+`modules/brief` grounds every model reference against a set built from the blocks that survived
+the budget walk (`fitToBudget(...).included`), never from the sources that were gathered
+(`helpers.ts` → `buildAllowedRefs`). The two differ exactly where the walk cut something: a blast
+answer the budget dropped would otherwise still license every endpoint label and caller file it
+named, a dropped spec would license its own path, and on a 400-file PR the 360 paths that were
+never printed would be members. Each of those is a reference to a document the model never saw,
+stamped as grounded. `test/brief-allowed-refs.test.ts` is the file that carries the distinction —
+`test/brief-service.test.ts` alone could not, because nothing gets dropped in a small fixture.
+
+### `evicted_count` is a column because the read cannot reconstruct it
+
+`pr_brief.evicted_count` is the running total of states evicted for a PR, stamped on the row the
+write just persisted (`modules/brief/repository.ts`). Deriving "history truncated" from
+`rows.length >= max_states` is the obvious alternative and it lies about the PR sitting at exactly
+the cap, which has evicted nothing. An evicted row cannot carry the fact of its own eviction, so
+the surviving newest row carries it — and the delete, the count and the stamp are one transaction,
+because a crash between them leaves a row claiming a deletion that never happened.
+
+### An eviction walk must exclude the row it just wrote, and `limit(max)` is not how
+
+`upsertBrief` keeps `maxStates - 1` OTHER newest rows plus the one it wrote, rather than the
+newest `maxStates` outright. Both look identical while the new row is the newest — which it
+normally is, since `computed_at` is `new Date()` at write time. They differ when twenty states
+carry timestamps ahead of the clock (an import, a machine whose time moved): selecting the newest
+`maxStates` and adding this row keeps 21, and selecting the newest `maxStates` INCLUDING it
+deletes what the call just persisted and returns `undefined`. Staged in
+`test/brief.it.test.ts` — "never evicts the row it just wrote"; a mutation removing the exclusion
+reds four cases in that file.
+
 ## Tool & Library Notes
 
 ### `break` out of a `for await` destroys the stream, so teardown errors land inside the `try`
@@ -732,6 +763,29 @@ written.
 **Fix.** The constructor now does `this.tree = { ...(opts.tree ?? {}) }` and every method reads
 `this.tree` (`adapters/mocks.ts`). A mock that mutates a shared fixture is a test-ordering bug
 waiting for the first test that writes.
+
+### `drizzle-kit generate` emits a composite-PK migration that cannot run, and asks you for the old key's name
+
+**Symptom.** Switching `pr_brief` from `pr_id` to a `(pr_id, head_sha)` composite key produced
+`0018_blue_ultimates.sql` with `ADD CONSTRAINT ... PRIMARY KEY("pr_id","head_sha")` **before**
+`ADD COLUMN "head_sha"`, plus a commented-out `DROP CONSTRAINT "<constraint_name>"` and a note
+saying "we can't automatically get name for primary key".
+**Cause.** drizzle-kit 0.30 orders constraint statements ahead of column statements and has no way
+to read the implicit name Postgres gave an inline `PRIMARY KEY`.
+**Fix.** Both halves are hand edits, and the tool asks for one of them. The old name is
+`<table>_pkey` — confirm it rather than assume:
+`SELECT constraint_name FROM information_schema.table_constraints WHERE table_name='pr_brief' AND
+constraint_type='PRIMARY KEY'`. Then reorder to drop the old key, add every column, add the
+composite key. This is on top of the two-run rule in `AGENTS.md`: run 1 added the columns and
+switched the key, run 2 (`0019`) dropped `json`.
+
+### A dev server on `tsx watch` picks up an in-progress branch, so a live `curl` may already be your code
+
+`./scripts/dev.sh` runs the API under `tsx watch`. During plan 10 a `pr_brief` row appeared with
+`detail` strings in the exact format of helpers written minutes earlier — the watcher had reloaded
+and the client had computed a brief through the new module. Useful (the real entry point exercises
+itself), but it also means a "pre-existing" row may be yours: check `computed_at` against the
+session, remembering the column is UTC and the shell is not.
 
 ## Recurring Errors & Fixes
 
@@ -957,6 +1011,18 @@ defect. The durable fix is in `waitForPrRuns`: a helper that gives up should thr
 names itself. Until it does, a green serial run and a red parallel one is not two results — it is
 one result and one timeout.
 
+### A `withTimeout` mutation test hangs the whole vitest run instead of failing it
+
+**Symptom.** Removing `withTimeout(...)` from `modules/brief/service.ts` to prove the R43 test can
+fail made `pnpm exec vitest run test/brief-service.test.ts` run past a two-minute tool timeout with
+no output.
+**Cause.** The test's fake provider returns `new Promise(() => {})`. With the outer clock gone
+nothing ever settles, and the file's `testTimeout` is 120 000 ms from `vitest.config.ts` — longer
+than the shell was willing to wait.
+**Fix.** Mutation-test a timeout with `--testTimeout=5000` on the command line. The run then
+reports `Test timed out in 5000ms` against the one case, which is the evidence wanted, in seconds
+instead of minutes.
+
 ## Session Notes
 
 ### 2026-08-03 (conventions extractor)
@@ -1121,6 +1187,32 @@ one result and one timeout.
   excluded.created_here`. A save arrives with `createdHere: false` — it is a save, not a create — and
   a plain assignment would quietly turn a local-only document into one the page claims the
   repository carries. There is no delete to undo it with.
+
+### 2026-08-16 (PR why + risk brief, P2 of plan 10 — server)
+
+- `pr_brief` was reshaped rather than replaced: it had zero readers and zero writers since
+  `0000_init.sql`, so the `NOT NULL` columns needed no backfill anywhere the table exists.
+- Two helpers moved to `_shared/` for the same reason step 2 of the plan moved the budget walk:
+  `no-cross-module` follows `import type`. `selectWithinBudget`/`truncateToBudget` →
+  `_shared/budget.ts` with the failure status as a type parameter, and `parsePlanRefs` /
+  `sanitizeMarkdownRepoPath` → `_shared/plan-refs.ts` with the caps as parameters.
+  `modules/intent/helpers.ts` re-exports both bound to its own numbers, so
+  `test/intent-helpers.test.ts` passes unchanged — which is the proof the move was
+  behaviour-preserving. Copying the plan-ref parser instead would have been a third copy of a
+  traversal gate; sourcing the paths from `IntentRecord.plan_refs` instead would have made
+  `specs: included` unreachable whenever `intent: missing`, a quadrant the contract reports.
+- The brief prompt uses `*` bullets and never `-`. AC-17 ("no hunk, no patch body") is checkable
+  from the outside only as "no line of the assembled input looks like a diff line", and a markdown
+  `- ` bullet makes that assertion impossible to write.
+- Twenty-two mutations were run against the new suites before leaving them green; two did not
+  fail and both were real gaps, now closed: the service suite could not tell `fit.included` from
+  the raw blocks (no block was being dropped in its fixture), and the eviction guard had no case
+  where the new row was not the newest.
+- Proven live against `localhost:3001`: `POST /pulls/:id/brief` computed in 14 s
+  (`input_tokens_counted: 5463` of 8000, `tokens_in: 6364`, `attempts: 1`, one row), five GETs
+  afterwards left `computed_at` and `cost_usd` byte-identical, and an earlier POST returned
+  `502 Operation timed out after 45000ms` — the named 45 s clock of R43 firing against a real
+  provider, not a test double.
 
 ## Open Questions
 
