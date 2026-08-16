@@ -231,6 +231,19 @@ provider, a real database, or a real browser, and that is exactly where the defe
 review live. Paste the real response into your report. If nothing is running and you cannot start
 it, say so plainly rather than letting passing tests imply the feature was seen to work.
 
+**Built a screen? Compare it against the source material before you call it done.**
+`client/AGENTS.md` § *A design is an acceptance criterion* lists what to walk: placement and
+hierarchy, the shape of each value, every label in the design's own words, what each element does,
+and whatever the design shows that the contract cannot express. Answer each *matches / differs /
+absent* and put the differences in your report — building past a design and improving it are the
+same failure, and neither is yours to decide.
+
+If the plan or the dispatch refers to a mockup, a screenshot or a ticket you were **not** given,
+say so in `## Що лишилось людині` and name it. Do not infer a layout from prose about the layout:
+a spec that describes content and behaviour is not a description of a screen, and the difference is
+invisible to every gate you just ran. Green lint, green typecheck and green RTL are all reachable
+by a component that renders the right data in the wrong shape, in the wrong place.
+
 Run the `engineering-insights` skill. `AGENTS.md` requires it before any substantial task is
 called done, and you are the one holding what this session actually learned — a convention that
 contradicted the framework default, a failure that cost real time, a question left open. Append

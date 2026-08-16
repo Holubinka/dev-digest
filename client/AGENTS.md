@@ -31,6 +31,42 @@ file only covers what is specific to this package.
   server's copy of `shared` is the source of truth; mirror any contract change there and
   verify with `diff -rq ../server/src/vendor/shared src/vendor/shared`.
 
+## A design is an acceptance criterion
+
+**When a mockup, a screenshot or a ticket came with the request, the screen is not done until
+somebody has compared the built screen against it.** Gates cannot do this. Lint, typecheck and RTL
+all pass on a component that renders the right data in the wrong shape, in the wrong place, at the
+wrong altitude — they assert against the code, and the design is the one requirement that lives
+outside it.
+
+Compare against **both** sources, because they fail differently. The **mockup** carries what prose
+routinely omits: where a block sits, what is one section versus three, which value is a number and
+which is a word, what an item links to, what a count badge counts. The **written description**
+carries what a picture cannot: behaviour, states, what happens on failure.
+
+Walk it element by element and answer each with *matches / differs / absent*:
+
+- **Placement and hierarchy.** Is it one card, or a banner plus two cards plus a full-width
+  section? A component that renders every field but sits inside the wrong container has not
+  implemented the design.
+- **The shape of each value.** A word where the design shows a gauge is a different feature, not a
+  styling choice — a 0-100 score and a three-value enum answer different questions, and the
+  contract usually has to change for one to become the other.
+- **Every label, in the design's own words.** `Where to look first` and `REVIEW FOCUS — READ THESE
+  FIRST` are not the same string, and the second is what the reader was promised.
+- **What each element does.** Which items are controls, where they navigate, what expands.
+- **What the design shows that the contract cannot express.** `src/config.ts:12` needs a line
+  number; a `ref: string` of paths cannot carry one. That is a finding about the contract, and it
+  belongs in the report before anyone styles anything.
+
+**Differences are reported, not silently resolved either way.** Building past the design and
+"improving" it are the same failure — the design is a requirement someone approved, and a change to
+it is theirs to make.
+
+The dispatch side of this — never describe a mockup to an agent, hand it over — is
+`.claude/agents/README.md` § *Four habits that outrank every agent here*, along with the run where
+skipping it cost a whole feature's shape.
+
 ## i18n
 
 `next-intl`, with messages under `messages/en/*.json`. Keys already exist for screens
