@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ContextDocStatus } from './platform.js';
 
 /**
  * Run trace. The ENTIRE trace of one run is persisted as a SINGLE
@@ -102,12 +103,39 @@ export const RunStats = z.object({
   duration_ms: z.number().int(),
   tokens_in: z.number().int(),
   tokens_out: z.number().int(),
-  /** USD cost of the run; null = unknown (unpriced model / no LLM call). */
-  cost_usd: z.number().nullable(),
+  /**
+   * USD cost of the run; null = unknown (unpriced model / no LLM call).
+   *
+   * `.default(null)` serves the READ path, not the writers. `d45ab0d`
+   * (2026-06-14) removed this key from the contract and from both trace
+   * builders and `5e92756` (2026-07-28) put it back, so any trace persisted in
+   * that six-week window has a `stats` object without the key — and `run_traces`
+   * is parsed on read (`modules/reviews/repository/run.repo.ts`), so without a
+   * default the `ZodError` reaches `app.ts`'s handler and `GET /runs/:id/trace`
+   * answers 422 on exactly the documents the read path exists to serve. This
+   * development database happens to hold no row from that window (285 traces
+   * checked, 2026-08-14), so this is defence for a database that ran DevDigest
+   * then, not a fix for an observed failure. `z.infer` keeps the key required on
+   * the OUTPUT type, so every builder still has to fill it.
+   */
+  cost_usd: z.number().nullable().default(null),
   findings: z.number().int(),
   grounding: z.string(),
 });
 export type RunStats = z.infer<typeof RunStats>;
+
+/**
+ * One document of the run's EFFECTIVE project-context set — including the ones
+ * that never reached the prompt, which is the whole point: a document that was
+ * dropped for budget, missing from the clone or refused by the reader has to be
+ * explainable from the trace alone.
+ */
+export const RunProjectContextDoc = z.object({
+  path: z.string(),
+  tokens: z.number().int(),
+  status: ContextDocStatus,
+});
+export type RunProjectContextDoc = z.infer<typeof RunProjectContextDoc>;
 
 /** The single-document trace stored in `run_traces.trace`. */
 export const RunTrace = z.object({
@@ -125,6 +153,19 @@ export const RunTrace = z.object({
   raw_output: z.string(),
   memory_pulled: z.array(MemoryPulled),
   specs_read: z.array(z.string()),
+  /**
+   * `.default([])` is load-bearing on the READ path: `run_traces` is full of
+   * documents written before this field existed — 282 of the 285 rows on the
+   * development database — and `getRunTrace` parses what it reads, so the
+   * default fires and the drawer that takes `.length` off this field has an
+   * array to take it off.
+   *
+   * Writes are NOT parsed: `saveRunTrace` takes an already-typed `RunTrace`.
+   * What forces a writer to fill the field is the type — `z.infer` keeps it
+   * required on the OUTPUT side of a `.default()` — and that is the intended
+   * forcing function, not an oversight to silence with a cast.
+   */
+  project_context: z.array(RunProjectContextDoc).default([]),
   log: z.array(RunLogLine),
 });
 export type RunTrace = z.infer<typeof RunTrace>;

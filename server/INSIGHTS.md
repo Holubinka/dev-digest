@@ -84,7 +84,7 @@ identical timestamp, so the tie-break is load-bearing.
 
 **Symptom.** `blast`'s `caller_count` never exceeded 20 and `truncated` was never `true` on any
 real PR, while a unit test asserting exactly that behaviour passed.
-**Cause.** `specs/07-blast-radius.md` step 3 caps callers at `MAX_CALLERS_PER_SYMBOL` inside
+**Cause.** `plans/07-blast-radius.md` step 3 caps callers at `MAX_CALLERS_PER_SYMBOL` inside
 `modules/repo-intel/service.ts`, and step 7 then asked `blast/helpers.ts` `toView` to report the
 count *before* the cap. `toView` only ever receives the capped array, so `callers.length` is the
 post-cap size by definition. The plan's own test passed only because it handed `toView` a
@@ -143,6 +143,74 @@ counter-example is `test/reviews-diff-guard.test.ts` → "refuses that hunk even
 file precedes it". Note the fallback itself still exists in `reviewer-core` — the server refuses
 the input, nothing bounds the loop, so any future caller of `buildLineIndex` inherits the same
 liability.
+
+### A state fallback written for the common row reports a lie for the first one
+
+**Symptom.** `scanState()` in `modules/context/service.ts` escaped a stale `scanning_at` claim on
+its first line, then fell back to `scannedAt ? 'scanned' : 'scanning'`. A repo whose FIRST scan
+was stranded has no `scannedAt`, so it reported `scanning` forever — polling forever, with the
+Rescan button disabled on that same state. The rescan case was covered by a test; the first-scan
+case was not, because both tests set `scannedAt`.
+
+**Cause.** The escape hatch and the fallback were written at different times against different
+rows. Whenever a derived state has one branch per *known outcome* plus a catch-all, the catch-all
+is where the row nobody pictured ends up.
+
+**Fix.** State it as a rule and apply it in both places: a claim older than `SCAN_CLAIM_STALE_MS`
+contributes nothing, so the fallback is `scannedAt ? 'scanned' : 'failed'` — an abandoned scan is
+a failed scan, not a running one. And because `JobRunner` (`platform/jobs.ts`) is an in-memory
+`PQueue` that recovers nothing on boot — an API restart under `tsx watch` produces this row
+routinely — the read that finds a stale claim re-claims and re-enqueues. Re-claiming first is what
+keeps that to one job per stale window rather than one per page load. Tests:
+`test/context-service.test.ts` → "a FIRST scan whose claim went stale …" and "a LIVE claim is not
+re-enqueued".
+
+### A read cap on text that is handed to an editor is a silent delete, not a cap
+
+**Symptom.** `docContent` (`modules/context/service.ts`) returned
+`truncateCodePoints(text, MAX_DOC_CHARS)` and carried no flag saying it had cut anything.
+`DocPanel.startEdit` seeded its draft from exactly that string and `PUT
+/repos/:id/context/docs/content` wrote the draft as the WHOLE file. Measured against the running
+app 2026-08-14: `docs/superpowers/plans/2026-08-01-pr-self-review.md` is 74 636 code points on
+disk, was served as 40 000, and one Edit → Save deleted 34 636 of them. Reproduced hermetically —
+disk 40 046 → 39 998, tail gone — before the fix landed.
+
+**Cause.** One constant was doing two unrelated jobs. `MAX_DOC_CHARS` bounds what a *prompt* may
+carry, which is a cost and a budget decision; the reading pane borrowed it because it was there.
+A truncation is only safe on a path whose output nobody writes back.
+
+**Fix.** Split the caps by what they protect. The scan and `readCandidate` still truncate at
+`MAX_DOC_CHARS`; the reader does not truncate at all and reads `MAX_DOC_READ_BYTES`
+(`MAX_DOC_FILE_BYTES + 1`) so that a body which came back over `MAX_DOC_FILE_BYTES` is provably a
+prefix and answers `doc_refused` instead. `docContent` is now whole-or-nothing, which is what
+makes the write cap sufficient on its own: a prefix is ≥ 102 400 code points and `persistWrite`
+refuses anything over 40 000, so a partial body cannot be written back by any route. Tests:
+`test/context-service.test.ts` → "serves a document past the editor cap WHOLE …" and
+`test/context-write.test.ts` → "read → edit → save never deletes a tail …".
+
+**Read it as a rule:** before capping a read, ask whether anything writes that string back. If it
+does, the cap has to be a refusal or the write path has to reject what came out of it.
+
+### A path gate that tests `segments[0]` is narrower than the sentence above it
+
+The `.git` refusal existed in **three** places — `modules/_shared/repo-paths.ts`,
+`adapters/git/simple-git.ts` `readFile`, and the same file's `writeTarget` — and all three tested
+only the FIRST segment (`startsWith('.git/')`, `segments[0] === '.git'`). All three carried a
+comment saying the git directory is refused because `config` holds the PAT and `hooks/pre-commit`
+is code git executes. Neither claim was true of `docs/vendor/.git/`, and a clone can hold a nested
+repository — a vendored dependency, a fixture, a stray `git init` — whose `.git` is exactly as real
+as the root's. No symlink and no `..` were needed to reach it. Found by a DevDigest review of
+PR #20 on 2026-08-16; fixed by testing every segment, case-folded (`.GIT` resolves to the same
+directory on macOS). Tests: `test/git-read-containment.test.ts` → *"refuses a NESTED repository's
+.git …"*, `test/git-write-containment.test.ts` → *"refuses a path into a NESTED repository's
+.git"*, `test/context-helpers.test.ts` → *"refuses a nested repository's git directory, at any
+depth"*.
+
+**The part worth carrying:** `repo-paths.ts` was created days earlier *because* this gate was
+duplicated and the copies had drifted — its own header says so. Consolidating the two module
+copies left the two adapter copies untouched, and those were wrong in the same way. When you
+extract a duplicated rule, grep for the rule's *shape* (`'.git'`, `segments[0]`), not for the
+function you are replacing; the copies that matter are the ones that never called it.
 
 ## Codebase Patterns
 
@@ -399,6 +467,113 @@ the contract, next to the older `caller_count` / `truncated` pair. If you ever s
 `totals(...)` back to reading the symbols, the tests that fail are in
 `test/blast-helpers.test.ts` — and the number that silently changes is on the PR page.
 
+### A jsonb column is untyped input: parse it on read, or `.default()` never fires
+
+**Symptom.** `RunTrace.project_context` was added with `.default([])` and a comment saying the
+default was load-bearing because "`RunTrace` is parsed on READ as well as on write". It was
+not: `getRunTrace` (`modules/reviews/repository/run.repo.ts`) did `row.trace as RunTrace`. The
+field is required on the OUTPUT type, so `TraceBody.tsx` read `trace.project_context.length`
+off documents that have no such key — 282 of the 285 rows on the development database
+(`select count(*) filter (where not (trace ? 'project_context')) from run_traces`). Nothing
+between the two caught it: `GET /runs/:id/trace` declares no response schema and
+`client/src/lib/api.ts` does not validate by design.
+
+**Cause.** A cast is a promise about data the type system never saw. Every jsonb document
+older than the field it is missing makes that promise false, and a default that nothing runs
+is documentation, not behaviour.
+
+**Fix.** `RunTrace.parse(row.trace)` in the repository, which is the edge for this value.
+Verified before shipping by dumping all 285 rows and running `safeParse` over them (ok=285,
+failed=0), then by serving all 285 through the live endpoint. A strict parse is only safe
+because that check was run — and it immediately caught `test/reviews-nul-persist.it.test.ts`
+storing `log[].t` as a number behind an `as unknown as RunTrace` cast.
+
+### "In flight" needs its own column when the outcome columns must survive a failure
+
+**Symptom.** `markScanning` was `insert … onConflictDoNothing`, so a rescan of an
+already-scanned repo wrote nothing and `scanState()` kept answering `'scanned'`. The page's
+`refetchInterval` (gated on `state === "scanning"`) never polled and the Rescan button never
+disabled. `POST /repos/:id/context/rescan` returned `{"status":"scanning"}` while the very next
+`GET .../context/docs` said `scanned`.
+
+**Cause.** `'scanning'` was inferred from the ABSENCE of a result (`scanned_at IS NULL`), which
+can only ever describe a first scan. The obvious repair — clear `scanned_at` on a rescan —
+breaks the requirement that a failed rescan leave the previous count, time and documents
+intact (`test/context.it.test.ts`, "a failed rescan leaves the previous result intact").
+
+**Fix.** `repo_doc_scans.scanning_at` (migration `0016`), set by `markScanning` and cleared by
+both `replaceDocs` and `recordScanFailure`. `scanState()` reads it first. It is also bounded by
+`SCAN_CLAIM_STALE_MS`: only a process killed mid-scan can leave a claim behind, and believing
+one forever polls forever AND disables the only button that would clear it.
+
+### A path compared as a string must be canonicalised before it enters, not at each comparison
+
+**Symptom.** A scan root stored as `docs/` or `./docs` produced a *successful* scan with zero
+documents and no error anywhere. `resolveContextSettings` only trimmed whitespace.
+
+**Cause.** Two consumers normalise differently. `GitClient.listFiles` resolves the root through
+`path.join`, which normalises, so the walk finds `docs/a.md`; `rootFor()` in `scan-executor.ts`
+then matches that path against the RAW configured string (`path === root ||
+path.startsWith(root + '/')`), which `docs/` never satisfies, and the loop `continue`s every
+file. `PUT /settings` accepts `context_scan_roots: z.array(z.string())` verbatim, so the
+client-side scrub is not a defence.
+
+**Fix.** `normalizeRoot()` in `modules/context/helpers.ts`, applied once in
+`resolveContextSettings` and nowhere else — `./docs`, `docs/`, `docs//`, `.\docs` and `/docs`
+all become `docs`; `.` and `` are dropped (both walk the whole repository and can label
+nothing); a `..` segment is refused. De-duplicate AFTER normalising, or `docs` and `docs/`
+survive as two roots over one directory.
+
+### A write into the clone must refuse a symlink, where a read may follow one
+
+`GitClient.readFile` resolves both sides with `realpath` and allows a symlink whose TARGET stays
+inside the clone (`adapters/git/simple-git.ts`). `writeFile` and `makeDir` do the opposite: they
+`lstat` every existing component and refuse `CloneWriteError('symlink')` if any of them is a link.
+The asymmetry is the point, and it is not caution. A symlink is a pointer the *repository*
+committed, so following one on a write hands the repository the choice of which file DevDigest
+creates — `.devdigest/x.md` -> `../.git/config` replaces the remote URL that carries the stored
+PAT, and `.devdigest/x.md` -> a path outside the tree does not even need containment to be
+interesting. Verified live on 2026-08-14 against the running API and a real clone: both attacks
+answered `400 invalid_path` and `.git/config` was byte-identical afterwards. Cases:
+`test/git-write-containment.test.ts`.
+
+### `.devdigest` is appended to the scan roots AFTER the defaults branch, never before
+
+`resolveContextSettings` (`modules/context/settings.ts`) falls back to `DEFAULT_SCAN_ROOTS` on
+`roots.length > 0`. Appending `DEVDIGEST_ROOT` anywhere before that branch makes the list non-empty
+for EVERY workspace and silently deletes `specs`, `docs` and `insights` — a page that quietly stops
+showing them, with no error anywhere. It is appended by `withDevdigest()` at the end, after
+`normalizeRoot`, so a workspace that typed `.devdigest/` by hand gets one root and one group.
+Test: `test/context-helpers.test.ts` -> "appends it AFTER the defaults fire".
+
+### A size bound belongs where the code it produces is the code the caller renders
+
+`CreateContextDocBody.content` deliberately carries no `.max()`. This app answers every route-schema
+failure `422 validation_error` (the same reason `SetContextDocsBody.max(50)` is a 422), while the
+size of a document is `400 too_large` — a distinct code the client renders as "this document is too
+big" rather than "your request was malformed". So the bound lives in `ContextService.persistWrite`,
+which checks code points AND bytes before the port call; an abusive body is stopped earlier by
+Fastify's 1 MB `bodyLimit` in `app.ts`. Adding the `.max()` to the contract "for safety" changed the
+status code and was reverted on 2026-08-14.
+
+### `.devdigest` labels a document from the folder BELOW the root, not from the root
+
+`kindForRoot(root, path)` (`modules/context/helpers.ts`) decides on the root's first segment for
+every root except `.devdigest`, where it uses the first segment of the path below the root and only
+when a further segment follows it:
+
+    .devdigest/specs/public-api.md -> specs      .devdigest/adr/0001.md -> other
+    .devdigest/docs/x.md           -> docs       .devdigest/x.md        -> other
+    .devdigest/insights/x.md       -> insights   .devdigest/specs.md    -> other
+
+`.devdigest` is a container, not a family — it exists because DevDigest needs somewhere untracked to
+write (`AC-61`), and nobody chose it as a category. Deriving from the first segment labelled every
+authored document `other` while the list row beside the badge read `specs/public-api.md`, which is
+the row and the badge disagreeing about one document. BOTH callers must pass the path —
+`scan-executor.ts` and `ContextService.persistWrite` — or a rescan relabels a document the write had
+just labelled correctly; `test/context.it.test.ts` asserts create and rescan agree. Decided by the
+human on 2026-08-14 after the question below was raised.
+
 ## Tool & Library Notes
 
 ### `break` out of a `for await` destroys the stream, so teardown errors land inside the `try`
@@ -544,6 +719,19 @@ fixture caller file therefore needs three rows: `references` for the call site, 
 join eats it, and `symbols` or `enclosingFromRows` labels the caller with the file's basename
 instead of its enclosing function. `seedIndexedRepo` in `test/blast.it.test.ts` is the worked
 example.
+
+### `MockGitClient` copies `opts.tree`, because `writeFile` mutates it
+
+**Symptom.** `test/context.it.test.ts` builds a second app to simulate a resync putting a branch's
+text back on disk. The assertion that the document is now `stale` failed: the "reset" clone already
+held the edit.
+**Cause.** Both apps were constructed from the same module-level `TREE` constant, and
+`MockGitClient.writeFile` wrote into the object it was handed. Two clients over one fixture were one
+clone with two names — and every later case in the file silently depended on which earlier one had
+written.
+**Fix.** The constructor now does `this.tree = { ...(opts.tree ?? {}) }` and every method reads
+`this.tree` (`adapters/mocks.ts`). A mock that mutates a shared fixture is a test-ordering bug
+waiting for the first test that writes.
 
 ## Recurring Errors & Fixes
 
@@ -723,6 +911,52 @@ run status can outrun the trace insert when everything is competing for the same
 suite. Stashing the branch (`git stash -u`) and running the file on a clean tree separates "my
 change broke it" from "the suite is loaded" in one command — that is what settled this one.
 
+### Parsing a stored jsonb document on read makes every removed contract field a 422
+
+**Symptom.** `getRunTrace` was changed from a cast to `RunTrace.parse(row.trace)` (2026-08-13) so
+`project_context`'s `.default([])` would fire for the 282 of 285 rows written before that field
+existed. That is right, and it silently took on a second obligation: `RunStats.cost_usd` is a
+required key that `d45ab0d` (2026-06-14) deleted from the contract and `5e92756` (2026-07-28)
+restored, so any trace persisted between them fails the parse. Reproduced with a fixture in
+`test/reviews-context.it.test.ts`: `GET /runs/:id/trace` answered **422**, not 500 — `app.ts:149`
+maps any `ZodError` to 422, so a malformed *stored* document is reported as if the *caller* sent
+something invalid.
+
+**Cause.** `run_traces.trace` is written by every version of this code that ever ran. Parse-on-read
+holds the current contract against documents written under all of the previous ones, and a field
+the contract lost and regained is invisible in `git log -p` on the current file.
+
+**Fix.** Every field this contract has gained, or lost and regained, carries a `.default(...)` —
+`cost_usd` is `z.number().nullable().default(null)`. `z.infer` keeps the key required on the OUTPUT
+type, so writers are unaffected. Before adding a required key to any schema that is parsed on read,
+run `git log -S'<field>' -- <contract>` and check for a removal, then probe the column:
+`docker exec devdigest-postgres psql -U devdigest -d devdigest -tAc "select count(*) from
+run_traces where not (trace->'stats' ? 'cost_usd')"` (the role is `devdigest`, not `postgres`).
+
+### The misleading 404 came back on 2026-08-14, with a different cause and the same amplifier
+
+**Symptom.** `pnpm exec vitest run .it.test` failed non-deterministically — two files one run, four
+the next, a different set each time — always `expect(res.statusCode).toBe(200)` receiving `404`
+from `GET /runs/:id/trace`. `reviews-skills.it.test.ts` passed on its own (4/4). The whole split
+passed with `--fileParallelism=false`: 18 files, 137 tests.
+
+**Cause.** Not the 2026-08-05 cause above. Every file that failed —
+`reviews-skills.it.test.ts`, `reviews-context.it.test.ts`, `reviews.it.test.ts` — already passes
+`MockSecretsProvider`, so no paid request was involved; verify that before reaching for it, with
+`grep -L MockSecretsProvider server/test/reviews*.it.test.ts` (only
+`reviews-nul-persist.it.test.ts` lacks it, and it never failed). The 08 Project Context branch
+added two integration files, so 18 of them now each start their own testcontainers Postgres in
+parallel. Under that load a review does not finish inside `waitForPrRuns`' 10s budget, and
+`test/helpers/runs.ts:19` **returns the rows anyway instead of throwing** — so the test asks for a
+trace that was never written and reports a 404 three lines later. The same swallowed timeout the
+entry above warned about, now reached by load rather than by latency.
+
+**Fix.** Run the split serially — `pnpm exec vitest run .it.test --fileParallelism=false`, ~60s —
+and read a 404 from a trace fetch as "the run did not finish", never as a routing or persistence
+defect. The durable fix is in `waitForPrRuns`: a helper that gives up should throw, so the failure
+names itself. Until it does, a green serial run and a red parallel one is not two results — it is
+one result and one timeout.
+
 ## Session Notes
 
 ### 2026-08-03 (conventions extractor)
@@ -807,7 +1041,7 @@ change broke it" from "the suite is loaded" in one command — that is what sett
 
 ### 2026-08-09 (blast radius — the server slice)
 
-- Steps 5-10 of `specs/07-blast-radius.md`: the `blast/` slice, its structural container port and
+- Steps 5-10 of `plans/07-blast-radius.md`: the `blast/` slice, its structural container port and
   the two routes. `pnpm arch` clean with the baseline unchanged at 19, typecheck clean, 520 unit
   and 98 integration tests green.
 - **The assertion that matters is not in the unit file.** `test/blast-service.test.ts` fakes
@@ -844,7 +1078,59 @@ change broke it" from "the suite is loaded" in one command — that is what sett
   `GET /pulls/:id/blast` on PR 5 (`Holubinka/dev-digest`) serves 15 symbols carrying the new
   `endpoint_count` / `endpoints_truncated` fields.
 
+### 2026-08-14 (project context — fix round 1)
+
+- Four of the five findings were about a **claim in a comment that the code did not honour**:
+  "`RunTrace` is parsed on READ" (it was cast), "deny by default" (only the read path had it),
+  "claim the scan row" (an `onConflictDoNothing` that wrote nothing on the row it was aimed at).
+  A comment asserting a mechanism is worth grepping for the mechanism.
+- **The database was cheaper evidence than the API.** The trace sweep over
+  `GET /runs/:id/trace` tripped the 120 req/min rate limit and silently skipped the traces it
+  could not fetch — the counts looked complete and were not. `docker exec devdigest-postgres
+  psql -U devdigest -d devdigest -At -c "…"` answered the same question exactly, in one query
+  (285 rows, 282 without `project_context`, 0 without `specs_read`).
+- The brief said `specs_read` was missing from the same old documents. It is not: **0 of 285**
+  lack it. Adding a `.default([])` for it would have been an unrequested contract change made on
+  an unverified premise.
+- Making the run path require a scanned row changed what four existing integration tests were
+  actually testing: they attached documents to a repository nobody had scanned. They now call
+  `scanRepo(app, repo.id)` first, which is what a user does by opening the page.
+- "While the scan is in flight" cannot be asserted by reading straight after `POST /rescan` —
+  the job can finish first. `test/context.it.test.ts` builds a second app over the same database
+  whose `git.listFiles` awaits a promise the test resolves, so the in-flight state is chosen
+  rather than raced for.
+
+### 2026-08-14 (project-context authoring, P1 of plan 09)
+
+- The server write path for Project Context: `GitClient.writeFile` / `makeDir`, four routes, the
+  `repo_doc_edits` durability record, and `.devdigest` as an unconditional scan root.
+- **Durability here is the file, not a row.** An untracked file under `.devdigest/` survives
+  `refresh()` (`clone()` only fetches when `.git` exists) and `resyncRepo()` (`reset --hard` does not
+  touch untracked files). `repo_doc_edits` stores no text — only `created_here` and a sha256 — and
+  would not bring a document back. A full re-clone destroys it, and that is an accepted loss.
+- **`sync()`'s comment "safe here because we never commit to or run code from the clone" stopped
+  being true with this change and was corrected in the same commit** (`adapters/git/simple-git.ts`).
+  `reset --hard` is safe for the untracked documents this feature writes and DESTROYS an edit to a
+  tracked one, silently — which is the erasure `AC-70` warns about before a save and `AC-71` reports
+  after one. A comment asserting a mechanism is worth grepping for the mechanism.
+- **Proving a new test fails first paid for itself twice.** Mutating `writeTarget`'s symlink check to
+  `if (false)` turned 3 of 14 containment cases red AND planted a file at the link's destination;
+  mutating `writeZone`, the upload NUL check and `baseName` turned 5 of 23 service cases red. Two
+  extra turns for evidence that 37 new assertions are not vacuous.
+- `created_here` is written with `ON CONFLICT ... SET created_here = repo_doc_edits.created_here OR
+  excluded.created_here`. A save arrives with `createdHere: false` — it is a save, not a create — and
+  a plain assignment would quietly turn a local-only document into one the page claims the
+  repository carries. There is no delete to undo it with.
+
 ## Open Questions
+
+- **A scan claim outliving its process is bounded by time, not by liveness.**
+  `SCAN_CLAIM_STALE_MS` (10 min) is the only thing that releases `repo_doc_scans.scanning_at`
+  when a process is killed mid-scan, because nothing else knows the job is gone. A jobs-table
+  lookup would be exact, but `modules/context` may not import `modules/jobs`
+  (`no-cross-module`) and the `jobs` port it does have exposes only `enqueue`/`register`. Added
+  2026-08-14 with the rescan fix; worth revisiting if the ports grow a "is this job still
+  alive" question for another reason.
 
 - The classifier's PR body and linked-issue text reach `renderClassifierInput` uncapped. Plan 05
   specifies caps only for plan/spec files (3 × 6000 code points), and `assemblePrompt` caps
@@ -893,7 +1179,7 @@ change broke it" from "the suite is loaded" in one command — that is what sett
   `completeStructured`; `repo.getIntent` is called only by `get()`. So every review run pays the
   classifier again even when a fresh `pr_intent` row is sitting there, and a three-agent
   re-review of an unchanged PR buys three identical derivations of the same text. That
-  contradicts `specs/05-intent-layer.md` Step 12, which justifies storing the cost on `pr_intent`
+  contradicts `plans/05-intent-layer.md` Step 12, which justifies storing the cost on `pr_intent`
   rather than on `agent_runs` with *"one derivation serves every agent and every re-review until
   someone hits Recompute"* — the sentence is true of the storage and false of the code.
   Deliberately **not** fixed on 2026-08-05 while fixing the classifier's 502: `derive` is the
@@ -910,7 +1196,7 @@ change broke it" from "the suite is loaded" in one command — that is what sett
   ignores the flag, while `getBlastRadius` checks the flag *before* `tryPersistentBlast` and falls
   through to the clone-reading, `codeIndex.symbols` path (`modules/repo-intel/service.ts:238-306`).
   So a repo indexed earlier and then run with the flag off passes the gate and does whole-repo
-  scanning on the request path — the thing acceptance criterion 4 of `specs/07-blast-radius.md`
+  scanning on the request path — the thing acceptance criterion 4 of `plans/07-blast-radius.md`
   forbids. Not fixed on 2026-08-09 because both fixes are wider than the step that found it:
   putting `config` on `BlastContainer` (step 5 deliberately keeps it to three methods), or having
   `getIndexState` report `degraded` when the flag is off, which changes a facade every module
@@ -931,3 +1217,19 @@ change broke it" from "the suite is loaded" in one command — that is what sett
   green, and stayed green. Vitest 2.1.9, no `--no-cache`. Not reproduced deliberately, so it may
   equally have been something else — but if a test fails against code you are certain you wrote,
   re-run once before debugging it. Raised 2026-08-09.
+
+- **A document written under `.devdigest/` gets `kind: "other"`.** `kindForRoot` decides on the
+  first segment, and `.devdigest` is none of `specs` / `docs` / `insights`, so every authored
+  document carries the fourth badge whatever folder it is put in. `AC-61` makes `.devdigest` the
+  root and `AC-52` makes the row show the sub-path (`specs/public-api.md`), so a reader sees the
+  word "specs" on the row and the badge "other" beside it. No criterion asks for anything else and
+  nothing was invented; flagged 2026-08-14 as a question for the design pass, not a defect.
+  - **Answered 2026-08-14, same day, by the human: it is not `other`.** The kind now comes from
+    the folder under `.devdigest/`, so that document reports `specs`. The original bullet above is
+    left standing because it records why the question was worth asking. See "`.devdigest` labels a
+    document from the folder BELOW the root" under Codebase Patterns for the rule as built.
+- **The rate limit is per route with the default keying, not per workspace.** The NFR says "per
+  workspace"; `@fastify/rate-limit` is registered globally in `app.ts` with its default keying and
+  is disabled entirely under `NODE_ENV=test`, so `{ max: 30, timeWindow: '1 minute' }` on each write
+  route is the same population for a local-first single-workspace install and is untestable by the
+  integration suite. A workspace-keyed limiter was explicitly out of scope for plan 09.

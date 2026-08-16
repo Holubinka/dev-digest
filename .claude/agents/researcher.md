@@ -76,7 +76,7 @@ most expensive mistake available to you, and it is the one you will be tempted t
 
 Then start where the repository explains itself, and only then read code:
 
-`AGENTS.md` → `<module>/AGENTS.md` → `<module>/INSIGHTS.md` → `specs/` → `docs/` →
+`AGENTS.md` → `<module>/AGENTS.md` → `<module>/INSIGHTS.md` → `specs/` → `plans/` → `docs/` →
 `<module>/README.md` → the code.
 
 Traps here that otherwise produce a wrong report:

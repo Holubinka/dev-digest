@@ -294,6 +294,91 @@ asserts the chart parses proves *nothing about the escaping* — it would pass w
 deleted. The assertion that has teeth is the control: build the naive chart by hand and assert
 `parse` returns **false**. Both live in `toMermaid.test.ts`.
 
+### Disabling a retry button on the state it recovers from removes it exactly when it is needed
+
+**Symptom.** `ProjectContextView` had `disabled={rescan.isPending || page.data?.state ===
+"scanning"}`. The server documents Rescan as the user's retry for a scan claim no process is behind
+any more (`modules/context/service.ts`), and that row reports `scanning` — so the retry was absent
+in the one state that needs it, and the page had no route out at all.
+
+**Cause.** `scanning` reads as "a job is running, do not queue a second one". It is also what a
+claim left by a killed process reports, and the client cannot tell those apart from the state
+alone.
+
+**Fix.** A retry is disabled by ITS OWN in-flight mutation and nothing else — `disabled={rescan
+.isPending}`. Guarding against a double-enqueue is the server's job (it re-claims the row), not a
+reason to take the control away. Test: `ProjectContextView.test.tsx` → "keeps Rescan reachable
+while a scan is in flight", which clicks it in the `scanning` state and asserts the mutation fires.
+
+### A contract field can be typed on both sides for a whole increment and rendered nowhere
+
+**Symptom.** `SpecFile.kind` shipped with plan 08: a four-value enum on the server contract, a
+`KIND_COLOR` map on the client, a badge on the Project Context page — and **no** row of the
+attach lists ever rendered one, though `AC-10` had required it since the first increment.
+`grep -rn "kind" client/src/components/context-docs/` returned nothing on 2026-08-14. Nothing was
+red: the field is present, typed and used *somewhere*, so `tsc`, ESLint and 592 tests were green.
+
+**Cause.** Same family as the two optional-prop entries above, one step further along. There the
+prop was never passed; here the value arrives at the component and simply is not read. A test
+that asserts the badge renders **on the page** proves the map works and says nothing about the
+two other surfaces the criterion names, and a component test that supplies its own fixture proves
+only that the component *can* render what it is handed.
+
+**Fix.** When a criterion says "every row", write the assertion per surface and scope it to the
+row: `within(screen.getByTitle(path).closest("div")!).getByText("specs")`. And prove the
+assertion can fail — deleting `ContextDocList.tsx:112` failed exactly one test, which is how you
+learn the other five were about something else. The cheap sweep for the rest of this class:
+compare the fields of a contract type against `grep` in the folders that render it, rather than
+trusting that a compiled field is a displayed one.
+
+### A row control that must not toggle or drag its row cannot be `IconBtn`
+
+The preview control sits on rows that are `draggable` and carry a `Checkbox` whose `<button
+role="checkbox">` lives inside a `<label>`. The vendored `IconBtn` declares `onClick?: () =>
+void` (`vendor/ui/primitives/IconBtn.tsx:16`) — no event argument — so a handler mounted through
+it cannot call `stopPropagation`, and it sets no `type`, so it submits any form it is dropped
+into. `context-docs/PreviewButton.tsx` is therefore a plain `<button type="button">` that stops
+`onMouseDown` and `onClick` and preventDefaults `onDragStart`, with `draggable={false}` so the
+row's own drag never starts from it. Reuse that shape for the next in-row control; reach for
+`IconBtn` only where the surrounding element has no handlers of its own.
+
+Its modal is rendered **after** the row map, not inside the row, for the same reason: a `Modal`
+mounted under a `draggable` element is a DOM descendant of it, and every click inside the dialog
+would bubble through the row's handlers.
+
+### `within(row).getByText(...)` cannot pin WHERE in the row something sits
+
+**Symptom.** `ContextDocList.test.tsx` asserted the kind badge with
+`within(row(path)).getByText("specs")`. The badge was then moved from beside the filename into the
+right-hand group before the preview control (2026-08-14) and the assertion stayed green through
+the move — it had never been about position at all.
+
+**Cause.** `row()` is `screen.getByTitle(path).closest("div")`, so the scope is the whole row.
+Every child of every nested group is inside it. RTL queries answer "is it there", and the design
+question was "is it there, *in that place*".
+
+**Fix.** Assert the relationship, not the presence: `expect(badge.nextElementSibling).toBe(
+preview)` plus `expect(badge.parentElement).toBe(preview.parentElement)`. Both fail when the badge
+moves back beside the path — verified by moving it back. Keep the plain presence assertion too;
+they answer different questions.
+
+### `.trim()` does not make a URL scheme test safe — a control character survives it
+
+**Symptom.** `isSafeUrl` (`components/context-doc-view/helpers.ts`) returned `true` for
+`"java\tscript:alert(1)"`. The scheme pattern `/^[a-zA-Z][a-zA-Z0-9+.-]*:/` does not match a `\t`,
+so the string fell through the "relative URL, nothing to check" branch. Nine control characters
+were admitted: U+0000, U+0001, U+0009, U+000A, U+000B, U+000C, U+000D, U+001F, U+007F.
+
+**Cause.** `.trim()` only reaches the ends of a string, and a browser strips TAB, LF and CR from
+*anywhere* in a URL before resolving it. The gate was testing a string the browser would never see.
+
+**Fix.** `url.replace(/\p{Cc}/gu, "").trim()` before the scheme test, then refuse an empty result.
+`\p{Cc}` covers C0, C1 and DEL and keeps the source ASCII-only — a literal control character in a
+test file is invisible in every diff, so build the hostile inputs with `String.fromCodePoint`
+instead (`helpers.test.ts` → "refuses a scheme spelled with a control character inside it").
+Not exploitable when found: `react-markdown` v9's `defaultUrlTransform` blanks all nine already,
+measured 2026-08-14. This layer exists so the refusal does not depend on that default.
+
 ## Codebase Patterns
 
 ### Run-level data reaches the PR-detail subtree by joining in `FindingsTab`, not by widening `ReviewRecord`
@@ -551,6 +636,60 @@ the card. A chip on a diff LINE does not, because the file body is a sibling of 
 rather than a descendant — a `stopPropagation` there stops nothing, and the test asserting it
 could never fail.
 
+### A field whose value is a prefix of a neighbour's breaks `getByText` before it breaks the UI
+
+`ProjectContextView`'s `DocRow` shows the scan root beside the path, and the kind badge is the
+root's FIRST segment — so a document under `docs` renders "docs" twice and
+`screen.getByText("docs")` throws *found multiple elements* in a test that used to pass. The
+fixture now uses nested roots (`docs/adr`, `specs/api`) because that is the case the element
+exists for: with `docs` and `docs/adr` both configured, the path prefix does not say which of
+the two claimed the document and the badge cannot — it reads `docs` either way. The root also
+carries a `title` (`"Found under the {root} root"`), which gives the test a query that stays
+unique whatever the text is.
+
+**Correction, 2026-08-14.** The row no longer prints the root at all: the list is grouped, the
+root is printed once in the group header (which keeps the `rootTitle` `title`) and the row shows
+`doc.path` relative to it. Two queries survive the change and are the ones to reach for —
+`getAllByTitle(/^Found under the/)` counts GROUPS, and `getByTitle(<full path>)` finds a ROW,
+whose visible text is now only the label.
+
+### One scan root can hold documents of several kinds, and only `.devdigest` does
+
+A document's `kind` is the first segment of its path — except under `.devdigest`, where the root
+is a container and the segment BELOW it decides (`server/src/modules/context/helpers.ts`,
+`kindForRoot`). Measured against the running API on 2026-08-14: `POST /repos/:id/context/docs`
+with `.devdigest/specs/p3-smoke.md` answers `root: ".devdigest", kind: "specs"`, while
+`.devdigest/notes.md` is `other`.
+
+So any UI that groups by `doc.root` cannot hang one kind badge on the group and be right —
+`.devdigest` is the group every repository now has, because it is a scan root of all of them.
+`ProjectContextView/helpers.ts` returns `kind: null` for a group whose rows disagree, and
+`DocList` then puts the badge on the rows instead. Do not "simplify" that to `rows[0].doc.kind`.
+
+### A pane can only own its scroll once the PAGE stops growing, and that is one CSS rule
+
+`AppFrame` gives `main` `flex: 1; min-height: 0; overflow: auto` inside a frame that is
+`height: 100%` on an `html, body { height: 100% }` document — so the app already scrolls
+inside `main`, not on the body. A screen that wants the Skills/Agents shape (a bounded column
+with its own scroll, a head and a foot that do not move) therefore needs nothing but a
+definite height on its own page root: `height: calc(100vh - 52px)`, 52px being the Topbar.
+`SkillsView` spends it inline because it renders no `.dd-page`; a screen that does render one
+must put it in `globals.css` — `.dd-context-page`, 2026-08-14 — because the 680px breakpoint
+returns it to `height: auto` so the stacked panes scroll with the page again, and an inline
+height would beat that rule. From there `flex: 1; min-height: 0` on the pane row and on the
+scroll child is the whole mechanism.
+
+### `--bg-elevated` is not a surface step in the light theme
+
+`--bg-elevated` is `#1c1c1c` on `--bg-surface`'s `#141414` in the dark theme, but `#ffffff`
+on `#fafafa` in the light one (`vendor/ui/styles.css:11-16,50-55`). A band, header or
+selected row that leans on it for separation is visible in dark and effectively invisible in
+light — which is how the Project Context group headers were first drawn on 2026-08-14.
+`--bg-hover` (`#242424` / `#f2f2f2`) steps away from the surface in both directions, and a
+selection is better carried by `--accent-bg` + `--accent`, which is a hue change rather than
+a 2% luminance one. Judge any surface decision against both blocks of that file, not against
+the running theme.
+
 ## Tool & Library Notes
 
 ### `@testing-library/user-event` is not installed here — every test uses `fireEvent`
@@ -676,6 +815,26 @@ The live PR #12 chart then renders to a ~500KB SVG carrying every label, in ~250
 (`toMermaid.test.ts`). What this does **not** prove is legibility: every box is measured at the
 same stubbed 100×20, so the layout in the assertion is not the layout on screen.
 
+### `react-markdown` v9 escapes embedded HTML on its own, and GFM tables still work without `rehype-raw`
+
+Measured 2026-08-14 by rendering one document through `components/context-doc-view/DocumentReader`
+that carried `<img src=x onerror=alert(1)>`, `[click](javascript:alert(1))`,
+`![shot](data:text/html;base64,…)`, an `https://` link and a pipe table, all at once. The result:
+**0** `<img>` elements in the DOM, the raw tag visible as text content, exactly one anchor
+(`real→https://example.com/a`), and **2** `<td>` — the table rendered.
+
+That last number is the one to keep. The reason someone reaches for `rehype-raw` is usually a
+table or an alignment that "needs HTML", and this stack renders GFM tables through `remark-gfm`
+without it. So the trade the plugin offers is not "tables for a little risk" — it is stored XSS
+from a public repository's README in exchange for nothing this app is missing. Same for
+`dangerouslySetInnerHTML`. `AC-56` forbids both, and `DocumentReader.tsx`'s header comment says so
+at the call site.
+
+Two layers below the component already refuse a `javascript:` URL — `react-markdown`'s default
+`urlTransform` rewrites it to `""`, and React blocks such an `href` at the DOM — which is why
+`isSafeUrl` is unit-tested directly in `components/context-doc-view/helpers.test.ts`. A
+rendering-only assertion passes whether that function works or not.
+
 ## Recurring Errors & Fixes
 
 ### `pnpm typecheck` fails on routes that do not exist on the branch you are standing on
@@ -732,6 +891,57 @@ quickest tell that a dev server has been through the directory.
 Related: `next start` serves a build and watches nothing, so a route added on a branch will
 404 until someone rebuilds — which reads like "the page does not exist" rather than "the
 build is stale".
+
+### `pnpm build` takes down the running `next dev`, and the first symptom is on an unrelated page
+
+**Symptom.** 2026-08-14, with `./scripts/dev.sh` serving `:3000`: `pnpm build` reports
+`✓ Compiled successfully` and every route in its table, and immediately afterwards
+`/repos/:id/context` answers **500** with
+`Cannot find module './vendor-chunks/recharts.js'` — from a page that imports no chart.
+Clearing the module and re-requesting only moves the name (`recharts.js` → `lodash.js`).
+`/repos/:id/conventions`, `/repos/:id/pulls` and `/settings/general` are 500 too, while
+`/`, `/skills`, `/agents` and `/onboarding` stay 200 — so it reads as "the page I just
+edited is broken" when nothing on that page is.
+
+**Cause.** Both commands own one `client/.next`. `next dev` emits one file per npm package
+under `.next/server/vendor-chunks/`; `next build` wipes the directory and bundles differently,
+leaving `@swc.js` and `next.js` behind. A route already loaded into the dev server's module
+cache keeps serving from memory — that is the whole 200/500 split — while a route requested
+for the FIRST time after the build has to read chunks that no longer exist. The dev compiler's
+in-memory asset state still believes it emitted them, so neither a source `touch` nor
+`rm -rf .next/cache/webpack` brings them back. Only a new process does.
+
+**Fix.** Restart the dev server: `rm -rf client/.next` then `./scripts/dev.sh`. To avoid it,
+run `pnpm build` when nothing is serving that checkout — and if a gate list demands the build
+(the `client` gates do), expect to hand the page back with "restart dev before you look".
+
+**Second form, 2026-08-15 — same cause, different directory, and `curl` says it is fine.**
+The next `pnpm build` on this branch produced no 500 at all. Every route answered **200**, and
+the page rendered as unstyled HTML: serif body text, blue underlined links, no layout, and an
+empty content area. `curl -o /dev/null -w '%{http_code}'` reported `200` for the document and
+was the only check run, so the page was reported working when nothing on it was.
+
+The document is served by the dev server from memory; what 404s is everything it references.
+`list_network_requests` in a real browser shows it in one screen:
+
+```
+/_next/static/css/app/layout.css   404   ← the unstyled page
+/_next/static/chunks/main-app.js   404
+/_next/static/chunks/app/layout.js 404
+/_next/static/chunks/webpack.js    200   ← the only survivor
+```
+
+`next build` had overwritten `.next/static/` with its own content-hashed output, so the dev
+server's `?v=<timestamp>` chunk names no longer exist. Same collision, same fix — `rm -rf
+client/.next` and a fresh `next dev` — but two rules follow that the first form did not teach:
+
+- **A 200 on the document proves nothing about the page.** Assets are separate requests, and a
+  dev server will happily serve HTML whose every chunk is missing. `curl` cannot see that;
+  a browser's network panel sees it immediately. This is the third time on this branch that
+  opening the page found what a status code hid.
+- **The symptom is not always an error.** The first form threw; this one rendered. A page that
+  looks like 1996 rather than like a stack trace is the same defect wearing different clothes,
+  and it is easy to read as a CSS regression in the change you just made.
 
 ### An unexpected `severity` value takes down the whole findings page
 
@@ -894,7 +1104,60 @@ the same split that lets a vitest alias and a tsconfig path drift apart.
 and build both the fixture and its variants from that. Do not reach for `!` or a cast: the
 annotation is what keeps the fixture honest when the contract gains a field.
 
-## Session Notes
+### Narrowing `tsconfig` to your own files turns every jest-dom matcher into a type error
+
+**Symptom.** Two agents are building different packages of one plan in the same working tree, so
+`pnpm typecheck` reports errors in files you never opened. Scoping it to your own slice with a
+scratch config that `extends: "./tsconfig.json"` and narrows `include` then produces 26 fresh
+errors of its own — `TS2339: Property 'toBeInTheDocument' does not exist on type
+'Assertion<HTMLElement>'`, one per assertion, in test files that pass under `vitest run`. Hit on
+2026-08-14 checking plan 09's P4 while P3 was mid-edit in `context/_components/`.
+
+**Cause.** `toBeInTheDocument` and friends are declared by the module augmentation that
+`src/test/setup.ts:1` pulls in (`@testing-library/jest-dom/vitest`), and that file reaches `tsc`
+only because the real `include` is `**/*.ts`. A narrowed `include` drops it, so the augmentation
+never loads and every matcher is missing — a failure of the scratch config, not of your code.
+
+**Fix.** Add `"src/test/**/*.ts"` to the narrowed `include`. The check is then decisive:
+
+```sh
+cd client && cat > tsconfig.slice.json <<'EOF'
+{ "extends": "./tsconfig.json",
+  "include": ["next-env.d.ts", "src/test/**/*.ts", "src/components/<yours>/**/*.tsx"] }
+EOF
+pnpm exec tsc --noEmit -p tsconfig.slice.json; rm -f tsconfig.slice.json tsconfig.slice.tsbuildinfo
+```
+
+Do not delete the scratch config's `tsbuildinfo` sibling by hand later — `incremental: true` is
+inherited, so it is written beside it on every run. And report the *whole-package* gate as it
+really stands; a slice that passes is evidence about your files, not a green `pnpm typecheck`.
+
+### A confirmation dialog over an editor makes `getByRole("button", { name: "Cancel" })` ambiguous
+
+**Symptom.** `Found multiple elements with the role "button" and name "Cancel"` in a test that
+opens a confirm dialog from a form that already has its own Cancel — `ProjectContextView`'s
+tracked-save warning over the Edit footer, 2026-08-14.
+
+**Cause.** The dialog does not replace the editor; both are mounted, so both Cancels are on
+screen. The failure is in the TEST, not the UI — a human sees which one is in the modal.
+
+**Fix.** Scope the query: `within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" })`.
+Renaming one of them to keep `getByRole` unique is the wrong fix — "Cancel" is the right word in
+both places, and the next dialog brings the collision back.
+
+### A `fireEvent.click` on a handler that awaits a mutation warns "not wrapped in act(...)"
+
+**Symptom.** `An update to <Component> inside a test was not wrapped in act(...)` after a
+`fireEvent.click` on a Save or Create button. The test still passes, so it is easy to leave.
+
+**Cause.** The handler is `async` — it awaits `mutateAsync` (a mocked promise) and then calls
+`setState`. `fireEvent` flushes the synchronous part inside `act`; the state change after the
+`await` lands on the next microtask, outside it.
+
+**Fix.** End the test by awaiting what the resolution changed, rather than by wrapping anything:
+`await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())`, or
+`await screen.findByRole("status")`. That silences the warning AND asserts the post-condition the
+click was for — a click whose only proof is "the mock was called" never checks that the UI moved.
 
 ### 2026-07-28
 
@@ -914,7 +1177,7 @@ annotation is what keeps the fixture honest when the contract gains a field.
   and unclickable. Freshly generated findings were not available — see the root
   `INSIGHTS.md` on reviews that approve everything.
 - Same counts then went onto the PR list as a `FINDINGS` column with a hover card
-  (`_components/FindingsCell/`, spec `specs/L04-findings-on-the-pr-list.md`). That half
+  (`_components/FindingsCell/`, spec `plans/L04-findings-on-the-pr-list.md`). That half
   needed the server: `PrMeta` gained `findings_critical/warning/suggestion` plus a 3-item
   `findings_top`, mirrored into both vendored `shared/` copies.
 - The column's normal state on this workspace is `0 · 0 · 0`, because the agents approve
@@ -1067,6 +1330,99 @@ annotation is what keeps the fixture honest when the contract gains a field.
   block needed no wiring. In a test, `NextIntlClientProvider messages={{ brief: messages }}`
   with the JSON imported directly is enough — and importing it means the assertions read
   `messages.intent.failed` rather than a copy of the English string.
+
+### 2026-08-14
+
+- Promoted the Project Context reading pane into `components/context-doc-view/` (plan 09, P2):
+  `DocumentReader`, `DocReadFailure`, `isSafeUrl`, `KIND_COLOR`, `readFailureReason`. Three
+  surfaces will consume it — the page's pane, its `Preview` mode, and the preview control in both
+  editors' Context tabs — and `AC-56` is a requirement about there being **one** of it, so the old
+  `context/_components/DocumentReader/` was deleted rather than left as a re-export.
+- `readFailureReason` maps `ApiError.code` to `missing` / `refused` / `binary` with a `switch`, not
+  a `Record<string, …>` lookup. Proved it matters by mutating it to the object-literal form and
+  running the test: `readFailureReason(new ApiError("weird", 400, "constructor"))` then returned
+  `[Function Object]`. Same bug class as the `value in OBJ` entry above, but the remediation grep
+  recorded there (`' in [A-Z][A-Za-z_]*'`) does **not** find this shape — the hazard is any lookup
+  keyed by a string the server chose.
+- Writing `messages/en/context.json` for two packages that had not been built yet made placeholder
+  parameters a contract, not copy: a key like `attach.previewLabel` (`"Preview {path}"`) throws at
+  render if the consumer forgets the argument. `attach.previewTitle` was therefore left parameter-
+  free, and `tracked.body` takes only `{branch}` even though naming the file would read better.
+  Prefer the message that cannot throw when the consumer is another agent's package.
+- Built the preview control and the kind badge in both Context tabs (plan 09, P4):
+  `context-docs/PreviewButton.tsx`, `context-docs/DocPreview.tsx`, and a required `repoId` prop on
+  `ContextDocList` / `InheritedGroup`. Both consume P2's `context-doc-view` — no second renderer,
+  and the served dev bundle for `/agents/[id]` carries six `KIND_COLOR` references and one
+  `attach.previewLabel`, which is how you check a client change is really in the running app
+  without a browser.
+- Every one of the six new tests was proved falsifiable, in three runs: removing the badge and both
+  preview controls failed all six; passing a literal `repoId="wrong-repo"` from the tab failed only
+  the wiring test; and making the preview also call `onCommit` failed only the "leaves the
+  attachment set alone" assertion. The last one is the point — a `not.toHaveBeenCalled()` proves
+  nothing until you have seen it go red.
+- `DocPreview` branches on `isSuccess`, never on `isLoading`, so the fall-through for a query that
+  was never enabled is the skeleton rather than an empty document — the check the disabled-query
+  entry above asks for.
+
+### 2026-08-14 (P3 — the Project Context page rebuilt)
+
+- The page now writes: `_components/DocActionBar` (new document / new folder / upload / rescan,
+  and the page header's Rescan is gone), `_components/DocPanel` (`Preview | Edit`, the save, the
+  tracked-file warning), `_components/DocList` (grouped), plus four hooks in `lib/hooks/context.ts`.
+- The tracked-save confirmation is **UI-only by design**: `SaveContextDocBody` carries no
+  `confirm_tracked` field and the server will never ask for one, so routing a save around
+  `TrackedSaveModal` silently removes the whole warning. There is no server-side backstop to catch
+  that in review — the test in `ProjectContextView.test.tsx` is the only one.
+- The draft in Edit is `useState` in `DocPanel`, and `ProjectContextView` passes `key={selectedPath}`
+  so selecting another document unmounts it. That `key` is what makes "the draft cannot be saved
+  onto the wrong file" true; an effect resetting the state on a path change would have a render in
+  between where it is not.
+- Falsifiability was checked in two batched runs, each reverted: breaking the label slice, the
+  shared-kind check and the upload branch of `writeErrorKey` failed 7 tests; defaulting the toggle
+  to `edit`, saving without the confirm dialog, dropping the stale notice and disabling Rescan
+  failed 10 — including all four untrusted-markdown tests, which is how you know they really read
+  through the preview pane and not through some other surface.
+- Exercised against the running API (both servers were already up): create → `201` with
+  `root: ".devdigest", kind: "specs", local: true`; the same path again → `409 already_exists`;
+  `docs/evil.md` → `400 invalid_path`; save → `200` and `GET …/docs/content` returns the new text;
+  a repo with no clone → `409 clone_not_ready`. Those five codes are exactly what the dialogs map.
+
+### Green `pnpm typecheck` and green `pnpm test` do not mean the client builds — only `pnpm build` does
+
+**Symptom.** Every gate in the brief passed — `pnpm lint`, `pnpm typecheck`, `pnpm test` (638
+tests), plus the whole server and `reviewer-core` side — and the Project Context page then rendered
+nothing but a Next build error in a real browser on 2026-08-14:
+
+```
+Module not found: Can't resolve './contracts/findings.js'
+./src/vendor/shared/index.ts (24:1)
+> 24 | export * from './contracts/findings.js';
+```
+
+**Cause.** Three tools resolve a `.js` specifier three different ways, and the client had never
+made them disagree. `src/vendor/shared/` is a vendored ESM package, so its internal imports carry
+the extension ESM requires — `export * from './contracts/findings.js'`, and thirteen siblings the
+same; `contracts/context.ts` reaches `./platform.js` the same way, so a sub-import is no escape.
+`tsc` maps `./x.js` onto `x.ts`, and vitest resolves it through its `resolve.alias` plus extension
+resolution. **Webpack, which is what `next dev` and `next build` run, does neither** unless
+`resolve.extensionAlias` says so. Until that day the client imported only TYPES from
+`@devdigest/shared` — TypeScript erases those, so webpack never resolved the barrel at all. The
+first VALUE imported from it (`MAX_DOC_CHARS`) is what made webpack try, and fail. Nothing in the
+gate list exercises webpack, so nothing could have caught it.
+
+**Fix.** `client/next.config.mjs` pushes one `module.rules` entry scoped to
+`/[\\/]src[\\/]vendor[\\/]shared[\\/]/` with `resolve: { extensionAlias: { ".js": [".ts", ".tsx",
+".js"] } }` — per-rule rather than global, because the mapping is a property of that folder's
+import style. **And run `cd client && pnpm build` whenever a change adds the first runtime import
+of something vendored.** Reading a value out of a `.d.ts`-shaped world costs nothing; reading it
+out of a bundler's world is a different question, and only the bundler answers it.
+
+**Running that build has a trap of its own.** `next build` and a live `next dev` share `.next`, so
+building while the dev server is up fails every page with `PageNotFoundError: Cannot find module
+for page: /` — which looks like a code fault and is not. Build into another directory
+(`distDir` behind an env var, removed afterwards) or stop the dev server. Next also appends
+`"<distDir>/types/**/*.ts"` to `tsconfig.json` `include` on every build, so a temporary `distDir`
+leaves a temporary line in `tsconfig.json` that has to come back out.
 
 ## Open Questions
 

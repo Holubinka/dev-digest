@@ -7,11 +7,15 @@ belongs in [`../../specs/`](../../specs/README.md).
 considered, acceptance criteria. UI specs benefit from a sketch — a Mermaid diagram or
 an ASCII wireframe beats a paragraph.
 
-**Does not go here:** how the UI already works (that is [`../docs/`](../docs/README.md)
-and [`../README.md`](../README.md)), or post-mortems (that is
-[`../INSIGHTS.md`](../INSIGHTS.md)).
+**Does not go here:** how we will build it — steps, tests and gates (that is
+[`../../plans/`](../../plans/README.md), one folder for every package), how the UI already works
+(that is [`../docs/`](../docs/README.md) and [`../README.md`](../README.md)), or post-mortems
+(that is [`../INSIGHTS.md`](../INSIGHTS.md)).
 
-Naming: `LNN-topic.md` for course lessons, `NN-topic.md` otherwise.
+Written by the [`spec-creator`](../../.claude/agents/spec-creator.md) agent, approved by a human.
+
+Naming: `SPEC-NN-topic.md`, the next free two-digit number here. The two `LNN-` files below
+predate that convention and keep their names. Status moves `Draft` → `Approved` → `Implemented`.
 
 | Spec | Status |
 |---|---|

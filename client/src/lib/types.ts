@@ -31,6 +31,24 @@ export type {
   IndexStatus,
 } from "@devdigest/shared";
 
+/** Project Context (08) — the page, the two editors' attachment sets, the run trace. */
+export type {
+  ContextDocKind,
+  ContextScanState,
+  ContextDocStatus,
+  ContextDocsPage,
+  AttachedContextDoc,
+  InheritedContextDoc,
+  AgentContextDocs,
+  SkillContextDocs,
+  SetContextDocsBody,
+  RunProjectContextDoc,
+  CreateContextDocBody,
+  CreateContextFolderBody,
+  SaveContextDocBody,
+  ContextFolderCreated,
+} from "@devdigest/shared";
+
 export type { Review, Finding, Severity, Verdict } from "@devdigest/shared";
 export type { PrBrief, SmartDiff } from "@devdigest/shared";
 export type {

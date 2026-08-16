@@ -2,6 +2,7 @@ import type {
   MemoryPulled,
   PromptAssembly,
   RunLogLine,
+  RunProjectContextDoc,
   RunStats,
   RunTrace,
   ToolCall,
@@ -31,6 +32,12 @@ export interface BuildTraceInput {
   rawOutput: string;
   memoryPulled: MemoryPulled[];
   specsRead: string[];
+  /**
+   * Every document of the run's effective project-context set with its status —
+   * including the ones that never reached the prompt. Defaults to `[]` for the
+   * detector runs that assemble no project context at all.
+   */
+  projectContext?: RunProjectContextDoc[];
   log: RunLogLine[];
 }
 
@@ -50,6 +57,7 @@ export function buildRunTrace(input: BuildTraceInput): RunTrace {
     raw_output: input.rawOutput,
     memory_pulled: input.memoryPulled,
     specs_read: input.specsRead,
+    project_context: input.projectContext ?? [],
     log: input.log,
   };
   // Validate so a malformed trace fails loudly at write-time, not read-time.

@@ -8,7 +8,7 @@ already computed, so adding context to a prompt costs no analysis at request tim
 
 This is **starter infrastructure**: it works from day 1 (the **Indexed** badge),
 but you don't write it. Features are built _on top_ of its facade — Blast Radius
-(`specs/07-blast-radius.md`), Conventions samples (L02), Onboarding reading-path
+(`plans/07-blast-radius.md`), Conventions samples (L02), Onboarding reading-path
 (L05), the Phantom-API gate (L06) — by calling `repoIntel.*`, not by re-indexing.
 
 ## Pipeline
@@ -51,7 +51,7 @@ Wired today:
   which adds the repo map and a high-blast-radius note to the prompt. Toggled by
   `REPO_INTEL_ENABLED` (global) and a per-agent `repo_intel` flag.
 - `getIndexState` / `getBlastRadius` / `getDownstream` → `modules/blast/service.ts`, behind
-  `GET /pulls/:id/blast` (`specs/07-blast-radius.md`). `getIndexState` gates the other two:
+  `GET /pulls/:id/blast` (`plans/07-blast-radius.md`). `getIndexState` gates the other two:
   on an unindexed repo they are never called.
 - `getConventionSamples` → `modules/conventions/service.ts:179`.
 

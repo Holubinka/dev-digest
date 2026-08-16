@@ -4,7 +4,7 @@
  * and stderr separately.
  *
  * It exists to answer three things the Inspector cannot show directly:
- *   - are the FIRST BYTES on stdout a JSON-RPC frame (Constraint 2 of specs/06-mcp-server.md),
+ *   - are the FIRST BYTES on stdout a JSON-RPC frame (Constraint 2 of plans/06-mcp-server.md),
  *   - what is process.cwd() inside the server when the parent spawns it with the repo root as cwd,
  *   - how many progress notifications actually reached the wire during a call.
  *

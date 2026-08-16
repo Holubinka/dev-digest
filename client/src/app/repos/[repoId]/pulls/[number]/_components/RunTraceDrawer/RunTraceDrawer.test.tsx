@@ -21,6 +21,7 @@ const TRACE: RunTrace = {
   raw_output: '{"verdict":"request_changes"}',
   memory_pulled: [{ pr: 471, text: "rate-limit public endpoints" }],
   specs_read: [],
+  project_context: [],
   log: [
     { t: "00.10", kind: "info", msg: "Starting review with agent Security" },
     { t: "00.90", kind: "result", msg: "Citation grounding: 2/2 passed" },
@@ -198,5 +199,44 @@ describe("A5 Run Trace drawer while the run is still going", () => {
     renderWithIntl(<RunTraceDrawer runId="r1" agentName="Security" prNumber={482} onClose={() => {}} />);
     expect(hooks.useRunEvents).toHaveBeenCalledWith([]);
     expect(hooks.useRunTrace).toHaveBeenCalledWith("r1", true);
+  });
+});
+
+/**
+ * The trace drawer does NOT list the project-context documents, by decision on
+ * 2026-08-15. A document that reached the prompt is already accounted for twice
+ * — its path under `Specs read`, its text under `Prompt assembly` — and a third
+ * listing was repetition sitting between Stats and Findings.
+ *
+ * This diverges from `AC-37`, which asks for a per-document list with a status.
+ * The data is NOT gone: `RunTrace.project_context` still carries every document
+ * with its tokens and status, so `Copy raw output` and any consumer of the trace
+ * still have it. What went is the rendering, and this test is what stops it
+ * coming back by accident.
+ */
+describe("Run Trace drawer — project context is not listed", () => {
+  beforeEach(() => {
+    hooks.useRunEvents.mockReturnValue({ events: [], running: false });
+  });
+
+  it("renders no per-document section, not even for documents that never went", () => {
+    hooks.useRunTrace.mockReturnValue({
+      data: {
+        ...TRACE,
+        specs_read: ["specs/sent.md"],
+        project_context: [
+          { path: "specs/sent.md", tokens: 100, status: "included" },
+          { path: "specs/over.md", tokens: 9000, status: "dropped" },
+          { path: "specs/gone.md", tokens: 0, status: "missing" },
+        ],
+      },
+      isLoading: false,
+    });
+    renderWithIntl(<RunTraceDrawer runId="r1" agentName="Security" prNumber={482} onClose={() => {}} />);
+    expect(screen.queryByText("specs/over.md")).toBeNull();
+    expect(screen.queryByText("specs/gone.md")).toBeNull();
+    expect(screen.queryByText("dropped (over budget)")).toBeNull();
+    // What WAS sent is still named once, where the drawer says what it sent.
+    expect(screen.getAllByText("specs/sent.md")).toHaveLength(1);
   });
 });

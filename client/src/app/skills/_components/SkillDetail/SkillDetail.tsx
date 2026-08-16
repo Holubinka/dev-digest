@@ -9,6 +9,7 @@ import { Badge, ErrorState, Icon, Skeleton, Tabs, Toggle } from "@devdigest/ui";
 import { SkillTypeBadge } from "@/components/skill-type";
 import { useSkill, useUpdateSkill } from "@/lib/hooks/skills";
 import { ConfigTab } from "./_components/ConfigTab";
+import { ContextTab } from "./_components/ContextTab";
 import { PreviewTab } from "./_components/PreviewTab";
 import { StatsTab } from "./_components/StatsTab";
 import { VersionsTab } from "./_components/VersionsTab";
@@ -104,6 +105,7 @@ export function SkillDetail({ id }: { id: string }) {
 
       <div style={s.body}>
         {tab === "preview" && <PreviewTab skill={skill} />}
+        {tab === "context" && <ContextTab skill={skill} />}
         {tab === "stats" && <StatsTab skill={skill} />}
         {tab === "versions" && <VersionsTab skill={skill} />}
         {tab === "config" && <ConfigTab skill={skill} />}

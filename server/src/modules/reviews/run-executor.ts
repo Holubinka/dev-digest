@@ -18,6 +18,17 @@ import type {
   ReviewRepo,
 } from './types.js';
 
+/**
+ * The shape `container.projectContext` resolves to, named WITHOUT importing
+ * `modules/context`: `no-cross-module` forbids that edge and counts an
+ * `import type` as one. Reading it off the composition root's own type is the
+ * same route `container.intentService` and `container.repoIntel` already take,
+ * and it cannot drift from the port because it IS the port.
+ */
+type ProjectContextResult = Awaited<
+  ReturnType<Container['projectContext']['resolveForRun']>
+>;
+
 /** Thrown by a run when the user cancels it mid-flight (between map files). */
 export class RunCancelledError extends Error {
   constructor() {
@@ -54,8 +65,22 @@ interface PromptContext {
   callers: string | undefined;
   repoMap: string | undefined;
   skills: string[];
+  /**
+   * 08 — the agent's effective project-context set, already read, budgeted and
+   * rendered. It arrives as `container.projectContext` with no import:
+   * `modules/reviews` may not reach into `modules/context`.
+   */
+  projectContext: ProjectContextResult;
   task: string;
 }
+
+/** What an agent with nothing attached — or a failed resolve — gets. */
+const NO_PROJECT_CONTEXT: ProjectContextResult = Object.freeze({
+  blocks: Object.freeze([]) as unknown as string[],
+  docs: Object.freeze([]) as unknown as ProjectContextResult['docs'],
+  includedPaths: Object.freeze([]) as unknown as string[],
+  note: undefined,
+});
 
 /** What an agent that opted out of repo-intel gets, and what a failed batch resolves to. */
 const NO_REPO_INTEL: RepoIntelContext = Object.freeze({
@@ -238,7 +263,7 @@ export class ReviewRunExecutor {
       const context = await this.gatherPromptContext(run, runLog);
       outcome = await this.callEngine(run, context, runLog);
       this.logPromptAssembly(run, context.task, outcome, runLog);
-      return await this.persistSuccess(run, outcome, start, runLog);
+      return await this.persistSuccess(run, outcome, context, start, runLog);
     } catch (err) {
       await this.persistFailure(run, err, start, runLog, outcome);
       throw err;
@@ -281,7 +306,57 @@ export class ReviewRunExecutor {
     // The one enrichment that IS per-agent, so the one still resolved here.
     const skills = await this.buildSkillBodies(agent.id, runLog);
 
-    return { llm, callers, repoMap, skills, task: taskLine(pull) + rankNote };
+    // 08 — the agent's project-context documents. PER AGENT, not per batch, and
+    // for the same reason the skills are: the effective set is this agent's own
+    // attachments plus its own skills', so two queued agents on one PR resolve
+    // to different sets.
+    const projectContext = await this.buildProjectContext(run, runLog);
+
+    return { llm, callers, repoMap, skills, projectContext, task: taskLine(pull) + rankNote };
+  }
+
+  /**
+   * Resolve the agent's `## Project context` blocks.
+   *
+   * Best-effort like every other enrichment: a failure logs and returns nothing,
+   * so the review degrades to the pre-08 prompt instead of failing the run. It
+   * NEVER goes silent — a section that was expected and did not arrive is
+   * exactly the case a reader needs told.
+   */
+  private async buildProjectContext(
+    run: AgentRun,
+    runLog: RunLogger,
+  ): Promise<ProjectContextResult> {
+    const { workspaceId, agent, repo, pull } = run;
+    let resolved: ProjectContextResult;
+    try {
+      resolved = await this.container.projectContext.resolveForRun({
+        workspaceId,
+        agentId: agent.id,
+        repoId: pull.repoId,
+        repo: { owner: repo.owner, name: repo.name },
+      });
+    } catch (err) {
+      runLog.info(`project context: lookup failed — ${(err as Error).message}`);
+      return NO_PROJECT_CONTEXT;
+    }
+    if (resolved.note) runLog.info(resolved.note);
+    if (resolved.docs.length > 0) {
+      const tokens = resolved.docs
+        .filter((d) => d.status === 'included' || d.status === 'truncated')
+        .reduce((sum, d) => sum + d.tokens, 0);
+      const skipped = resolved.docs.filter(
+        (d) => d.status !== 'included' && d.status !== 'truncated',
+      );
+      runLog.info(
+        `project context: ${resolved.includedPaths.length} of ${resolved.docs.length} ` +
+          `document(s), ${tokens} token(s) attached` +
+          (skipped.length > 0
+            ? ` — skipped ${skipped.map((d) => `${d.path} (${d.status})`).join(', ')}`
+            : ''),
+      );
+    }
+    return resolved;
   }
 
   /**
@@ -338,6 +413,13 @@ export class ReviewRunExecutor {
       // the guard is that an agent with nothing bound produces a prompt
       // byte-identical to the pre-skills shape.
       ...(context.skills.length > 0 ? { skills: context.skills } : {}),
+      // 08 — the agent's project-context documents. A conditional spread for the
+      // same reason as the line above it: an agent with nothing attached must
+      // produce a prompt byte-identical to the pre-08 shape, and `specs:
+      // undefined` is not that.
+      ...(context.projectContext.blocks.length > 0
+        ? { specs: context.projectContext.blocks }
+        : {}),
       ...(context.callers ? { callers: context.callers } : {}),
       ...(context.repoMap ? { repoMap: context.repoMap } : {}),
       // PR author's description/body — untrusted; assemblePrompt wraps +
@@ -399,6 +481,7 @@ export class ReviewRunExecutor {
   private async persistSuccess(
     run: AgentRun,
     outcome: EngineOutcome,
+    context: PromptContext,
     start: number,
     runLog: RunLogger,
   ): Promise<RunOutcome> {
@@ -444,7 +527,7 @@ export class ReviewRunExecutor {
     runLog.info('Run complete; trace persisted');
     await this.repo.saveRunTrace(
       runId,
-      this.traceFromOutcome(run, outcome, findingRows.length, durationMs, runLog),
+      this.traceFromOutcome(run, outcome, context, findingRows.length, durationMs, runLog),
     );
     this.container.runBus.complete(runId);
 
@@ -462,6 +545,7 @@ export class ReviewRunExecutor {
   private traceFromOutcome(
     run: AgentRun,
     outcome: EngineOutcome,
+    context: PromptContext,
     findings: number,
     durationMs: number,
     runLog: RunLogger,
@@ -493,7 +577,13 @@ export class ReviewRunExecutor {
       })),
       raw_output: outcome.raw,
       memory_pulled: [],
-      specs_read: [],
+      // The documents that actually went, in block order.
+      specs_read: context.projectContext.includedPaths,
+      // …and EVERY document of the effective set with what happened to it,
+      // including the ones that did not go. A document dropped for budget or
+      // missing from the clone is the case a reader most needs explained, and
+      // `specs_read` alone cannot say it.
+      project_context: context.projectContext.docs,
       // Persisted log = the run's FULL event buffer (incl. shared pre-work:
       // diff load + intent), not just the events this run's own method recorded.
       log: runLog.logFor(run.runId),
@@ -694,6 +784,10 @@ export class ReviewRunExecutor {
       raw_output: '',
       memory_pulled: [],
       specs_read: [],
+      // A run that failed before (or during) assembly attached nothing. Filling
+      // this from a half-resolved context would report documents as sent that
+      // no prompt ever carried.
+      project_context: [],
       log: this.container.runBus.buffer(runId).map((e) => ({ t: e.t, kind: e.kind, msg: e.msg })),
     };
   }

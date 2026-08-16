@@ -2,7 +2,8 @@ import { and, desc, eq } from 'drizzle-orm';
 import type { Db } from '../../../db/client.js';
 import * as t from '../../../db/schema.js';
 import { stripNulDeep } from '../../../db/text.js';
-import type { RunSummary, RunTrace } from '@devdigest/shared';
+import { RunTrace } from '@devdigest/shared';
+import type { RunSummary } from '@devdigest/shared';
 
 // ---- in-flight / history --------------------------------------------------
 
@@ -189,7 +190,21 @@ export async function saveRunTrace(db: Db, runId: string, rawTrace: RunTrace): P
     .onConflictDoUpdate({ target: t.runTraces.runId, set: { trace } });
 }
 
+/**
+ * PARSED, not cast. `run_traces.trace` is a jsonb blob written by every version
+ * of this code that ever ran, so a field added later is simply absent from the
+ * documents already there — 282 of the 285 rows on the development database
+ * carry no `project_context`. A cast makes the type system promise a field the
+ * document does not have, and the drawer that reads `.length` off it crashes.
+ * Parsing is what makes `RunTrace`'s `.default([])` fire and upgrades every old
+ * document on the way out.
+ *
+ * The obligation that comes with it: a key the contract requires and an old
+ * document does not carry throws here, so every field this contract has gained
+ * — or lost and regained, as `RunStats.cost_usd` did between `d45ab0d` and
+ * `5e92756` — needs a `.default(...)` rather than a bare requirement.
+ */
 export async function getRunTrace(db: Db, runId: string): Promise<RunTrace | undefined> {
   const [row] = await db.select().from(t.runTraces).where(eq(t.runTraces.runId, runId));
-  return row ? (row.trace as RunTrace) : undefined;
+  return row ? RunTrace.parse(row.trace) : undefined;
 }

@@ -37,9 +37,9 @@ import { listAgents } from './tools/list-agents.js';
 import { makeProgressReporter, runAgentOnPr } from './tools/run-agent.js';
 
 // ---------------------------------------------------------------------------
-// The six frozen strings. Verbatim from specs/06-mcp-server.md §Appendix — with
+// The six frozen strings. Verbatim from plans/06-mcp-server.md §Appendix — with
 // one exception: `get_blast_radius` is no longer the stub that appendix froze,
-// so specs/07-blast-radius.md step 13 replaced its PLACEHOLDER description and
+// so plans/07-blast-radius.md step 13 replaced its PLACEHOLDER description and
 // is the source of truth for that one string.
 // ---------------------------------------------------------------------------
 

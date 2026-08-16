@@ -111,6 +111,17 @@ This is the **one declared, bounded exception** to the ban on writing to `src/`.
 by step 3: no mutation survives your turn. If `git diff --exit-code` returns non-zero at the
 end, say so loudly rather than quietly — an un-reverted mutation is worse than no test.
 
+**Your run is not safe to schedule beside anything else.** Between steps 1 and 3 the tree holds a
+deliberate defect, and any agent reading those files or shelling out to a gate during that window
+measures your mutation instead of the branch. On 2026-08-05 a `plan-verifier` running in parallel
+reported `server typecheck`, `server test` and `client typecheck` red; none of the three was
+broken — it had sampled the middle of a mutation round (`INSIGHTS.md` § *Running a gate-measuring
+agent beside a mutating one makes it report the mutation*). You cannot see your siblings from in
+here, so the rule belongs to whoever dispatches you: **serialise this agent against every other
+dispatch, not only the ones sharing its paths.** What you can do is make the window legible — say
+in «Доказ, що тест падає» how many rounds you ran, so a red gate reported elsewhere can be
+attributed rather than chased.
+
 ## Rule 2 — the code under test is not the oracle
 
 The expected value comes from the Zod contract in `server/src/vendor/shared/contracts/**`,

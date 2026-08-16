@@ -9,7 +9,7 @@ The extraction removed 221 lines and added 22.
 
 Completes the pair started by
 [`L03-findings-severity-filter.md`](L03-findings-severity-filter.md) (severity on the PR
-page) and [`../../specs/L04-findings-on-the-pr-list.md`](../../specs/L04-findings-on-the-pr-list.md)
+page) and [`../../plans/L04-findings-on-the-pr-list.md`](../../plans/L04-findings-on-the-pr-list.md)
 (severity on the list). Both landed; the run row between them did not.
 
 ## Problem

@@ -125,6 +125,45 @@ worth treating as settled. Second, `service.ts:55` came back `major` once and `m
 severity axis is the least reproducible part, so do not build any threshold on it without adding
 anchor examples to the body first.
 
+### An agent boundary can be a wall, and the wall belongs in the agent's own frontmatter
+
+Every "you must not write X" in `.claude/agents/**` had been a rule the model keeps, because the
+only enforced hook was the `Bash` matcher on `git push` in `.claude/settings.json`. A subagent
+definition also accepts a `hooks:` block, and hooks declared there are live **only while that
+subagent runs** — so `spec-creator` blocks its own out-of-bounds writes without a matcher on
+`agent_type` and without any chance of catching `implementer` in the same net:
+
+```yaml
+hooks:
+  PreToolUse:
+    - matcher: "Write|Edit|Bash"
+      hooks:
+        - type: command
+          command: bash "${CLAUDE_PROJECT_DIR:-.}/scripts/spec-creator/write-gate.sh"
+```
+
+Four things decide whether this works, and three of them fail silently:
+
+- **Exit 2 is the only blocking code.** stderr goes back to the agent as the reason. Any other
+  non-zero exit reports an error to the user and **lets the tool call through** — so a script
+  that dies on a missing `jq`, or on a path that did not expand, is an open gate that looks shut.
+  `scripts/spec-creator/write-gate.sh` therefore exits 0 or 2 on every path and never anything else.
+- **`${CLAUDE_PROJECT_DIR:-.}`, not `$CLAUDE_PROJECT_DIR`.** If the variable is empty the bare
+  form builds `/scripts/…`, bash exits 127, and per the rule above the write proceeds.
+- **Frontmatter hooks need workspace trust.** Until the folder holding the agent file is trusted,
+  Claude Code runs the subagent, skips its hooks, and only logs to the debug log.
+- **A `case` pattern's `*` spans `/`,** so `specs/*.md` also matches `specs/a/b/c.md`. Match the
+  allowed shape with a regex — `^(specs|server/specs|client/specs|reviewer-core/specs)/[^/]+\.md$`.
+
+The payload does identify the caller — `agent_id` and `agent_type` (the agent's frontmatter
+`name`) are present on every subagent tool call — so a session-wide hook in `settings.json` could
+have done the same job. Frontmatter is still better: it cannot leak onto another agent, and it
+ships in the same file as the rules it enforces.
+
+Verified with 18 payloads piped straight into the script, not by dispatching the agent:
+allowed paths, refused paths, absolute paths, `e2e/specs/`, nested paths, missing `file_path`,
+read-only Bash, mutating Bash.
+
 ## What Doesn't Work
 
 ### Committing a documentation layer by path while the files it references stay untracked
@@ -401,6 +440,177 @@ both ids on the wire, because the consumer cannot tell them apart and will pick 
 already has. Verify empirically, never by reading: take a reported `file:line` and run
 `git show <sha>:<path> | sed -n '<line>p'` at each candidate commit.
 
+### A `PreToolUse` gate that bans commands by substring bans reading too
+
+**Symptom.** `scripts/spec-creator/write-gate.sh` was written to let the `spec-creator` agent
+read and stop it writing. On 2026-08-13 it refused `ls server/src/platform server/src/modules`
+and `rg "transform " server/src` with *"This command writes or runs a script"* — two commands
+that write nothing.
+
+**Cause.** The ban was a shell `case` over patterns like `*"rm "*|*"mv "*|*"tee "*`, and a
+`case` glob spans the whole string. `platform ` and `transform ` both end in `rm `. The false
+positive lands exactly where the agent has to look: `server/src/platform/` holds `config.ts`,
+`container.ts`, `grounding.ts` and eight more, so the gate blocked reading the module it was
+guarding.
+
+**Fix.** Anchor every mutator to a position where a command can actually begin — start of
+string, or just after `;` `&` `|` `(` or a backtick — with `[[ =~ ]]` rather than `case`:
+`(^|[;&|(]|\`)[[:space:]]*(rm|rmdir|mv|mkdir|tee|truncate)([[:space:]]|$)`. Twenty cases, ten
+allowed and ten refused, are worth running against the script directly by piping a
+`jq -nc '{tool_name,tool_input}'` payload into it; the hook contract is exit 2 to block and
+anything else to let the call through, so a gate that crashes fails open and a gate that
+over-matches fails closed and silent. Generalised: a denylist matched against free-form
+command text is a substring problem, not a security boundary — the wall here is the
+`Write`/`Edit` path check, and the Bash list is a second line that must not cost the agent
+its ability to read.
+
+### Trimming an agent's gate runs to cut its token bill — the preload is 7× the whole suite
+
+**Symptom.** `implementer` was believed to be expensive because it runs tests, so the obvious
+lever was running fewer of them, or running them with a terser reporter.
+
+**Cause.** Measured 2026-08-13, on this tree. The entire Track A sweep over both packages —
+`server` unit (59 files), `pnpm arch`, `typecheck`, `client` `pnpm test` (59 files), `lint` —
+prints **9.6 KB in about 15 seconds**: 2435 B for the server suite, 6655 B for the client, and
+under 300 B for each of the other three. `--reporter=dot` does not help and on the client is
+worse (7189 B against 6655 B), because vitest's default output is already near-minimal when
+green. Meanwhile that agent's `skills:` frontmatter declared nine skills, whose bodies total
+**64.7 KB** — and `skills:` preloads on the dispatch path (see *`skills:` … it loads nothing*,
+**Correction, 2026-08-05**). The preload cost seven times a full test run of the whole
+repository, and unlike the tests it was paid on **every turn**, not once.
+
+**Fix.** Look at what an agent carries before looking at what it runs. A command's output is
+paid once; context is paid `turns × context` (`AGENTS.md` § *What a session costs*), so a 65 KB
+preload across a 50-turn dispatch is three orders of magnitude more reading than the gate it was
+suspected of. Preload only what applies to *every* dispatch of a role — for `implementer` that
+was nothing, since a server-only plan never opens `frontend-architecture` — and reach the rest
+through a *touching X → invoke Y* table. Generalised: when an agent feels expensive, measure
+`wc -c` on its declared skills before optimising anything it executes.
+
+### A superseded measurement left in an agent's body makes it pay twice
+
+**Symptom.** `implementer.md` told the agent «Measured on 2026-08-04 … that field puts nothing
+in your context», then listed nine skills to `Skill`-load by hand. Every skill it opened was
+therefore loaded twice: once by the preload it was told did not exist, once by its own call.
+
+**Cause.** The 2026-08-04 result was corrected on 2026-08-05 — it had measured the main-agent
+path, and `.claude/agents/*` only ever runs the dispatch path. `implementation-planner` and
+`doc-writer` were updated with the correction; `implementer` was not, and `.claude/agents/README.md`
+recorded the gap as *"a redundant load, not a wrong answer"* and left it standing for eight days.
+
+**Fix.** Corrected 2026-08-13: the field was dropped and the paragraph rewritten. The general
+lesson is that `INSIGHTS.md` being append-only makes a correction easy to write and easy to lose
+— the original entry still reads "it loads nothing" in its own heading. **When an entry is
+corrected, grep the agent bodies that quote it in the same pass**; nothing in this repo checks
+that a body agrees with the insight it cites, and `registry.sh` reads `.claude/skills/` only, so
+no gate will ever notice. This is the second instance of the class already recorded at
+*An agent body restates rules it does not own, and nothing notices when they drift*.
+
+### "Check the reviewer cites the document" passes vacuously unless the diff really violates it
+
+`specs/SPEC-01-project-context.md` ends in the verification the feature exists for: attach a
+document stating an invariant, open a PR that breaks it, confirm the review names that document.
+Run on 2026-08-13 against a real PR, it produced zero findings — and that proved nothing, because
+the invariants attached (`docs/agent-prompts/README.md`-style rules about page-size constants and
+bounded paging loops) were rules the diff **already obeyed**: it defined `const PAGE_SIZE = 100`
+and `MAX_PR_FILES`/`MAX_PR_COMMITS`. A silent reviewer was the correct answer to a badly built
+test.
+
+Rewriting the document around something the diff visibly does — it reaches Octokit's `paginate`
+through `as never`, so the invariant became "an adapter MUST NOT reach a third-party library API
+through a type assertion" — produced, on the same PR and the same agent, a `WARNING` that names
+`specs/adapter-invariants.md`, quotes the sentence, and cites lines 97, 98 and 99-108.
+
+So an end-to-end scenario of this shape has to name **both** halves: the document and the line of
+the diff that contradicts it. Without the second half it is green when the feature works and green
+when it does nothing, which is the same failure mode as a vacuous assertion — recorded above at
+*Build the fixture …* — reached through a spec rather than through a test.
+
+### A document that documents the untrusted-wrapper format is a free adversarial input
+
+Attaching `docs/agent-prompts/README.md` to a review put literal `<untrusted source="…">` and
+`</untrusted>` into the assembled `## Project context` block, because that file documents the
+wrapper format itself. The block came out with **9 opening tags, 7 closing tags and 2 escaped
+`<\/untrusted>`** — `wrapUntrusted` (`reviewer-core/src/prompt.ts`) neutralises closing delimiters
+in content, so no document can close another's wrapper, and the two stray openings are inert text.
+
+Worth knowing for two reasons. The containment guarantee is that **closings** are escaped and
+openings are not, so counting tags in a block will not balance and that is correct, not a defect.
+And when this needs an adversarial fixture, this repo already ships one — no crafted payload
+required.
+
+### A fix brief inherits the gates it names, including the one it forgot
+
+On 2026-08-14 a fix round shipped with `pnpm arch`, `pnpm typecheck`, 778 server tests, 638 client
+tests, the integration split and the vendored mirror all green — and the Project Context page
+rendered nothing but `Module not found: Can't resolve './contracts/findings.js'`. The cause is
+recorded in `client/INSIGHTS.md`; what belongs here is why nothing caught it. **The gate list at the
+bottom of the brief did not include `cd client && pnpm build`, so the implementer never ran it**, and
+`tsc` and vitest both resolve the `.js` specifier that webpack cannot. The implementer had even named
+the risk in its own report, under "what reviewers should look at" — and then verified against the
+gates it was given rather than against the risk it had named.
+
+Two rules follow, and the second is the one that actually saved this.
+
+**A brief that changes how a module is built, imported or bundled must name the build in its gates.**
+The default gate list in `.claude/skills/implement/fix-rounds.md` and in the plans is a *typecheck +
+test* list; it is right for logic changes and blind to resolution, bundling and config. The trigger is
+not "did I touch the config" — it is "did I change what gets imported at runtime".
+
+**And stage 2 is not a formality.** `.claude/skills/implement/SKILL.md` says gates "prove nothing
+about a real provider, a real database or a real browser". This is that sentence collecting: a single
+page load found what eleven green gates and three review agents did not. Every browser-dependent
+verification in that session was reported `NOT_VERIFIED` by `plan-verifier` — correctly, since it has
+no browser — and a plan whose `## Verification` needs a running app leaves most of itself unprovable
+in a headless pipeline. Somebody has to open the page, and if the orchestrator does not, nobody does.
+
+**Correction, same day: a gate you add also has to be checked against the environment it runs in.**
+Having learned the above, the next brief made `cd client && pnpm build` mandatory — and that gate
+breaks the running dev server, because `next build` and `next dev` share `client/.next` and the build
+empties `.next/server/vendor-chunks/`. Every route the dev server had not already compiled then
+answers 500 with `Cannot find module './vendor-chunks/*.js'`, including routes nobody touched. The
+implementer reported it and correctly refused to fix it, having been told not to restart servers;
+recovery is `rm -rf client/.next` and a fresh `next dev`, and it is the orchestrator's to do. What
+makes this worth recording is that the *previous* implementer had already hit the same collision and
+described it in its report — the lesson was available and went into the brief as a requirement
+without going into the brief as a warning. Read the reports you are briefing from for what they cost,
+not only for what they found.
+
+### `## Open questions` is a note in the planner's template and a hard gate in `/implement`
+
+`implementation-planner`'s role prompt describes `## Open questions` as the section where a plan
+raises what a human must decide. The `implement` skill's §1 stops before stage 1, having dispatched
+nothing, when "the plan still carries `## Open questions`". Both are working as written and they
+disagree, so a planner following its own instructions produces a plan that cannot be executed.
+
+Measured on 2026-08-15: the plan-08 planner was resumed three times, and it named this as the fact
+it had to learn from a resume rather than from its brief — *"my own role template says the section
+is for the human, and only resume #3 revealed it is a gate."* It had written five questions in good
+faith.
+
+A plan whose open questions were all resolved in conversation still blocks — the gate reads the
+file, not the transcript.
+
+**Reconciled 2026-08-15, same day.** Both sides were edited, because fixing one would only have
+moved the contradiction. `implementation-planner` now calls the section a gate in its own template,
+gained a § *A question that arises after Step 0* ranking the four things to do with a late question
+(deferring is last), and must open its report with "blocked" whenever the section is non-empty. The
+`implement` skill now refuses on **an unanswered entry under** the heading rather than on the
+heading — its old wording, read literally, refused every plan, since the template mandates the
+heading and `_None._` is the passing value.
+
+### A brief that adds a case to an existing classifier must say what the classifier returns for it
+
+The Project Context authoring brief made `.devdigest/` a scan root (AC-61) and made stored paths
+relative to it (AC-52). It never joined those two facts to the pre-existing "first path segment
+names the kind" rule, which then quietly answered `other` for every document in the new root.
+
+The implementer could not resolve it alone — the answer is a product decision, not a lookup — so it
+came back as an open question and cost a whole round. **One line would have removed it.** When a
+brief introduces a new root, prefix, status or file kind, state what each existing classifier over
+that dimension returns for the new case, even when the answer seems obvious: the implementer's
+alternative to being told is to stop and ask.
+
 ## Codebase Patterns
 
 ### The two `docker-compose.yml` files are byte-identical duplicates
@@ -507,13 +717,53 @@ documents, so a plan never lands there. And the plan is a committed file, which 
 English, while the same agent's returned report is chat and stays Ukrainian — one agent, two
 languages, decided by where the text comes to rest.
 
+**Superseded, 2026-08-12.** The premise stopped holding when the agent stopped authoring
+requirements. `planner` was renamed `implementation-planner` and forbidden to write anything
+under `specs/**`: *what* is being built and *why* is now the human's document, and the agent
+plans against it. That makes two artifacts rather than one, so the 2026-08-04 argument — that a
+separate directory "would have split one artifact across two conventions" — no longer applies to
+its own conclusion. Plans land in `plans/NN-topic.md`, one folder for every package, with the
+package recorded in the plan's `**Scope:**` header instead of in its path; `plans/README.md`
+holds the contract and the status table. What moved with it, and what to put back if this ever
+reverses: `implementer.md` Step 0 and its status-flip paragraph, `plan-verifier.md` Rule 6 (which
+now lists three plan shapes, the two older ones still under `specs/`), and the pointer line in
+`specs/README.md`.
+
+**Completed the same day.** The half-measure was leaving the ten documents already in `specs/`
+where they were, which would have left the folder holding both genres permanently and every
+reader deciding case by case which one they had opened. They were moved to `plans/` with
+`git mv`, keeping their `NN-`/`LNN-` names; `plan-verifier.md`'s shape table now distinguishes
+them by heading rather than by folder, because the folder no longer distinguishes anything.
+`specs/` was emptied for `spec-creator`, the agent that now authors the requirements the renamed
+planner refuses to write. Only test fixtures in `server/test/intent-helpers.test.ts` and the
+dated records under `docs/superpowers/plans/` still say `specs/NN-` — the first are arbitrary
+strings feeding `parsePlanRefs`, not paths, and the second are records of what was true then.
+
+That migration also ended "nothing enforces any of it" for exactly one agent: `spec-creator`
+declares a `PreToolUse` hook in its own frontmatter, so `scripts/spec-creator/write-gate.sh`
+refuses its writes outside `specs/`. `registry.sh` still reads `.claude/skills/` and
+`skills-lock.json` only, so nothing checks the agent files themselves.
+
+### A multi-agent plan is a different document, not a flag on the same one
+
+`implementation-planner` asks, before writing, whether the work will be executed by one
+implementer or several, and the answer changes the file: single-agent gets `## Steps`, a linear
+list; multi-agent gets `## Work packages`, where each package declares **Owns** — the exact files
+it alone may write — plus the **Contract** the other packages may assume once it lands.
+
+The ownership line is the load-bearing part. Two implementers dispatched at the same time each
+start with a clean context window, so neither can see the other's edits, and the first thing
+that goes wrong is both writing the same file. A plan that splits the work by *topic* without
+splitting it by *file* has not actually been split. The same coldness is why a contract has to be
+repeated inside every package that consumes it: a package cannot read another package's block.
+
 ### The planner points at skills; it does not carry them
 
 `.claude/agents/planner.md` loads `onion-architecture` and `frontend-architecture` through the
 `Skill` tool, then writes only their names into the plan's
 `## Skills the implementer must invoke` table. The frontmatter `skills:` field would instead
 preload each skill's full body into every planner run — the eager model
-`specs/L01-context-layering.md:29` rules out for this repo: "No `@import`. Imports are eager,
+`plans/L01-context-layering.md:29` rules out for this repo: "No `@import`. Imports are eager,
 which defeats the point. Pointers only." A plan that quotes a skill also goes stale the day the
 skill changes; a plan that names one does not.
 
@@ -718,6 +968,65 @@ not. And `SmartDiffFile` carries `pseudocode_summary`, which cannot be filled wi
 call; Smart Diff is specified to make none, so it is written `null` on purpose
 (`modules/smart-diff/helpers.ts`), not left as a TODO.
 
+### An unused prompt socket proves the plumbing exists, not that it carries what you need
+
+The entry above says grep before designing, because the scaffolding is usually already there.
+The corollary, found writing `specs/SPEC-01-project-context.md` on 2026-08-13: finding it is not
+the same as being able to use it.
+
+`PromptParts.specs` in `reviewer-core/src/prompt.ts` looks finished. It renders a
+`## Project context` section, wraps every entry with `wrapUntrusted()`, and sits under the shared
+`INJECTION_GUARD`; `run-executor.ts`, `prompt-log.ts` and `trace-builder.ts` all pass
+`specs: null`, so it reads as a socket waiting for its feature. Attaching project documents to a
+review through it as-is fails twice, and both failures are in what the socket says to the model
+rather than in whether it is wired:
+
+- `INJECTION_GUARD` tells the model that untrusted data does **not** define its job. An attached
+  specification exists precisely to define what counts as correct, so the guard can make the model
+  disregard the documents the user attached — the feature defeated by its own defence.
+- `wrapUntrusted('spec-N', …)` labels each block with an ordinal, not a path. The model
+  physically cannot cite the document it relied on, which is the one observable that proves
+  attached context did anything.
+
+The resolution the spec records is to emit a trusted preamble line between the `## Project
+context` heading and the first wrapper — outside `<untrusted>` — and to carry the path inside the
+wrapper next to the content. Not to amend `INJECTION_GUARD`: it is the one shared defence and it
+runs on every review path, the GitHub/CI runner included (`prompt.ts:12-14`).
+
+So when a socket turns up unused, read what it passes to the model, not just that it is there.
+
+### A cap the server refuses on and the client must obey belongs in `vendor/shared/contracts/`, not in `modules/*/constants.ts`
+
+**Symptom.** `ContextService.docContent` serves a document WHOLE up to `MAX_DOC_FILE_BYTES`
+(400 KB) while `persistWrite` refuses anything above `MAX_DOC_CHARS` (40 000 code points), so
+every document between the two caps was listed, opened, offered an `Edit`, and answered
+`400 too_large` on every `Save`. Under this repository's own scan roots 3 of 30 documents sit in
+that band: `docs/superpowers/plans/2026-08-01-pr-self-review.md` comes back as 74 636 code points
+from `GET /repos/:id/context/docs/content` (read off the running API, 2026-08-14).
+
+**Cause.** The number lived in `server/src/modules/context/constants.ts`, which no client file can
+import, so the editor had no way to refuse before the request. `contracts/context.ts` documents the
+opposite precedent one screen below — `512` typed twice with "change one and change the other",
+because a contract may not import a module — and copying a second number that way would have put
+the same disagreement one edit away again.
+
+**Fix.** Define it in `vendor/shared/contracts/context.ts` (both physical copies; `diff -r
+server/src/vendor/shared client/src/vendor/shared` is the gate) and re-export it from the module's
+constants file, which keeps that file readable as the one list of the feature's caps and leaves
+`MAX_DOC_BYTES = MAX_DOC_CHARS * 4` beside it. `contracts-stay-pure` permits this: the constant
+imports nothing. On the client, compare with `[...content].length` and never `String.length` — but
+test `content.length <= cap` first, which is exact rather than an approximation, since a string
+never holds more code points than UTF-16 units, and it keeps the spread off a 400 KB document on
+every render.
+
+**Amended 2026-08-14, same day:** doing this makes the client import a VALUE from
+`@devdigest/shared` for the first time, and that broke the Next build outright — webpack cannot
+resolve the barrel's own `./contracts/findings.js` specifiers, while `tsc` and vitest both can, so
+every gate stayed green and only the browser showed it. The one-line `resolve.extensionAlias` rule
+that fixes it, and why `pnpm build` now belongs in the gate list for any change like this, are in
+`client/INSIGHTS.md` → *Recurring Errors & Fixes*. Share the constant — but build the client
+before believing it works.
+
 ## Tool & Library Notes
 
 ### GitHub's "Download ZIP" flattens the `CLAUDE.md` symlinks into 9-byte text files
@@ -733,7 +1042,7 @@ any real checkout — verified 2026-08-01 on macOS and in a Linux container
 
 **Fix.** Clone, do not download. If a ZIP path ever has to be supported, drop the symlinks
 and switch to the pointer-stub variant in
-[`specs/01-agents-md-migration.md`](specs/01-agents-md-migration.md).
+[`plans/01-agents-md-migration.md`](plans/01-agents-md-migration.md).
 
 ### Mixed package managers across packages
 
@@ -762,7 +1071,7 @@ basename against `["CLAUDE.md", "CLAUDE.local.md"]`. The binary's only other men
 **Fix.** Keep `AGENTS.md` as the real file and commit `CLAUDE.md` beside it as a symlink
 (`ln -s AGENTS.md CLAUDE.md`, git mode `120000`). The loader follows it, in the root and in
 nested modules alike — both verified 2026-08-01. Do not replace the symlink with a regular
-file; see [`specs/01-agents-md-migration.md`](specs/01-agents-md-migration.md).
+file; see [`plans/01-agents-md-migration.md`](plans/01-agents-md-migration.md).
 
 ### Staging part of a file is unavailable to an agent — edit the unwanted line instead
 
@@ -944,6 +1253,45 @@ await m.parse(SOURCE);   // throws on a syntax error
 `Cannot set property navigator`. And check the negative case before trusting the positive —
 `vector(1536)` inside an `erDiagram` **parses**, so it is useless as a control; use genuinely
 broken syntax instead.
+
+### zsh does not word-split an unquoted variable, so a batched file edit silently becomes one filename
+
+**Symptom.** `FILES="a.md b.md c.md"` then `perl -pi -e '…' $FILES` returns
+`Can't open a.md b.md c.md: No such file or directory` — one error, all names joined, nothing
+edited. The same two lines work in bash, and the shell here is zsh (`AGENTS.md` § *Environment*).
+
+**Cause.** zsh does not perform word splitting on unquoted parameter expansion; bash does.
+
+**Fix.** Pass the paths as literal arguments across several lines, or write `${=FILES}` to opt
+into splitting. Do not assume a batch edit ran because the command exited — `rg` the pattern
+afterwards and confirm the hit count fell.
+
+### A `U+0000` escape typed into `Edit` lands as a real NUL byte
+
+**Symptom.** You add a control-character guard — a string literal for U+0000, or a regex class
+containing one — and afterwards `grep` reports *"binary file matches"* instead of the line, or
+matches nothing at all and exits silently. Tests may still pass. `file` still says "UTF-8 text",
+so that is not a check.
+
+**Cause.** The escape is interpreted on the way to disk rather than preserved as its six source
+characters. The `server/src/modules/context/service.ts` write-path work hit this **twice** on
+2026-08-15; the second recovery cost more than the first, because a NUL is invisible in a normal
+read and the tool reports the edit as successful.
+
+**Then it happened a third time, writing this very entry.** The `Edit` call that added the
+paragraph above put four real NUL bytes into `INSIGHTS.md` — in the heading, in the symptom, and
+in its own fix line. That is the strongest evidence available that this is not avoidable by being
+careful: the escape does not survive the tool, whatever the file is.
+
+**Fix.** Do not type the escape into `Edit` at all. (`Write` was not tested and may behave the
+same; assume it does.)
+
+- In TypeScript, write `String.fromCodePoint(0)`, or express the range without its lower bound.
+- In prose, write `U+0000` — that is why this entry does.
+- To *detect* it, `grep` is unreliable here; this works and was verified:
+  `python3 -c "import sys;print(open(sys.argv[1],'rb').read().count(b'\x00'))" <file>`
+- To *repair* it, do the replacement in `python3` as well. An `Edit` cannot match a line whose
+  bytes are not what the screen shows, and a second `Edit` re-introduces the byte it is removing.
 
 ## Recurring Errors & Fixes
 
@@ -1164,6 +1512,24 @@ collides, qualify the new one by what distinguishes it rather than renaming the 
 `PrBrief` payload and carries no line numbers. Both copies are then mirrored and re-checked
 with `diff -r server/src/vendor/shared client/src/vendor/shared`.
 
+### The push gate fires on a banned command appearing as data, not only as a call
+
+**Symptom.** 2026-08-13, a Bash call that ran no git command at all was refused with *"PR
+Self-Review: the verdict is stale — HEAD moved since it was written"*. It was a test harness
+for another hook, and among its twenty fixture strings were `'gh pr create --fill'` and
+`'git push origin main'` — arguments to a shell function, never executed.
+
+**Cause.** `scripts/pr-self-review/gate.sh` is a `PreToolUse` hook that inspects the command
+*text*. Nothing in that text distinguishes a quoted literal inside a `check 2 '…'` call from
+an invocation, and nothing should — a hook that tried to parse shell well enough to tell them
+apart would be bypassable by the first `$VAR` it met.
+
+**Fix.** Split the literal where it is only ever data: `"gh pr ""create --fill"` and
+`"git ""push origin main"` reach the fixture identically and match no pattern. Same trick for
+any test, doc-generation or grep whose payload has to contain a gated phrase. Do not reach for
+`PR_SELF_REVIEW_SKIP=1` — it is recorded as a bypass in the next report, which is the wrong
+signal for a test that never intended to push.
+
 ## Session Notes
 
 ### 2026-07-27
@@ -1205,7 +1571,7 @@ with `diff -r server/src/vendor/shared client/src/vendor/shared`.
   `server/drizzle.config.ts`, `server/src/platform/config.ts`). `git restore --staged` on
   each put them back. Stage by explicit path when the tree already carries unrelated work —
   the same hazard the staging entry under Tool & Library Notes describes.
-- Historical files kept the old name deliberately: `specs/L01`, `specs/L02`, this file's
+- Historical files kept the old name deliberately: `plans/L01`, `plans/L02`, this file's
   earlier entries and the plan under `docs/superpowers/plans/`. The symlink keeps every
   path in them resolvable, and `specs/README.md` forbids rewriting a record.
 - Made the findings card interactive (scroll + GitHub links) on both the PR list and the
@@ -1306,7 +1672,7 @@ with `diff -r server/src/vendor/shared client/src/vendor/shared`.
 
 - Four agents added — `test-writer`, `architecture-reviewer`, `plan-verifier`, `doc-writer` —
   taking `.claude/agents/` to seven. Spec and plan are one document,
-  `specs/04-agents-for-tests-review-and-docs.md`, because `INSIGHTS.md` already records that a
+  `plans/04-agents-for-tests-review-and-docs.md`, because `INSIGHTS.md` already records that a
   Development Plan in this repo *is* a spec. A first draft split them into
   `docs/superpowers/plans/`; it was merged back.
 - Four drafts of the same four agents existed in the working tree and were deleted unread, on the
@@ -1320,7 +1686,7 @@ with `diff -r server/src/vendor/shared client/src/vendor/shared`.
   columns the DB does not constrain, and `isConfigChange:84` tests `outputSchema` for presence
   where the other eight fields test for difference, so every editor save bumps the agent version
   with a byte-identical snapshot.
-- `plan-verifier` against `specs/03`: 50 items enumerated, 50 rows, 44 MET / 3 NOT_MET /
+- `plan-verifier` against `plans/03`: 50 items enumerated, 50 rows, 44 MET / 3 NOT_MET /
   3 NOT_VERIFIED. Decomposing compound criteria paid for itself immediately — criterion A2
   carries five conditions in one bullet, and all six of the non-MET verdicts live inside it.
   Read as one row it would have scored "mostly done".
@@ -1328,6 +1694,64 @@ with `diff -r server/src/vendor/shared client/src/vendor/shared`.
   four dispatch targets: the `conventions` slice they named lives unmerged on
   `feat/conventions-extractor`. Retargeted to `modules/agents/`. **Choosing a branch changes which
   code exists — re-check any plan whose steps name paths before running them there.**
+
+### 2026-08-12
+
+- Added `spec-creator`: the agent that authors the requirements `implementation-planner` was
+  forbidden to write earlier the same day. Spec template has English headings and Ukrainian
+  prose — the file is committed, the reader who approves it is not the repo — with acceptance
+  criteria in EARS and a `## Module interactions` section that did not exist in the source
+  template. Skills are deliberately **not** declared in its frontmatter: on the dispatch path
+  a declared skill is injected whole, and `mermaid-diagram` is needed by a minority of specs.
+- Finished the `specs/` ↔ `plans/` split by moving the ten legacy documents, rather than
+  leaving them where the morning's decision had. Half a migration reads as ambiguity forever:
+  a folder holding both genres makes every reader classify each file by hand.
+- Two reference classes were deliberately **not** rewritten by the move. Test fixtures in
+  `server/test/intent-helpers.test.ts` and `IntentCard.test.tsx` are arbitrary strings feeding
+  `parsePlanRefs`, not paths — rewriting them would have churned assertions for nothing. The
+  dated plans under `docs/superpowers/plans/` are records of what was true when written.
+- The design conversation cost four rounds of questions and changed three decisions that had
+  already been "settled": the folder layout, who flips `approved`, and whether the old files
+  move. Two of those only surfaced because the working tree was read before anything was
+  written — an uncommitted migration was already sitting there, and `plans/README.md` named an
+  agent that did not exist yet.
+
+### 2026-08-13
+
+- Audited the eight-agent SDD pipeline end to end. Three fixes landed; the rest were raised and
+  left for a decision. `implementer` lost its `skills:` field entirely, its Step 0 now tells a
+  multi-agent dispatch to read its own `### PN` block instead of the whole plan, and the
+  serialisation rule for `test-writer` was written into `test-writer.md`, `plan-verifier.md`,
+  `architecture-reviewer.md` and the pipeline README — it had lived only in this file since
+  2026-08-05, where no agent reads it.
+- The measurement that drove all of it is above under *What Doesn't Work*: the gates are cheap
+  and the preload was not. Worth repeating because the intuition it corrects is strong — an
+  agent that shells out to test suites *looks* like the expensive one.
+- Three findings were raised and **not** acted on, because each changes the pipeline rather than
+  a file. (1) `architecture-reviewer` is routinely dispatched "to find bugs" and its own body
+  routes correctness to `test-writer` and performance to nobody — combined with
+  `pr-self-review/SKILL.md:370` *"It does not hunt for bugs"*, no stage in the pipeline hunts
+  logic defects; `/code-review` is the existing answer and is simply not in the order.
+  (2) `plan-verifier` belongs immediately after `implementer`, before the two reviewers, and in
+  multi-agent mode after **each** package — a `## Contract` block is P2's assumption about what
+  P1 delivered, and verifying it only at the end means two packages to redo instead of one.
+  (3) `spec-creator` numbers `AC-N` and `implementation-planner` renumbers to `R#` with no check
+  that every `AC` survived the crossing, and `plan-verifier` reads only the plan — so a criterion
+  can vanish between the two documents and every downstream report still reads all-`MET`.
+- **All three were acted on later the same session**, so the bullet above records why they were
+  deferred, not their outcome. `/code-review` and a reordered `plan-verifier` are now in the
+  pipeline order in `.claude/agents/README.md`; `architecture-reviewer`'s § *Subject* names
+  `/code-review` as the owner of correctness and performance, where performance previously read
+  *"nobody yet"*; `plan-verifier` gained per-package dispatch for `multi-agent` plans and a Rule 6
+  clause checking `AC` → `R#` coverage; `implementation-planner` now cites `<spec> § AC-N` in its
+  requirement table and must account for every `AC`. `plans/README.md` and `specs/README.md` carry
+  the same rule so it survives someone reading only one of them.
+- **The `AC` → `R#` rule is enforced from both sides on purpose, and neither side is a gate.** The
+  planner must account for every criterion, and the verifier re-checks that it did. Nothing
+  mechanical reads both documents, and nothing will — a script could compare the two lists, but the
+  interesting cases are an `AC` deliberately deferred and an `R#` that merges two, and both look
+  like drift to a diff. Two agents disagreeing is the signal; that is the same shape as the
+  vendored `shared/` pair, where the gate exists precisely because typecheck cannot see across.
 
 ## Open Questions
 
@@ -1349,7 +1773,7 @@ with `diff -r server/src/vendor/shared client/src/vendor/shared`.
   verdicts. The agent treated an admission against interest as admissible; without that written
   down, the next run turns two real NOT_MET into NOT_VERIFIED and they vanish from the report.
 - `implementer`'s body forbids it from invoking `mermaid-diagram` ("belongs to the planner") while
-  `specs/04` step 1 required that skill to rewrite that skill's own files. It read both files
+  `plans/04` step 1 required that skill to rewrite that skill's own files. It read both files
   directly instead, which is strictly more complete for a rewrite, so nothing was lost — but a
   plan and a body can require opposite things and only the agent notices.
 - `architecture-reviewer`'s severity axis is not reproducible: `agents/service.ts:55` scored
@@ -1367,7 +1791,7 @@ with `diff -r server/src/vendor/shared client/src/vendor/shared`.
   which is exactly the defect `server/INSIGHTS.md` records for `slice`. Left alone because the
   prompt-log plan did not ask for it and `reviewer-core/test/prompt.test.ts:74` pins the current
   `length === 4000`; fixing it means changing both the cut and that assertion.
-- `specs/07-blast-radius.md` caps callers two independent times and the second can never fire.
+- `plans/07-blast-radius.md` caps callers two independent times and the second can never fire.
   Step 3 makes `repo-intel`'s `getBlastRadius` return at most `MAX_CALLERS_PER_SYMBOL` (20) per
   `viaSymbol`; step 7 then asks `blast/helpers.ts` `toView` to set `caller_count` to the count
   **before** the 20 cap and `truncated` accordingly. Since `toView` only ever sees the already
@@ -1383,3 +1807,10 @@ with `diff -r server/src/vendor/shared client/src/vendor/shared`.
   and a decision-versus-edit tie-break; `implementer` may invoke `mermaid-diagram` when a plan
   names it in *Skills the implementer must invoke*. The `react-testing-library` line cap above is
   still open.
+- The three Project Context strings that name the write cap — `create.tooLarge`,
+  `reader.tooLongToEdit` and `reader.tooLongToSave` in `client/messages/en/context.json` — spell
+  "40 000" in prose, while the checks behind them now derive from `MAX_DOC_CHARS` in
+  `vendor/shared/contracts/context.ts`. Lower the constant and all three sentences lie. Passing it
+  as an ICU `{max, number}` was rejected on 2026-08-14 because `en` renders it "40,000" and the
+  rest of that file writes numbers with a space; a pre-formatted value would need every `t(errorKey)`
+  call site to pass it. Left as prose deliberately, and it is a real coupling, not an oversight.

@@ -271,7 +271,7 @@ show exactly `cli.ts:40` and `cli.ts:61` plus doc comments.
 ### A spec that freezes strings needs a forward pointer when a later spec changes one
 
 `AGENTS.md` §"The six description strings are fixed" says a wrong description is fixed "in the
-spec first", naming `specs/06-mcp-server.md` §Appendix. Spec 07 step 13 then replaced
+spec first", naming `plans/06-mcp-server.md` §Appendix. Spec 07 step 13 then replaced
 `get_blast_radius`'s description and its `readOnlyHint`, so 06's appendix and the shipped code
 disagreed and the rule pointed at the wrong file — only the comment at `src/index.ts:40-44`
 recorded it. Fixed 2026-08-09 by marking 06 superseded *in part* (status header, step 9, the

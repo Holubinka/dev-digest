@@ -28,6 +28,18 @@
     "liveNote": "Prices are pulled live from OpenRouter — USD per 1M input/output tokens.",
     "noKeyNote": "Add an OpenRouter API key under API Keys to load the model list and prices."
   },
+  "projectContext": {
+    "title": "Project Context",
+    "body": "Which folders DevDigest scans for .md documents, and how much of a review prompt they may occupy.",
+    "rootsLabel": "Scan folders",
+    "rootsHint": "Repo-relative folder names, comma-separated. Every .md under them is listed on the Project Context page.",
+    "rootsPlaceholder": "specs, docs, insights",
+    "budgetLabel": "Token budget",
+    "budgetHint": "Tokens the assembled Project context section may occupy, per prompt. Documents that do not fit are dropped, in attachment order. This is the number the over-budget warning in an agent editor measures against.",
+    "usingDefault": "default",
+    "rescanNote": "Changing the folders does not re-scan anything. The documents already listed were found under the previous folders — press Rescan on a repository's Project Context page to refresh it.",
+    "invalidBudget": "Enter a positive whole number."
+  },
   "workspace": {
     "title": "Workspace",
     "body": "Appearance and sync preferences for this workspace.",

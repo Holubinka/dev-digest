@@ -60,6 +60,28 @@ chasing anything down. Name the file, the command, the number.
 
 Writing nothing is a valid outcome. An empty section beats a platitude in it.
 
+## An insight is a record, not a rule
+
+`INSIGHTS.md` says *this happened, here is what it cost, here is what to check*. `AGENTS.md`, a
+skill and a dependency-cruiser rule say *always do this*. **Promoting one to the other is a
+separate, deliberate act, and it is not yours to make while writing the entry.**
+
+The difference is what a reader may skip. An insight is advice a future agent weighs against its
+own situation; a rule is a constraint it obeys without weighing. Turn every observation into a
+rule and the rules stop being read, because most of them will not apply — and the one that
+mattered is now buried among forty that did not.
+
+Two tests before you even suggest a promotion, and both must hold:
+
+- **It recurred.** Once is an anecdote; a dated correction under an existing entry is the honest
+  home for the second occurrence. A rule earns its place on the third.
+- **Obeying it blindly is right every time.** If the answer is "it depends on the module", it is
+  an insight. Rules that need a judgement call are worse than no rule, because they get followed
+  where they do not fit.
+
+When both hold, say so in your report as a recommendation with the file it belongs in — and leave
+the entry in `INSIGHTS.md` where it is. Whoever owns that rule file decides.
+
 ## Entry format
 
 Section headings are `##`. Each entry is `###` beneath one of them.

@@ -7,7 +7,7 @@ match opens itself while a filter is active, because a collapsed one made the fi
 inert.
 
 The same counts on the Pull Requests list are a separate, cross-package spec:
-[`../../specs/L04-findings-on-the-pr-list.md`](../../specs/L04-findings-on-the-pr-list.md).
+[`../../plans/L04-findings-on-the-pr-list.md`](../../plans/L04-findings-on-the-pr-list.md).
 
 ## Problem
 
