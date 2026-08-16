@@ -19,12 +19,14 @@ import {
   MAX_BLAST_CALLERS,
   MAX_BLAST_ENDPOINTS,
   MAX_BLAST_FACT_CHARS,
+  MAX_BLAST_PART_CHARS,
   MAX_BLAST_SYMBOLS,
   MAX_FILE_PATH_CHARS,
   MAX_DROPPED_REFS,
   MAX_INTENT_CHARS,
   MAX_ISSUE_BODY_CHARS,
   MAX_ISSUE_TITLE_CHARS,
+  MAX_LINE_CHARS,
   MAX_PR_BODY_CHARS,
   MAX_PR_TITLE_CHARS,
   MAX_PROSE_CHARS,
@@ -154,8 +156,18 @@ function diffStatsBlock(sources: BriefSources): BriefBlock {
  * i.e. 130 paths the model could name without ever having been shown them.
  * `diff_stats` prints its capped list and is the sole source of changed-file refs.
  *
- * The caps are applied to what is LISTED, so the refs and the text cannot
- * disagree: a symbol past `MAX_BLAST_SYMBOLS` contributes neither.
+ * EVERY VARIABLE PART IS CLAMPED BEFORE THE LINE IS ASSEMBLED, never after, and
+ * `refs` holds the clamped string rather than the source one. That is what makes
+ * the refs and the text unable to disagree, and until 2026-08-16 this comment
+ * claimed it while the code did the opposite: `refs.add(symbol.file)` ran and
+ * `clamp()` then cut the line the path sat in, so a view with one 500-code-point
+ * symbol name licensed four names the prompt never printed. Two caps therefore,
+ * not one — `MAX_BLAST_PART_CHARS` per part, and `MAX_BLAST_FACT_CHARS` as the
+ * line ceiling their sum stays under. The count caps are the other half: a symbol
+ * past `MAX_BLAST_SYMBOLS` contributes neither line nor refs.
+ *
+ * `test/brief-allowed-refs.test.ts` asserts the invariant itself over a hostile
+ * view. It is not maintained by reading this paragraph.
  */
 function blastBlock(view: BlastRadiusView): BriefBlock {
   const refs = new Set<string>();
@@ -170,23 +182,23 @@ function blastBlock(view: BlastRadiusView): BriefBlock {
   } else {
     lines.push('', 'Changed symbols and what reaches them:');
     for (const symbol of view.symbols.slice(0, MAX_BLAST_SYMBOLS)) {
-      refs.add(symbol.file);
+      const file = part(symbol.file);
+      refs.add(file);
       lines.push(
-        clamp(
-          `${BULLET} ${symbol.name} (${symbol.kind}) in ${symbol.file} — ${symbol.caller_count} caller(s)`,
-        ),
+        `${BULLET} ${part(symbol.name)} (${part(symbol.kind)}) in ${file} — ${symbol.caller_count} caller(s)`,
       );
       for (const caller of symbol.callers.slice(0, MAX_BLAST_CALLERS)) {
-        refs.add(caller.file);
-        lines.push(clamp(`    called by ${caller.symbol} in ${caller.file}`));
+        const callerFile = part(caller.file);
+        refs.add(callerFile);
+        lines.push(`    called by ${part(caller.symbol)} in ${callerFile}`);
       }
       for (const endpoint of symbol.endpoints.slice(0, MAX_BLAST_ENDPOINTS)) {
-        refs.add(endpoint.file);
-        refs.add(endpoint.label);
+        const label = part(endpoint.label);
+        const endpointFile = part(endpoint.file);
+        refs.add(endpointFile);
+        refs.add(label);
         lines.push(
-          clamp(
-            `    reaches ${endpoint.kind === 'http' ? 'endpoint' : 'cron'} ${endpoint.label} in ${endpoint.file}`,
-          ),
+          `    reaches ${endpoint.kind === 'http' ? 'endpoint' : 'cron'} ${label} in ${endpointFile}`,
         );
       }
     }
@@ -221,8 +233,14 @@ function prTextBlock(sources: BriefSources): BriefBlock | null {
   };
 }
 
+/** The whole line — only for a line that carries no reference. `view.reason` is the one. */
 function clamp(line: string): string {
   return truncateCodePoints(line, MAX_BLAST_FACT_CHARS);
+}
+
+/** One interpolated part of a fact line, clamped BEFORE the line exists. */
+function part(text: string): string {
+  return truncateCodePoints(text, MAX_BLAST_PART_CHARS);
 }
 
 function renderIntent(intent: {
@@ -442,10 +460,17 @@ export interface GroundedBrief {
  * them. The upstream of this answer — PR body, linked issue, spec files — is
  * attacker-controlled, its only injection defence is a paragraph of system
  * prompt, and everything below flows into jsonb and out of every GET. So the
- * counts are capped, the reference lists de-duplicated, and the two prose fields
- * truncated. Every number lives in `constants.ts` beside the input caps, and
- * none of them is a Zod `.max()` — see the note there for why the schema cannot
- * carry them.
+ * counts are capped, the reference lists de-duplicated, and EVERY free string
+ * truncated at the point its owner is kept. A cap on a list length bounds the
+ * list and not the strings in it: until 2026-08-16 `kind`, `title`, `explanation`,
+ * `reason` and each element of `dropped_refs` travelled through here at whatever
+ * length the model chose, and `service.ts` sends no `max_tokens`, so nothing else
+ * in the system bounded them either. What is NOT truncated here is what something
+ * else already bounds: `severity` is an enum, and every surviving `ref` is a
+ * member of the allowed set and therefore capped by the input caps.
+ *
+ * Every number lives in `constants.ts` beside the input caps, and none of them is
+ * a Zod `.max()` — see the note there for why the schema cannot carry them.
  *
  * `dropped_risks` counts a risk the reviewer will not see, whichever bound
  * removed it: ungrounded and over-cap are different reasons for the same
@@ -472,7 +497,17 @@ export function groundBrief(model: RiskBrief, allowed: Set<string>): GroundedBri
       droppedRisks += 1;
       continue;
     }
-    grounded.push({ ...risk, file_refs: [...refs].slice(0, MAX_RISK_FILE_REFS) });
+    // Truncated HERE, at the point the risk is kept, and not by the contract:
+    // `severity` is an enum and `file_refs` are members of the allowed set, so
+    // those two are already bounded by the input caps. The three free strings are
+    // not bounded by anything at all before this line.
+    grounded.push({
+      ...risk,
+      kind: truncateCodePoints(risk.kind, MAX_LINE_CHARS),
+      title: truncateCodePoints(risk.title, MAX_LINE_CHARS),
+      explanation: truncateCodePoints(risk.explanation, MAX_PROSE_CHARS),
+      file_refs: [...refs].slice(0, MAX_RISK_FILE_REFS),
+    });
   }
 
   grounded.sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 3) - (SEVERITY_ORDER[b.severity] ?? 3));
@@ -491,7 +526,7 @@ export function groundBrief(model: RiskBrief, allowed: Set<string>): GroundedBri
     }
     if (seenFocus.has(item.ref)) continue;
     seenFocus.add(item.ref);
-    review_focus.push(item);
+    review_focus.push({ ...item, reason: truncateCodePoints(item.reason, MAX_LINE_CHARS) });
   }
 
   return {
@@ -499,7 +534,11 @@ export function groundBrief(model: RiskBrief, allowed: Set<string>): GroundedBri
     why: truncateCodePoints(model.why, MAX_PROSE_CHARS),
     risks,
     review_focus: review_focus.slice(0, MAX_REVIEW_FOCUS),
-    dropped_refs: [...droppedRefs].slice(0, MAX_DROPPED_REFS),
+    // A dropped ref matched nothing in the allowed set, so nothing about it is
+    // bounded: not how many there are, and not how long one is.
+    dropped_refs: [...droppedRefs]
+      .slice(0, MAX_DROPPED_REFS)
+      .map((ref) => truncateCodePoints(ref, MAX_FILE_PATH_CHARS)),
     dropped_risks: droppedRisks,
   };
 }

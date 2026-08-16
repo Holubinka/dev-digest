@@ -250,6 +250,27 @@ to `MAX_CANDIDATES` is the same move. Note the ordering: the risk cap runs AFTER
 sort, so what it takes is the least severe, and the overflow is added to `dropped_risks` rather
 than disappearing.
 
+### An invariant maintained at the call site breaks once per call site
+
+**Symptom.** "A block's `refs` are exactly what its text printed" broke three times in three
+places on one feature, found by three different readers: refs built from the raw sources before
+the budget walk cut anything; refs seeded from `view.changed_files`, which no block prints; and
+`refs.add(...)` running before `clamp()` cut the line the name sat in. Each fix revealed the next
+one down. Three point fixes, one week, and the doc comment above `blastBlock` asserted the
+invariant held the whole time.
+
+**Cause.** The rule was written down twice — as a paragraph of comment and as a diagnostic in
+this file — and enforced nowhere. Every new call site had to re-derive it, and a comment claiming
+the invariant reads exactly the same whether or not the code below it still keeps it.
+
+**Fix.** Test the rule, not the sites. `test/brief-allowed-refs.test.ts` runs
+`[...buildAllowedRefs(fit.included)].filter(r => !fit.user.includes(r))` over a deliberately
+hostile view — every name longer than a rendered line, more changed files than `MAX_FILE_PATHS`,
+a spec the walk truncated beside one it dropped, a non-`full` status — and a new call site cannot
+be added without it. The signal that the fixture was the problem and not the coders: the four new
+cases failed against the code as shipped, while the eight old ones passed through two of the
+three holes. Cost of skipping this: rounds two and three of a review that was capped at two.
+
 ## Codebase Patterns
 
 ### The allowed-refs invariant is checkable in one line against a real PR
@@ -267,6 +288,26 @@ call, no spend): **0** of 106 allowed refs were absent from the prompt after the
 of 214 were absent before it. Reach for this before believing a unit test that only ever sees a
 one-symbol fixture — a 170-file PR against a 40-path cap is where the two halves of the set come
 apart, and no hand-written fixture is that shape by accident.
+
+**Added 2026-08-16.** It is a test now as well as a diagnostic — see "An invariant maintained at
+the call site breaks once per call site" above. Keep running it against a real PR anyway: the
+same run confirmed 0 of 106 after the third fix, and it is the only check that sees the shapes a
+fixture author does not think of. That run is also where the caps got their numbers, because real
+data disagreed with the arithmetic — 4 of the 1835 rendered parts of PR #20's blast view are
+longer than 120 code points.
+
+### Clamp the parts of a rendered line, never the finished line
+
+A line assembled from untrusted parts and then truncated has lost the ability to say which parts
+survived: it is one string, and the names inside it are no longer addressable. So anything that
+declares a name printed — `blastBlock` adding a path or an endpoint label to the allowed set —
+must clamp that name **before** the line exists and register the clamped string, not the source
+one (`modules/brief/helpers.ts`, `part()` against `MAX_BLAST_PART_CHARS`).
+
+The line ceiling then follows from the part caps instead of being chosen beside them:
+`MAX_BLAST_FACT_CHARS` is 3 × `MAX_BLAST_PART_CHARS` + 32, which is why it moved when the part
+cap did. Pick the part cap from measured repository content, not from a round number — 120 looked
+generous for a file path and cuts four real ones in this repo.
 
 ### A DTO mapper without a return type is unchecked, even where the caller has one
 
@@ -1379,3 +1420,16 @@ instead of minutes.
   is disabled entirely under `NODE_ENV=test`, so `{ max: 30, timeWindow: '1 minute' }` on each write
   route is the same population for a local-first single-workspace install and is untestable by the
   integration suite. A workspace-keyed limiter was explicitly out of scope for plan 09.
+- **Two more allowed-refs holes are known and unfixed, both outside the round-3 brief.** (1) A
+  spec block's `refs` is its own path on the argument that the path leads the section and a
+  prefix cut keeps it — but `truncateToBudget` guarantees only ONE code point, so a spec cut to
+  less than its own `### <path>` header licenses a path the prompt never printed. Measured
+  2026-08-16: with one 4000-char spec at `plans/a-long-plan-name.md`, a budget of
+  `fixedBlocks + 71…98` reports `specs: truncated` and leaves that path allowed and unprinted;
+  at +70 the remainder goes non-positive and the spec is `dropped` instead, which is why the
+  window is narrow rather than absent. (2) `wrapUntrusted` rewrites
+  `</untrusted>` to `<\/untrusted>` inside the content, so a path or endpoint label containing
+  that literal is registered in one form and printed in another. Both were noticed on 2026-08-16
+  while fixing the third break of the invariant, and both are the same family: a caller declaring
+  a name printed without asking the rendered text. The enforcement test would catch either the
+  moment a fixture expresses it.

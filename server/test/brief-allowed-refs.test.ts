@@ -18,8 +18,15 @@
 import { describe, it, expect } from 'vitest';
 import type { BlastRadiusView } from '@devdigest/shared';
 import { buildAllowedRefs, buildBlocks, fitToBudget } from '../src/modules/brief/helpers.js';
-import type { BriefSources } from '../src/modules/brief/types.js';
-import { MAX_FILE_PATHS } from '../src/modules/brief/constants.js';
+import type { BriefFit, BriefSources } from '../src/modules/brief/types.js';
+import {
+  MAX_BLAST_CALLERS,
+  MAX_BLAST_ENDPOINTS,
+  MAX_BLAST_FACT_CHARS,
+  MAX_BLAST_SYMBOLS,
+  MAX_FILE_PATHS,
+  MAX_FILE_PATH_CHARS,
+} from '../src/modules/brief/constants.js';
 
 const count = (text: string) => text.length;
 
@@ -70,9 +77,12 @@ function sources(over: Partial<BriefSources> = {}): BriefSources {
   };
 }
 
+function fitFor(src: BriefSources, budget: number): BriefFit {
+  return fitToBudget(buildBlocks(src), 0, budget, count);
+}
+
 function allowedFor(src: BriefSources, budget: number): Set<string> {
-  const blocks = buildBlocks(src);
-  return buildAllowedRefs(fitToBudget(blocks, 0, budget, count).included);
+  return buildAllowedRefs(fitFor(src, budget).included);
 }
 
 describe('buildAllowedRefs — membership follows what actually reached the prompt', () => {
@@ -191,5 +201,185 @@ describe('buildAllowedRefs — membership follows what actually reached the prom
       },
     });
     expect(allowedFor(src, 100_000).size).toBe(0);
+  });
+});
+
+/* ------------------------------------------------- the invariant, enforced */
+
+/**
+ * `server/INSIGHTS.md` writes the whole contract of `buildAllowedRefs` down —
+ * and writes it down as a diagnostic to run by hand:
+ *
+ *   [...buildAllowedRefs(fit.included)].filter(r => !fit.user.includes(r))  // empty
+ *
+ * Maintained by hand it broke three times, in three places, found by three
+ * different readers: refs built from the raw sources before the budget walk cut
+ * anything; refs seeded from `view.changed_files`, which no block prints; and
+ * `refs.add(...)` running BEFORE `clamp()` cut the line the name sat in. Each fix
+ * revealed the next one down, because nothing tested the rule itself.
+ *
+ * Below it is a test, and the fixture is hostile ON PURPOSE. Every name in
+ * `BLAST` above is short, which is exactly why the cases above stayed green
+ * through two of those three holes: a fixture that cannot express the failure
+ * turns a green test into evidence of nothing.
+ */
+describe('buildAllowedRefs — the allowed set is a SUBSET of what the prompt printed', () => {
+  /** Longer than one whole rendered fact line, so any line-level cut severs every name in it. */
+  const OVERLONG = MAX_BLAST_FACT_CHARS + 100;
+
+  const long = (prefix: string) => prefix + 'x'.repeat(OVERLONG - prefix.length);
+
+  /**
+   * Every string a blast fact line interpolates is repository content of unbounded
+   * length: a symbol name (multi-line declarations put newlines in it —
+   * `client/INSIGHTS.md`), the indexer's `kind`, a path, an endpoint label built in
+   * a loop. So all of them are overlong here, and none of the files a symbol names
+   * is one `diff_stats` prints — a fixture whose blast paths are also changed-file
+   * paths cannot tell the two blocks apart, which is the mistake that hid the
+   * `changed_files` hole.
+   */
+  function hostileBlast(over: Partial<BlastRadiusView> = {}): BlastRadiusView {
+    const symbols = Array.from({ length: MAX_BLAST_SYMBOLS + 2 }, (_, i) => ({
+      name: long(`sym${i}_`),
+      kind: long(`kind${i}_`),
+      // Symbol 1's own path outruns a fact line by itself, with no help from the name.
+      file: i === 1 ? long('src/never/shown-symbol-1-') + '.ts' : `src/never/shown-symbol-${i}.ts`,
+      line: i + 1,
+      callers: Array.from({ length: i === 0 ? MAX_BLAST_CALLERS + 1 : 1 }, (_, j) => ({
+        file: `src/never/shown-caller-${i}-${j}.ts`,
+        symbol: long(`caller${i}_${j}_`),
+        line: j + 1,
+        rank: 80,
+      })),
+      caller_count: i === 0 ? MAX_BLAST_CALLERS + 1 : 1,
+      truncated: false,
+      endpoints: Array.from({ length: i === 0 ? MAX_BLAST_ENDPOINTS + 1 : 1 }, (_, j) => ({
+        label: long(`GET /e${i}-${j}/`),
+        file: `src/never/shown-endpoint-${i}-${j}.ts`,
+        line: j + 1,
+        depth: 0 as const,
+        kind: 'http' as const,
+      })),
+      endpoint_count: i === 0 ? MAX_BLAST_ENDPOINTS + 1 : 1,
+      endpoints_truncated: false,
+    }));
+    return {
+      status: 'full',
+      reason: null,
+      repo_full_name: 'Holubinka/dev-digest',
+      head_sha: 'bbb',
+      link_sha: 'bbb',
+      index_matches_head: true,
+      changed_files: Array.from({ length: 400 }, (_, i) => `src/f${i}.ts`),
+      symbols,
+      totals: { symbols: symbols.length, callers: 99, endpoints: 99, crons: 0 },
+      summary: null,
+      ...over,
+    };
+  }
+
+  function hostile(over: Partial<BriefSources> = {}): BriefSources {
+    return sources({
+      // What the repository hands over: the first MAX_FILE_PATHS of 400, one of
+      // them longer than a path may be printed at.
+      filePaths: [
+        long('src/overlong-changed-') + '.ts',
+        ...Array.from({ length: MAX_FILE_PATHS - 1 }, (_, i) => `src/f${i}.ts`),
+      ],
+      diff: { files: 400, additions: 900, deletions: 12 },
+      blast: hostileBlast(),
+      ...over,
+    });
+  }
+
+  /** THE invariant. Empty means every allowed name is one the model actually read. */
+  function neverPrinted(fit: BriefFit): string[] {
+    return [...buildAllowedRefs(fit.included)].filter((ref) => !fit.user.includes(ref));
+  }
+
+  it('a blast view whose every name outruns one fact line licenses nothing unprinted', () => {
+    const fit = fitFor(hostile(), 1_000_000);
+
+    expect(fit.inputs.find((row) => row.id === 'blast')?.status).toBe('included');
+    // Guards against a vacuous pass: an empty allowed set satisfies any subset test.
+    expect(buildAllowedRefs(fit.included).size).toBeGreaterThan(MAX_FILE_PATHS);
+    expect(neverPrinted(fit)).toEqual([]);
+  });
+
+  it('what the caps did NOT list is not a member either', () => {
+    const allowed = buildAllowedRefs(fitFor(hostile(), 1_000_000).included);
+
+    expect(allowed.has(`src/never/shown-symbol-${MAX_BLAST_SYMBOLS}.ts`)).toBe(false);
+    expect(allowed.has(`src/never/shown-caller-0-${MAX_BLAST_CALLERS}.ts`)).toBe(false);
+    expect(allowed.has(`src/never/shown-endpoint-0-${MAX_BLAST_ENDPOINTS}.ts`)).toBe(false);
+  });
+
+  it('holds on a 400-file PR, where the unprinted tail is in the blast view', () => {
+    const fit = fitFor(hostile(), 1_000_000);
+    const allowed = buildAllowedRefs(fit.included);
+
+    expect(allowed.has('src/f0.ts')).toBe(true);
+    expect(allowed.has('src/f399.ts')).toBe(false);
+    expect(neverPrinted(fit)).toEqual([]);
+  });
+
+  it('holds when the budget walk drops one spec and truncates another', () => {
+    const src = hostile({
+      specs: [
+        { path: 'plans/first.md', text: 'F'.repeat(4000) },
+        { path: 'plans/second.md', text: 'S'.repeat(4000) },
+      ],
+    });
+    const blocks = buildBlocks(src);
+    const fixed = count(blocks.filter((b) => b.id !== 'specs').map((b) => b.text).join('\n\n'));
+    const fit = fitToBudget(blocks, 0, fixed + 900, count);
+
+    const specs = fit.inputs.find((row) => row.id === 'specs');
+    expect(specs?.status).toBe('truncated');
+    expect(specs?.detail).toContain('plans/second.md (dropped)');
+    expect(fit.inputs.find((row) => row.id === 'blast')?.status).toBe('included');
+    expect(neverPrinted(fit)).toEqual([]);
+  });
+
+  it('holds on a blast view whose status is not full', () => {
+    const fit = fitFor(
+      hostile({
+        blast: hostileBlast({
+          status: 'degraded',
+          reason: long('the index is stale because '),
+          link_sha: null,
+          index_matches_head: false,
+        }),
+      }),
+      1_000_000,
+    );
+
+    expect(buildAllowedRefs(fit.included).size).toBeGreaterThan(MAX_FILE_PATHS);
+    expect(neverPrinted(fit)).toEqual([]);
+  });
+
+  /**
+   * The other half of clamping the parts instead of the line: the line must still
+   * have a ceiling. Per-part caps have to SUM to one, or `MAX_BLAST_FACT_CHARS`
+   * stops bounding anything and a repository with long identifiers writes the
+   * prompt.
+   */
+  it('and no rendered fact line is longer than MAX_BLAST_FACT_CHARS', () => {
+    const text = buildBlocks(hostile()).find((b) => b.id === 'blast')!.text;
+    const facts = text
+      .split('\n')
+      .filter((line) => line.startsWith('* ') || line.startsWith('    '));
+
+    expect(facts.length).toBeGreaterThan(MAX_BLAST_SYMBOLS);
+    for (const line of facts) expect([...line].length).toBeLessThanOrEqual(MAX_BLAST_FACT_CHARS);
+  });
+
+  /** A path is truncated to a path-shaped ceiling before it becomes a reference. */
+  it('an overlong changed-file path is a member only in the form diff-stats printed', () => {
+    const allowed = buildAllowedRefs(fitFor(hostile({ blast: null }), 1_000_000).included);
+    const printed = [...allowed].filter((ref) => ref.startsWith('src/overlong-changed-'));
+
+    expect(printed).toHaveLength(1);
+    expect([...printed[0]!]).toHaveLength(MAX_FILE_PATH_CHARS);
   });
 });

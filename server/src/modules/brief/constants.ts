@@ -89,8 +89,38 @@ export const MAX_BLAST_CALLERS = 5;
 /** Endpoints and crons listed per changed symbol. */
 export const MAX_BLAST_ENDPOINTS = 10;
 
-/** Code points kept from one rendered blast fact line — every part of it is repository content. */
-export const MAX_BLAST_FACT_CHARS = 400;
+/**
+ * Code points kept from ONE VARIABLE PART of a blast fact line: a symbol name,
+ * the indexer's `kind`, a file path, an endpoint label. Every one of them is
+ * repository content, and none of them is bounded by anything upstream.
+ *
+ * THE PART IS CAPPED, NOT THE LINE, and that is the whole point. A path and a
+ * label are also REFERENCES — `blastBlock` puts them in the allowed set — so
+ * cutting the assembled line cuts names already declared printed and licenses the
+ * model to cite what it never read (`buildAllowedRefs`; found 2026-08-16, the
+ * third break of that one invariant). Clamping each part first makes the string
+ * that enters the line the same string that enters the set.
+ *
+ * 200 rather than something tighter because a truncated path is a dead link on
+ * the card: measured against `Holubinka/dev-digest` PR #20 on 2026-08-16, 4 of the
+ * 1835 parts in its blast view are longer than 120 code points and the longest is
+ * 125 (`client/src/app/settings/[section]/_components/…`). A cap that cuts real
+ * paths in the repository the feature is run against trades one wrong answer for
+ * another.
+ */
+export const MAX_BLAST_PART_CHARS = 200;
+
+/**
+ * Code points kept from one rendered blast fact line, and from `view.reason`.
+ *
+ * DERIVED from the part cap, not chosen beside it: the longest line the block
+ * renders is a symbol's — three variable parts plus 22 code points of fixed text
+ * and up to 10 digits of `caller_count` — so 3 × 200 + 32 = 632 ≤ 640. It is the
+ * ceiling the per-part caps have to keep, which is why it moved when they did;
+ * `test/brief-allowed-refs.test.ts` measures every rendered line of a hostile view
+ * against it instead of trusting this paragraph.
+ */
+export const MAX_BLAST_FACT_CHARS = 640;
 
 /** Plan/spec files read from the clone for one brief. */
 export const MAX_SPEC_FILES = 3;
@@ -141,12 +171,37 @@ export const MAX_RISK_FILE_REFS = 10;
  * the record that is served without ever having been vouched for — so it is the
  * one that most needs a ceiling. It is a disclosure, not an inventory: thirty
  * names already say "this answer was not grounded".
+ *
+ * A COUNT IS HALF A BOUND. Each element is an arbitrary string the model wrote,
+ * so thirty of them are thirty times whatever it felt like writing; the length of
+ * one is `MAX_FILE_PATH_CHARS`, the path-shaped ceiling, because a dropped ref is
+ * a path or an endpoint label that failed to match — not prose.
  */
 export const MAX_DROPPED_REFS = 30;
 
 /**
- * Code points kept from `what` and `why`. One constant for both: the prompt asks
- * for "one or two sentences of plain prose" in each, so they are one rule, and
- * the card renders both as text with no length of its own.
+ * Code points kept from `what` and `why`, and from a risk's `explanation`. One
+ * constant for the three: the prompt asks for "one or two sentences" in each
+ * (`risk-brief.system.md`), so they are one rule, and the card renders all three
+ * as text with no length of its own.
  */
 export const MAX_PROSE_CHARS = 600;
+
+/**
+ * Code points kept from a risk's `kind` and `title` and from a review-focus
+ * `reason` — the fields the prompt asks for as ONE LINE: "a short noun phrase",
+ * "a `title` of at most one line", "a `reason` of one short sentence".
+ *
+ * Same argument as `MAX_PROSE_CHARS`, one step shorter, and it needs stating
+ * because until 2026-08-16 only `what` and `why` had a ceiling at all: every other
+ * string on the answer travelled from an untrusted input through the model into
+ * jsonb and out of every GET at whatever length the model's own max-output allowed.
+ * `service.ts` sends no `max_tokens`, so that was the only bound in the system.
+ *
+ * A CEILING, NOT A STYLE RULE, which is why it is not 200. The real brief cached
+ * for `Holubinka/dev-digest` PR #20 (`GET /pulls/:id/brief`, 2026-08-16) has kinds
+ * of 10-35 code points, titles of 58-79 and reasons of 139-190: the model writes
+ * "one short sentence" at 190, so a cap near it would clip ordinary answers on the
+ * card while doing nothing extra against a pathological one.
+ */
+export const MAX_LINE_CHARS = 400;

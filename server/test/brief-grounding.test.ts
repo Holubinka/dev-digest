@@ -12,6 +12,8 @@ import type { Risk, RiskBrief } from '@devdigest/shared';
 import { groundBrief } from '../src/modules/brief/helpers.js';
 import {
   MAX_DROPPED_REFS,
+  MAX_FILE_PATH_CHARS,
+  MAX_LINE_CHARS,
   MAX_PROSE_CHARS,
   MAX_REVIEW_FOCUS,
   MAX_RISK_FILE_REFS,
@@ -162,9 +164,11 @@ describe('groundBrief — only what the input can vouch for', () => {
  * on names says nothing about counts, repetition or prose length. The upstream
  * is attacker-controlled and all of it lands in jsonb and on every GET.
  *
- * NEGATIVE CONTROL: remove any one `slice`, the `file_refs` Set or either
+ * NEGATIVE CONTROL: remove any one `slice`, the `file_refs` Set or any one
  * `truncateCodePoints` in `groundBrief` and the matching case here fails.
- * Verified by hand on 2026-08-16.
+ * Verified by hand on 2026-08-16, and again the same day for the five strings a
+ * cap on a COUNT never bounded — `kind`, `title`, `explanation`, `reason` and each
+ * element of `dropped_refs`.
  */
 describe('groundBrief — and only as much of it as a record may carry', () => {
   const manyPaths = (n: number) => Array.from({ length: n }, (_, i) => `src/f${i}.ts`);
@@ -285,5 +289,64 @@ describe('groundBrief — and only as much of it as a record may carry', () => {
     const out = groundBrief(brief({ what: 'Short enough.', why: 'Also short.' }), ALLOWED);
     expect(out.what).toBe('Short enough.');
     expect(out.why).toBe('Also short.');
+  });
+
+  /**
+   * A cap on a list bounds the list, not the strings in it. `MAX_RISKS` says
+   * twelve risks; it says nothing about a `title` the model wrote a novel into,
+   * and a risk that survives grounding is a risk whose every field is served.
+   */
+  it(`truncates a kept risk's kind and title to MAX_LINE_CHARS (${MAX_LINE_CHARS})`, () => {
+    const out = groundBrief(
+      brief({
+        risks: [
+          risk({ kind: 'k'.repeat(MAX_LINE_CHARS + 500), title: 't'.repeat(MAX_LINE_CHARS + 500) }),
+        ],
+      }),
+      ALLOWED,
+    );
+    expect([...out.risks[0]!.kind]).toHaveLength(MAX_LINE_CHARS);
+    expect([...out.risks[0]!.title]).toHaveLength(MAX_LINE_CHARS);
+  });
+
+  it(`truncates a kept risk's explanation to MAX_PROSE_CHARS (${MAX_PROSE_CHARS})`, () => {
+    const out = groundBrief(
+      brief({ risks: [risk({ explanation: '🙂'.repeat(MAX_PROSE_CHARS + 200) })] }),
+      ALLOWED,
+    );
+    expect([...out.risks[0]!.explanation]).toHaveLength(MAX_PROSE_CHARS);
+    expect(out.risks[0]!.explanation.endsWith('🙂')).toBe(true);
+  });
+
+  it(`truncates a kept review_focus reason to MAX_LINE_CHARS (${MAX_LINE_CHARS})`, () => {
+    const out = groundBrief(
+      brief({
+        review_focus: [
+          {
+            ref: 'server/src/modules/brief/routes.ts',
+            kind: 'file',
+            reason: 'r'.repeat(MAX_LINE_CHARS + 500),
+          },
+        ],
+      }),
+      ALLOWED,
+    );
+    expect([...out.review_focus[0]!.reason]).toHaveLength(MAX_LINE_CHARS);
+  });
+
+  /** The ungrounded field: nothing about a dropped ref was ever vouched for, its length included. */
+  it(`truncates each dropped ref to MAX_FILE_PATH_CHARS (${MAX_FILE_PATH_CHARS})`, () => {
+    const out = groundBrief(
+      brief({ risks: [risk({ file_refs: [`invented/${'p'.repeat(MAX_FILE_PATH_CHARS)}.ts`] })] }),
+      ALLOWED,
+    );
+    expect([...out.dropped_refs[0]!]).toHaveLength(MAX_FILE_PATH_CHARS);
+  });
+
+  it('leaves every field shorter than its cap exactly as the model wrote it', () => {
+    const out = groundBrief(brief(), ALLOWED);
+    expect(out.risks[0]!.title).toBe('A new paid route');
+    expect(out.risks[0]!.kind).toBe('public API');
+    expect(out.review_focus[0]!.reason).toBe('the new paid route');
   });
 });
