@@ -220,6 +220,33 @@ describe("SmartDiffViewer", () => {
     }
   });
 
+  /**
+   * The receiving half of a Risk Brief review-focus jump. The lock file is the
+   * case worth pinning: its role starts it collapsed, so a jump that only
+   * scrolled would land the reader on a closed card.
+   */
+  it("opens the jump target on mount even when its role starts it collapsed", () => {
+    renderViewer({ openFile: "package-lock.json" });
+    expect(screen.queryByText(/registry.npmjs.org/)).toBeTruthy();
+  });
+
+  it("leaves every other file's role default alone when a jump target is set", () => {
+    renderViewer({ openFile: "src/middleware/ratelimit.ts" });
+    expect(screen.queryByText(/registry.npmjs.org/)).toBeNull();
+  });
+
+  it("carries each file's path on its card, which is how a jump finds it", () => {
+    renderViewer();
+    const paths = [...document.querySelectorAll("[data-file-path]")].map((el) =>
+      el.getAttribute("data-file-path"),
+    );
+    expect(paths).toEqual([
+      "src/middleware/ratelimit.ts",
+      "src/config.ts",
+      "package-lock.json",
+    ]);
+  });
+
   it("renders no chips and no marker before a review has run", () => {
     const clean: SmartDiff = {
       ...SMART_DIFF,

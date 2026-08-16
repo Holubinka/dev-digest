@@ -137,7 +137,11 @@ export function FileCard({
     : 0;
 
   return (
-    <div style={s.fileCard}>
+    // `data-file-path` is how something outside this component finds this card
+    // in the DOM — the Risk Brief's jump to Files changed queries for it. One
+    // attribute, no behaviour, and it is on the ROOT so the whole card scrolls
+    // into view rather than just its header.
+    <div data-file-path={file.path} style={s.fileCard}>
       <div onClick={toggle} style={s.fileHeader}>
         <Icon.ChevronRight size={13} style={chevronFor(open)} />
         <Icon.FileText size={14} style={s.fileIcon} />

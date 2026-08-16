@@ -55,6 +55,12 @@ interface SmartDiffViewerProps {
   commenting?: DiffCommentApi;
   /** Opens a finding where it lives: the Agent runs tab, Review runs list. */
   onOpenFinding?: (findingId: string) => void;
+  /**
+   * The file the reader was sent here to read, from a Risk Brief review-focus
+   * item. It starts expanded whatever its role says, because a boilerplate file
+   * that is the target of a jump collapsed is a jump that landed nowhere.
+   */
+  openFile?: string;
 }
 
 export function SmartDiffViewer({
@@ -63,6 +69,7 @@ export function SmartDiffViewer({
   findings,
   commenting,
   onOpenFinding,
+  openFile,
 }: SmartDiffViewerProps) {
   const t = useTranslations("prReview");
   const byPath = React.useMemo(() => new Map(files.map((f) => [f.path, f])), [files]);
@@ -70,7 +77,15 @@ export function SmartDiffViewer({
 
   // Explicit toggles only. A path absent here falls back to its role default, so
   // re-fetching the Smart Diff never re-collapses a file the reviewer opened.
-  const [toggled, setToggled] = React.useState<Record<string, boolean>>({});
+  //
+  // Seeded ONCE, at mount, from the jump target — a lazy initializer rather than
+  // an effect, because there is no external system to synchronise and an effect
+  // would re-open a file the reader had since closed. `DiffTab` unmounts on
+  // every tab switch, so a later jump arrives as a fresh mount with a fresh
+  // seed.
+  const [toggled, setToggled] = React.useState<Record<string, boolean>>(() =>
+    openFile ? { [openFile]: true } : {},
+  );
   // Expanding is a render away from scrolling, so the target is parked here and
   // the effect below runs once the line actually exists in the DOM.
   const [pending, setPending] = React.useState<{ path: string; line: number } | null>(null);

@@ -23,6 +23,31 @@
     "model": "via {model}",
     "none": "—"
   },
+  "riskBrief": {
+    "title": "Why + risk",
+    "what": "What it does",
+    "why": "Why",
+    "level": "Risk level",
+    "reviewFocus": "Where to look first",
+    "openFile": "Open this file in Files changed",
+    "inputs": "Built from",
+    "status": {
+      "included": "included",
+      "truncated": "truncated",
+      "dropped": "dropped",
+      "missing": "missing"
+    },
+    "intentStale": "The intent this reads from was derived from an earlier state of the pull request.",
+    "intentAgeUnknown": "The intent's age could not be compared with this commit, so it may be older than the code.",
+    "staleIndex": "The risks rest on the code index at commit {sha}, not on the pull request head.",
+    "computing": "Working out what this pull request does and what could go wrong…",
+    "compute": "Compute brief",
+    "regenerate": "Regenerate",
+    "failed": "Couldn't compute the brief.",
+    "rateLimited": "Too many briefs were requested for this workspace in the last minute. Try again shortly.",
+    "notConfigured": "No model is configured for the Risk Brief, so there is nothing to compute it with.",
+    "notConfiguredLink": "Choose one in Settings → Models"
+  },
   "why": {
     "title": "git-why",
     "blame": "blame",
