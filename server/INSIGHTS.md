@@ -1138,6 +1138,27 @@ printing nothing is the all-clear. Prove the `DEFAULT` reached existing rows aga
 rather than the file: `SELECT count(*) FILTER (WHERE ref_lines = '[]'::jsonb) FROM pr_brief` returned
 2 of 2, which is what makes "old rows read as `[]`, no data migration" a measurement instead of a
 claim.
+### `TiktokenTokenizer` answers `chars/4` after one failure, for the rest of the process
+
+`count()` (`src/adapters/tokenizer/index.ts:31-41`) lazily loads the `cl100k_base` BPE ranks. If
+that throws **once** it sets `broken = true`, and every later call returns
+`approxTokens` — `Math.ceil(text.length / 4)` — for the lifetime of the process. There is no log
+line, no flag on the return value, and no way for a caller to tell a real count from the
+heuristic. The fallback is deliberate and right for the renderer it was written for, which must
+never throw mid-render.
+
+It is not right for a caller that has to **guarantee** a bound. A requirement of the form "the
+model input must not exceed N tokens" is enforced exactly as strongly as the encoder that happened
+to load: a budget walk passes, the log says 7 900, and the real input is whatever `chars/4`
+mis-estimated. Any feature that must hold such a bound needs a tokenizer that can *report*
+degradation, not one that absorbs it — decide that before writing the acceptance criterion, not
+after.
+
+The file's header comment says "in-process, and two callers". There are at least seven:
+`modules/context/scan-executor.ts:86`, `modules/context/service.ts:463,629`,
+`modules/conventions/service.ts:234`, `modules/skills/service.ts:89`,
+`modules/reviews/run-executor.ts:707`, plus the repo-map budget search it was written for. Counted
+2026-08-16; treat the comment's scope claim as stale rather than as a boundary.
 
 ## Recurring Errors & Fixes
 
@@ -1439,6 +1460,36 @@ in that file that reads a persisted score is reading a post-grounding number.
 (`expect(afterPush.score).toBe(atHead.score)`), or assert `typeof … === 'number'`. Pinning 65
 would pin the grounding gate's arithmetic inside a test about something else — and a `.it.test`
 round trip costs ~80s, so the guess is expensive to make twice.
+### A job reported `done`, and the clone had not moved in 91 commits
+
+**Symptom.** `POST /repos/:id/refresh` answered `{"status":"refreshing"}` and its `clone` job
+finished `done` with an empty `error` column — while the clone's worktree stayed **91 commits**
+behind `origin/main`, and would have indefinitely. Project Context served `specs/` as it looked
+the day the repo was imported (ten files that moved to `plans/` on 2026-08-12 still listed,
+`SPEC-01-project-context.md` absent), and the repo-intel index parsed that same tree, so the blast
+radius was computed against code that no longer existed. Nothing reported a failure anywhere.
+Observed 2026-08-16.
+
+**Cause.** `GitClient.clone` short-circuits to a bare `fetch()` when `.git` already exists
+(`src/adapters/git/simple-git.ts:94-97`). A bare fetch advances `origin/<branch>` and touches
+neither `HEAD` nor the worktree — and the worktree is what every consumer reads. The method that
+advances one is `sync()` (`simple-git.ts:114-138`, fetch + `reset --hard origin/<branch>`), whose
+only caller sat behind a **different** route, `POST /repos/:id/resync`. Two routes a paragraph
+apart in the API map, and the one named "refresh" refreshed nothing a reader could see.
+
+**Fix.** The caller was fixed the same day — `RepoService.refresh` now enqueues `RESYNC_JOB_KIND`
+for an already-cloned repo and keeps the clone job for a repo that has none yet. The durable part
+is the diagnosis, because the next stale-clone symptom will not look like this one: **a job's
+`done` says nothing about a worktree.** Ask git.
+
+```sh
+CP=server/clones/<owner>/<repo>
+git -C "$CP" rev-list --left-right --count HEAD...origin/main   # "0 91" => fetched, never checked out
+ls -l "$CP/.git/FETCH_HEAD"                                     # seconds old => the network half worked
+```
+
+A fresh `FETCH_HEAD` beside a stale `HEAD` is the entire signature. Reach for it before suspecting
+the scanner, the indexer, or the parser — all three were innocent here.
 
 ## Session Notes
 
