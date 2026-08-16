@@ -212,7 +212,61 @@ copies left the two adapter copies untouched, and those were wrong in the same w
 extract a duplicated rule, grep for the rule's *shape* (`'.git'`, `segments[0]`), not for the
 function you are replacing; the copies that matter are the ones that never called it.
 
+### A fixture that spells two sources with the same string tests neither of them
+
+**Symptom.** `test/brief-allowed-refs.test.ts` asserted that the allowed-refs set follows what the
+prompt printed, and passed for six weeks over a `blastBlock` that seeded the set from
+`view.changed_files` — a list it never prints. The fixture set `changed_files: ['src/changed.ts']`
+and `symbols[0].file: 'src/changed.ts'`. Every assertion about `src/changed.ts` held whichever of
+the two put it there, so no case could distinguish them and none could fail.
+
+**Cause.** Realistic fixture values collapse. A path that plausibly appears in both a changed-file
+list and a symbol record will be written once, and the moment it is, the test stops being about
+which code path produced it.
+
+**Fix.** Give each source a value only it can supply — `changed_files: ['src/changed.ts',
+'src/unprinted.ts']` where no symbol names `src/unprinted.ts` — and then flip the code back to the
+broken shape and watch the new case fail. On 2026-08-16 that turned a green file into a failing
+one in one run. Same lesson as the `.git` entry above: the copies that matter are the ones nothing
+was ever pointed at.
+
+### Grounding by membership is not a bound on the answer
+
+**Symptom.** `groundBrief` (`modules/brief/helpers.ts`) filtered every model-written reference
+against the allowed set and shipped. Nothing capped the number of risks, the number of focus
+items, the repeats of one allowed path inside `file_refs`, the length of `what`/`why`, or the
+`dropped_refs` list — which is pure ungrounded model text. All of it goes to jsonb and out of
+every GET, over an input a PR author controls.
+
+**Cause.** A membership filter answers "was this name shown to the model", which reads like the
+whole safety question and is only half of it. The other half is "how much of this may a row
+carry", and the same allowed path repeated four hundred times passes the first test every time.
+
+**Fix.** Cap after the parse, never in the schema — Anthropic rejects `maxItems`/`maximum`, see
+the entry further down. The caps live in `modules/brief/constants.ts` under `output caps`
+(`MAX_RISKS`, `MAX_REVIEW_FOCUS`, `MAX_RISK_FILE_REFS`, `MAX_DROPPED_REFS`, `MAX_PROSE_CHARS`),
+next to the input caps, and `groundBrief` applies all of them. `ConventionsService.ground` slicing
+to `MAX_CANDIDATES` is the same move. Note the ordering: the risk cap runs AFTER the severity
+sort, so what it takes is the least severe, and the overflow is added to `dropped_risks` rather
+than disappearing.
+
 ## Codebase Patterns
+
+### The allowed-refs invariant is checkable in one line against a real PR
+
+A brief block's `refs` must be exactly what that block's rendered text puts in front of the
+model, and the whole invariant reduces to one filter over the assembled input:
+
+```ts
+[...buildAllowedRefs(fit.included)].filter((ref) => !fit.user.includes(ref))   // must be empty
+```
+
+Run against PR #20's real blast view and file list on 2026-08-16 (fetch `GET /pulls/:id/blast`
+and `GET /pulls/:id`, feed them into `buildBlocks` → `fitToBudget` → `buildAllowedRefs`; no model
+call, no spend): **0** of 106 allowed refs were absent from the prompt after the fix, and **105**
+of 214 were absent before it. Reach for this before believing a unit test that only ever sees a
+one-symbol fixture — a 170-file PR against a 40-path cap is where the two halves of the set come
+apart, and no hand-written fixture is that shape by accident.
 
 ### A DTO mapper without a return type is unchecked, even where the caller has one
 

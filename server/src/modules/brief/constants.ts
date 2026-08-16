@@ -107,3 +107,46 @@ export const MAX_SPEC_FILE_BYTES = MAX_SPEC_FILE_CHARS * 4;
 
 /** Longest repo-relative path the spec-path gate accepts, for a path out of a PR body. */
 export const MAX_PATH_LENGTH = 200;
+
+/* -------------------------------------------------------------- output caps */
+
+/**
+ * The caps above bound what goes IN. These bound what comes back.
+ *
+ * The model's answer is untrusted text over an input a PR author controls, and
+ * `groundBrief` filters it by membership without bounding its size: the same
+ * allowed path could repeat unboundedly and every copy passed, straight into
+ * jsonb and out of every GET. So every cap here is applied AFTER the parse, in
+ * `groundBrief`, and none of them is stated as a Zod `.max()`: `toJsonSchema`
+ * renders that as `maxItems`/`maximum` and Anthropic's structured-output subset
+ * rejects both (`server/INSIGHTS.md`, "Anthropic's structured-output API rejects
+ * a Zod schema that states a bound"). `ConventionsService.ground` slicing to
+ * `MAX_CANDIDATES` is the same move for the same reason.
+ */
+
+/** Risks kept, after the severity sort — so a cut takes the least severe. */
+export const MAX_RISKS = 12;
+
+/** Review-focus items kept. The prompt asks for "most important first", so a cut takes the tail. */
+export const MAX_REVIEW_FOCUS = 10;
+
+/**
+ * Grounded references kept on ONE risk. The card opens each as a link, and a
+ * reviewer given thirty places to look has been given none.
+ */
+export const MAX_RISK_FILE_REFS = 10;
+
+/**
+ * Refs listed in `dropped_refs`. Pure ungrounded model text — the one field on
+ * the record that is served without ever having been vouched for — so it is the
+ * one that most needs a ceiling. It is a disclosure, not an inventory: thirty
+ * names already say "this answer was not grounded".
+ */
+export const MAX_DROPPED_REFS = 30;
+
+/**
+ * Code points kept from `what` and `why`. One constant for both: the prompt asks
+ * for "one or two sentences of plain prose" in each, so they are one rule, and
+ * the card renders both as text with no length of its own.
+ */
+export const MAX_PROSE_CHARS = 600;

@@ -10,6 +10,10 @@
  *
  * NEGATIVE CONTROL: feed `buildAllowedRefs` the raw blocks instead of
  * `fit.included` and every assertion here flips. Verified by hand on 2026-08-16.
+ * Second control, same date: seed `blastBlock`'s `refs` from `view.changed_files`
+ * again — the shape round one shipped — and "a blast changed_file the block never
+ * prints is NOT a member" fails. It could not fail before, because the fixture
+ * pointed `changed_files` at the one path a symbol already named.
  */
 import { describe, it, expect } from 'vitest';
 import type { BlastRadiusView } from '@devdigest/shared';
@@ -26,7 +30,12 @@ const BLAST: BlastRadiusView = {
   head_sha: 'aaa',
   link_sha: 'aaa',
   index_matches_head: true,
-  changed_files: ['src/changed.ts'],
+  // `src/unprinted.ts` is the whole point of this fixture: the blast view knows a
+  // changed file that no symbol names and that the diff-stats cap never printed —
+  // `getChangedFiles` has no limit, `MAX_FILE_PATHS` does. Point `changed_files`
+  // at the same path a symbol names and the two sources become indistinguishable,
+  // which is what made the assertion below pass while the block was seeding from it.
+  changed_files: ['src/changed.ts', 'src/unprinted.ts'],
   symbols: [
     {
       name: 'thing',
@@ -73,6 +82,26 @@ describe('buildAllowedRefs — membership follows what actually reached the prom
     expect(allowed.has('src/caller.ts')).toBe(true);
     expect(allowed.has('src/route.ts')).toBe(true);
     expect(allowed.has('GET /widgets')).toBe(true);
+  });
+
+  /**
+   * A changed file the blast block KNOWS but does not print is not a member. The
+   * block renders status, commit, totals and symbols; `view.changed_files` reaches
+   * the model through the diff-stats block or not at all, and that block caps at
+   * `MAX_FILE_PATHS` while `getChangedFiles` caps at nothing.
+   */
+  it('a blast changed_file the block never prints is NOT a member (AC-13)', () => {
+    const allowed = allowedFor(sources({ filePaths: ['src/changed.ts'] }), 100_000);
+    expect(allowed.has('src/unprinted.ts')).toBe(false);
+  });
+
+  /** The same path IS a member once diff-stats prints it — the block decides, not the source. */
+  it('the same path becomes a member when diff-stats prints it', () => {
+    const src = sources({
+      filePaths: ['src/changed.ts', 'src/unprinted.ts'],
+      diff: { files: 2, additions: 1, deletions: 0 },
+    });
+    expect(allowedFor(src, 100_000).has('src/unprinted.ts')).toBe(true);
   });
 
   /**

@@ -438,6 +438,19 @@ cases were confirmed to fail against the unfixed component before being left gre
 
 ## Codebase Patterns
 
+### A security predicate gets exported, not restated — `hasDotSegment` is the dot-segment rule
+
+`src/lib/github-urls.ts` owns `/(?:^|\/)\.\.?(?:\/|$)/` as `hasDotSegment`, and it is now
+exported for that reason. `PrBriefCard/helpers.ts` shipped a private `DOT_SEGMENT` holding the
+same pattern character for character, under a comment naming the original — the
+cross-check-by-comment shape this file already records as the thing that drifts. A reviewer
+caught it on 2026-08-16 and it became an import.
+
+The rule that follows: when a check exists because a value is hostile, the second caller imports
+the first caller's function. A copy is not a second definition of a rule, it is a second rule that
+happens to agree today. Order still matters at the call site — `isLinkablePath` runs controls,
+then scheme, then dot segments, and `PrBriefCard.test.tsx` pins all three.
+
 ### Run-level data reaches the PR-detail subtree by joining in `FindingsTab`, not by widening `ReviewRecord`
 
 **Symptom.** You need something that lives on the run row (cost, tokens, duration) inside

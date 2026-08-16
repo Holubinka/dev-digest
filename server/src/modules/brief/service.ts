@@ -178,8 +178,11 @@ export class BriefService {
       pull.id,
       pull.headSha,
       {
-        what: result.data.what,
-        why: result.data.why,
+        // `grounded.what` / `grounded.why`, never `result.data`'s: the model's
+        // prose is bounded on the way through `groundBrief` like everything else
+        // it returned, and reading the raw pair here would walk straight past it.
+        what: grounded.what,
+        why: grounded.why,
         riskLevel: result.data.risk_level,
         risks: grounded.risks,
         reviewFocus: grounded.review_focus,

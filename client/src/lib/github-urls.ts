@@ -22,8 +22,14 @@ const HOST = "https://github.com";
  *
  * No legitimate value hits this: these paths come from a diff and are already
  * repo-relative and normalised.
+ *
+ * Exported because it is a security predicate, and a second caller wanting the
+ * same rule has to get THIS one. `PrBriefCard` asks the same question of a
+ * model-written reference before turning it into a control; a copy of the
+ * pattern over there would be one definition too many of a rule whose whole job
+ * is to be identical everywhere.
  */
-function hasDotSegment(path: string): boolean {
+export function hasDotSegment(path: string): boolean {
   return /(?:^|\/)\.\.?(?:\/|$)/.test(path);
 }
 

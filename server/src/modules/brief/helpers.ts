@@ -21,11 +21,16 @@ import {
   MAX_BLAST_FACT_CHARS,
   MAX_BLAST_SYMBOLS,
   MAX_FILE_PATH_CHARS,
+  MAX_DROPPED_REFS,
   MAX_INTENT_CHARS,
   MAX_ISSUE_BODY_CHARS,
   MAX_ISSUE_TITLE_CHARS,
   MAX_PR_BODY_CHARS,
   MAX_PR_TITLE_CHARS,
+  MAX_PROSE_CHARS,
+  MAX_REVIEW_FOCUS,
+  MAX_RISK_FILE_REFS,
+  MAX_RISKS,
 } from './constants.js';
 
 /**
@@ -135,17 +140,25 @@ function diffStatsBlock(sources: BriefSources): BriefBlock {
 /**
  * The fact list, and its own refs.
  *
- * Every name the block prints is a member: `changed_files`, each symbol's file,
- * each listed caller's file, and each listed endpoint's file AND label. The
- * label is a member because `ReviewFocusItem.kind` has an `endpoint` branch — a
- * focus item may legitimately name `POST /pulls/:id/brief`, and it can only do so
- * if this block put that string in front of the model.
+ * Every name the block prints is a member: each listed symbol's file, each
+ * listed caller's file, and each listed endpoint's file AND label. The label is
+ * a member because `ReviewFocusItem.kind` has an `endpoint` branch — a focus
+ * item may legitimately name `POST /pulls/:id/brief`, and it can only do so if
+ * this block put that string in front of the model.
+ *
+ * `view.changed_files` is NOT a member, and that is the point. This block never
+ * prints it — only status, commit, totals and the first `MAX_BLAST_SYMBOLS`
+ * symbols — while `BlastRepository.getChangedFiles` has no limit at all. Seeding
+ * from it licensed every changed path on a PR bigger than `MAX_FILE_PATHS`: 170
+ * files against a 40-path cap on the one PR this feature has been run against,
+ * i.e. 130 paths the model could name without ever having been shown them.
+ * `diff_stats` prints its capped list and is the sole source of changed-file refs.
  *
  * The caps are applied to what is LISTED, so the refs and the text cannot
  * disagree: a symbol past `MAX_BLAST_SYMBOLS` contributes neither.
  */
 function blastBlock(view: BlastRadiusView): BriefBlock {
-  const refs = new Set<string>(view.changed_files);
+  const refs = new Set<string>();
   const lines = [
     `Index status: ${view.status}${view.reason ? ` (${clamp(view.reason)})` : ''}`,
     `Index commit: ${view.link_sha ?? 'unknown'}${view.index_matches_head ? '' : ' (NOT the PR head)'}`,
@@ -405,6 +418,8 @@ export function buildAllowedRefs(included: BriefBlock[]): Set<string> {
 const SEVERITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
 
 export interface GroundedBrief {
+  what: string;
+  why: string;
   risks: Risk[];
   review_focus: ReviewFocusItem[];
   dropped_refs: string[];
@@ -412,7 +427,8 @@ export interface GroundedBrief {
 }
 
 /**
- * Keep only what the input can vouch for (R10, R12, R14).
+ * Keep only what the input can vouch for, and only as much of it as a record may
+ * carry (R10, R12, R14).
  *
  * A risk whose `file_refs` are all outside the set is dropped rather than shown
  * without them, and so is one that arrived with none at all (R9): the observable
@@ -420,37 +436,72 @@ export interface GroundedBrief {
  * answer. Both are counted, because a silent drop is indistinguishable from a
  * model that found nothing.
  *
+ * MEMBERSHIP IS NOT A BOUND, which is the second thing this function does.
+ * Filtering by the allowed set says every name is one the model was shown; it
+ * says nothing about how many times, and nothing about how much prose came with
+ * them. The upstream of this answer — PR body, linked issue, spec files — is
+ * attacker-controlled, its only injection defence is a paragraph of system
+ * prompt, and everything below flows into jsonb and out of every GET. So the
+ * counts are capped, the reference lists de-duplicated, and the two prose fields
+ * truncated. Every number lives in `constants.ts` beside the input caps, and
+ * none of them is a Zod `.max()` — see the note there for why the schema cannot
+ * carry them.
+ *
+ * `dropped_risks` counts a risk the reviewer will not see, whichever bound
+ * removed it: ungrounded and over-cap are different reasons for the same
+ * observable end state, and a cap that hid risks silently would be the exact
+ * failure this counter exists to prevent. The cap is applied AFTER the sort, so
+ * what it takes is the least severe.
+ *
  * The sort is `Array.prototype.sort` on a mapped index, which is stable in every
  * engine this runs on (ES2019+), so the model's order survives INSIDE a level
  * while the levels themselves descend.
  */
 export function groundBrief(model: RiskBrief, allowed: Set<string>): GroundedBrief {
   const droppedRefs = new Set<string>();
-  const risks: Risk[] = [];
+  const grounded: Risk[] = [];
   let droppedRisks = 0;
 
   for (const risk of model.risks) {
-    const refs = risk.file_refs.filter((ref) => {
-      if (allowed.has(ref)) return true;
-      droppedRefs.add(ref);
-      return false;
-    });
-    if (refs.length === 0) {
+    const refs = new Set<string>();
+    for (const ref of risk.file_refs) {
+      if (allowed.has(ref)) refs.add(ref);
+      else droppedRefs.add(ref);
+    }
+    if (refs.size === 0) {
       droppedRisks += 1;
       continue;
     }
-    risks.push({ ...risk, file_refs: refs });
+    grounded.push({ ...risk, file_refs: [...refs].slice(0, MAX_RISK_FILE_REFS) });
   }
 
-  const review_focus = model.review_focus.filter((item) => {
-    if (allowed.has(item.ref)) return true;
-    droppedRefs.add(item.ref);
-    return false;
-  });
+  grounded.sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 3) - (SEVERITY_ORDER[b.severity] ?? 3));
+  const risks = grounded.slice(0, MAX_RISKS);
+  droppedRisks += grounded.length - risks.length;
 
-  risks.sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 3) - (SEVERITY_ORDER[b.severity] ?? 3));
+  // De-duplicated by `ref`: the card turns each item into one control, so a
+  // repeated ref is a repeated button, and the first `reason` is the one the
+  // prompt asked to be the most important.
+  const seenFocus = new Set<string>();
+  const review_focus: ReviewFocusItem[] = [];
+  for (const item of model.review_focus) {
+    if (!allowed.has(item.ref)) {
+      droppedRefs.add(item.ref);
+      continue;
+    }
+    if (seenFocus.has(item.ref)) continue;
+    seenFocus.add(item.ref);
+    review_focus.push(item);
+  }
 
-  return { risks, review_focus, dropped_refs: [...droppedRefs], dropped_risks: droppedRisks };
+  return {
+    what: truncateCodePoints(model.what, MAX_PROSE_CHARS),
+    why: truncateCodePoints(model.why, MAX_PROSE_CHARS),
+    risks,
+    review_focus: review_focus.slice(0, MAX_REVIEW_FOCUS),
+    dropped_refs: [...droppedRefs].slice(0, MAX_DROPPED_REFS),
+    dropped_risks: droppedRisks,
+  };
 }
 
 /**

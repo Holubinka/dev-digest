@@ -3,6 +3,8 @@
    calculation, not rendering, and because they are the part worth testing on
    their own. */
 
+import { hasDotSegment } from "@/lib/github-urls";
+
 /**
  * A control character anywhere in the string. `\p{Cc}` is the whole C0/C1 range
  * plus DEL — none of them is legal in a path, and each is a way of spelling a
@@ -14,14 +16,6 @@ const CONTROL = /\p{Cc}/u;
 
 /** `scheme:` at the start. A repo-relative path never has one. */
 const SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
-
-/**
- * A `.` or `..` segment. `encodeURIComponent` leaves both untouched and the
- * browser resolves them before it sends the request, so a reference carrying one
- * can make a citation read as one repo and open another
- * (`client/INSIGHTS.md:135`, and `githubBlobUrl` refuses these on its own).
- */
-const DOT_SEGMENT = /(?:^|\/)\.\.?(?:\/|$)/;
 
 /**
  * Whether a model-written reference may become a link or a button.
@@ -38,12 +32,15 @@ const DOT_SEGMENT = /(?:^|\/)\.\.?(?:\/|$)/;
  * with one inside falls straight through it. Refusing the whole class ahead of
  * the pattern is what closes that, and keeps the order correct if this ever
  * becomes strip-then-test the way `isSafeUrl` is.
+ *
+ * The dot-segment rule comes from `lib/github-urls`, where `githubBlobUrl`
+ * already applies it — one predicate, so the two cannot drift apart.
  */
 export function isLinkablePath(path: string): boolean {
   if (!path) return false;
   if (CONTROL.test(path)) return false;
   if (SCHEME.test(path)) return false;
-  if (DOT_SEGMENT.test(path)) return false;
+  if (hasDotSegment(path)) return false;
   return true;
 }
 
