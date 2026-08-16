@@ -393,6 +393,29 @@ describe("RiskAreas — the icon dictionary", () => {
     expect(riskChip("auth bypass on the public API").icon).toBe("Shield");
   });
 
+  /**
+   * A budget is a size, not a secret. `kind: "token budget"` arrived on live data
+   * (PR #20, 2026-08-17) and matched the credential rule on the bare word `token`,
+   * so a risk about how much prompt an input may occupy rendered as a padlock in
+   * the critical tone. The pair below is the whole fix: the budget rule has to sit
+   * before the credential one, and moving it back turns both of these red.
+   */
+  it.each([
+    ["token budget", "Gauge"],
+    ["rate limit", "Gauge"],
+    ["quota exhaustion", "Gauge"],
+  ])("reads %j as a size, not a credential", (phrase, icon) => {
+    expect(riskChip(phrase).icon).toBe(icon);
+  });
+
+  it.each([
+    ["leaked token", "Lock"],
+    ["credential leak", "Lock"],
+    ["secret in the diff", "Lock"],
+  ])("still reads %j as a credential", (phrase, icon) => {
+    expect(riskChip(phrase).icon).toBe(icon);
+  });
+
   it("does not match a keyword buried inside a longer word", () => {
     // \b is what keeps `ui` out of "building" and `job` out of "jobless".
     expect(riskChip("building the sidebar").icon).toBe(RISK_ICON_FALLBACK);

@@ -151,6 +151,47 @@ reconstructs the text of each line box at every container width in a sweep. On 2
 about `:12` into 80 widths out of 561. Screenshots still matter — they are what showed the break
 landing inside `[number]` — but they cannot be asserted on.
 
+### Cap the child that grows, not the card — and watch what `overflow-y` does to `overflow-x`
+
+BLAST RADIUS on PR #20 answers with 365 symbols. Measured at 1440×1000 on 2026-08-17 with the
+CDP recipe above: the symbol list was 22 422px inside a 22 617px card, beside a 1 719px INTENT —
+13× its neighbour — and `main` scrolled 25 108px. `maxHeight: 570` + `overflow-y: auto` on
+`s.symbolList` put the card at 766px and `main` at 4 210px: the same answer, a 6× shorter page.
+
+Two placement decisions are worth keeping. The cap goes on the **list**, never on the card,
+because the counters above it ("365 symbols") are what keep a cut honest and they only do that
+while they are on screen — verify by scrolling the list and re-reading the stat row's
+`getBoundingClientRect().top`, which must not move. And it stays in `styles.ts` rather than
+`globals.css`, because no breakpoint changes it: at ≤1024px the cards stack full-width and every
+row shrinks to 57px, so one value shows *more* there, not less.
+
+The side effect is the part that is easy to miss: setting `overflow-y: auto` makes the computed
+`overflow-x` `auto` as well, so the box is now a horizontal scroll container too — and that
+silently fixed a second bug. With several disclosures open, a caller `MonoLink` 990px wide used
+to hand the whole page 452px of horizontal scroll at 1440px (`main.scrollWidth -
+main.clientWidth`); it is 0 now, the path scrolling inside the list instead. In the default
+state — one disclosure open — the list does not scroll sideways at any width.
+
+### `el.focus()` in jsdom is a real test of whether an element is focusable
+
+A scroll box needs `tabIndex={0}` even when it is full of focusable children. Measured in Chrome
+151 on 2026-08-17: with the attribute, one Tab from the card's `graph` toggle lands on the box
+itself and PageDown scrolls it (1013px for two presses); without it, Tab skips the box and lands
+on the first `<summary>`, leaving 610 tab stops between the reader and the end of the list.
+Programmatic `.focus()` is not the same question — Chrome grants that to a bare scroller — so
+test the tab order, not `focus()`, when the question is about a browser.
+
+In **jsdom** `focus()` answers it exactly, because jsdom implements the focusable-area check:
+
+```ts
+list.focus();
+expect(list).toHaveFocus();
+```
+
+fails on a plain `<div>` and passes once it carries a `tabindex`, with no attribute assertion and
+no layout. `BlastRadiusCard.test.tsx` uses it; proven by deleting the attribute and watching the
+test go red.
+
 ## What Doesn't Work
 
 ### A popover anchored inside a PR-list row gets clipped

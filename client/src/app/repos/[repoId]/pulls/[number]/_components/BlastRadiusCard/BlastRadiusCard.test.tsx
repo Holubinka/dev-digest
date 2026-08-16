@@ -353,6 +353,59 @@ describe("BlastRadiusCard — the answer itself", () => {
   });
 });
 
+/**
+ * The list is the only part of this card that grows with the answer, and on
+ * PR #20 it grows to 365 symbols — measured at 22 617px of card beside a
+ * 1 719px INTENT before it was capped.
+ *
+ * jsdom lays nothing out, so a pixel is not assertable here and the number
+ * itself is deliberately not asserted. What is asserted is the contract that
+ * makes a capped list usable: it holds the whole answer, it is a box that
+ * scrolls, a keyboard can reach that box, and the counters that say how much is
+ * below the fold sit ABOVE it and outside it.
+ */
+describe("BlastRadiusCard — a long list scrolls inside the card, not down the page", () => {
+  const symbols = (n: number): BlastSymbol[] =>
+    Array.from({ length: n }, (_, i) => ({
+      ...SYMBOL,
+      name: `Symbol${i}`,
+      line: i + 1,
+      callers: [],
+      caller_count: 0,
+      endpoints: [],
+      endpoint_count: 0,
+    }));
+
+  /** `client/INSIGHTS.md:120` — placement asserted as document order. */
+  const follows = (first: Element, second: Element) =>
+    Boolean(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+  it("keeps 60 symbols in one reachable scroll box, with the totals above it", async () => {
+    serve({ ...VIEW, symbols: symbols(60), totals: { ...VIEW.totals, symbols: 60 } });
+    renderCard();
+
+    const list = await screen.findByRole("region", { name: messages.symbolList });
+
+    // Capped, not truncated: every symbol is still there to be scrolled to.
+    expect(within(list).getAllByText(/^Symbol\d+$/)).toHaveLength(60);
+    expect(list.style.overflowY).toBe("auto");
+    expect(list.style.maxHeight).toMatch(/^\d+px$/);
+
+    // In jsdom `focus()` moves nothing unless the element really is focusable,
+    // so this fails on the bare <div> a scroll box would otherwise be. No
+    // browser makes a scroller focusable once it holds focusable children, and
+    // this one holds 60 <summary> elements.
+    list.focus();
+    expect(list).toHaveFocus();
+
+    // The count that explains the scrollbar must not scroll away with it.
+    const totals = statCell(messages.stat.symbols);
+    expect(totals).toHaveTextContent(/^60\s*symbols$/);
+    expect(totals && list.contains(totals)).toBe(false);
+    expect(totals && follows(totals, list)).toBe(true);
+  });
+});
+
 describe("BlastRadiusCard — tree | graph", () => {
   it("starts on tree, with no modal and nothing drawn", async () => {
     renderCard();

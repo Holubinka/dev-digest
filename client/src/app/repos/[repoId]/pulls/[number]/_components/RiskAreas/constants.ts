@@ -85,6 +85,13 @@ const TONE: Record<ChipTone, { color: string; bg: string }> = {
 
 const RISK_RULES: ReadonlyArray<readonly [RegExp, IconName, ChipTone]> = [
   [/\b(secur|vulnerab|inject|traversal|auth|permission|tenant)|\b(xss|csrf|ssrf)\b/, "Shield", "danger"],
+  // Before the credential rule, and that order is the whole point: `token` there
+  // matches "token budget" literally, so a risk about how much of the prompt an
+  // input may occupy rendered as a padlock in the critical tone — the icon for a
+  // leaked secret. Observed on live data 2026-08-17, where `kind: "token budget"`
+  // was one of six risks on PR #20. A budget is a size, and every word here names
+  // a size or a rate, never a secret.
+  [/\b(budget|quota|rate limit|throttl|ceiling)|\b(cap|caps)\b/, "Gauge", "caution"],
   [/\b(secret|credential|token|password)/, "Lock", "danger"],
   [/\b(perf|latenc|slow|round-?trip|throughput|memor|cach)/, "Zap", "neutral"],
   [/\b(migration|schema|database|quer|postgres|data loss)|\b(db|sql|index)\b/, "Database", "caution"],

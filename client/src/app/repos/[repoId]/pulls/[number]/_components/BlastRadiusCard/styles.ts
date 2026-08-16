@@ -117,7 +117,38 @@ export const s = {
     background: "var(--crit-bg)",
   } satisfies CSSProperties,
 
-  symbolList: { marginTop: 14 } satisfies CSSProperties,
+  /**
+   * The one part of this card that grows with the answer, so the one part that
+   * is capped. Measured on PR #20 at 1440×1000 (headless Chrome over CDP,
+   * `client/INSIGHTS.md:133`): 365 symbols made the list 22 422px and the card
+   * 22 617px, beside a 1 719px INTENT — 13× its neighbour, and `main` scrolled
+   * 25 108px.
+   *
+   * The LIST is capped and not the card, because the counters above it are what
+   * make the cut honest: "365 symbols" has to stay on screen while the list
+   * scrolls, or the reader loses the number that explains the scrollbar.
+   *
+   * 570 is ten collapsed rows — a row measures 57px, or 75px when the path wraps
+   * to a second line. The card's fixed chrome measures 196px (label 26 + stale
+   * index note 36 + counters 27 + margins, then a 60px footer), so a capped card
+   * is 766px: one screen of `main` (~818px) on the 1512×982pt display this was
+   * reported on, with room to spare for the ~49px a `partial` index banner adds.
+   * On the four PRs measured, INTENT ran 1507-2040px, so at 766px this card no
+   * longer sets the height of the row.
+   *
+   * No breakpoint changes it, so it stays here rather than in `globals.css`
+   * (`client/AGENTS.md`): below 1024px the cards stack full-width and the rows
+   * get shorter, not taller, because fewer paths wrap.
+   */
+  symbolList: {
+    marginTop: 14,
+    maxHeight: 570,
+    overflowY: "auto",
+    /* Reaching the end of the list must not hand the scroll on to the page
+       behind it — `components/findings-preview/styles.ts:72` for the same
+       nested-scroller reason. */
+    overscrollBehavior: "contain",
+  } satisfies CSSProperties,
   symbol: { borderTop: "1px solid var(--border)", padding: "9px 0" } satisfies CSSProperties,
   /**
    * No `display` override, and that is load-bearing twice over. A `<summary>`
