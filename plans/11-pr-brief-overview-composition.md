@@ -16,6 +16,14 @@ departure is named at the step and again under `## Verification`.
 `R#` follows the spec's AC numbers in ascending order: R1 = AC-46 … R31 = AC-76. AC-1…AC-45 are
 accounted for under `## Out of scope`.
 
+Two kinds of `clear` appear in the last column, and they are not the same thing to anyone
+re-reading this later. **`clear`** on its own means the spec settles it: read the cited criterion
+and there is one reading. **`clear · human decision <date>`** means the spec did *not* settle it —
+the planner proposed a reading, and a human chose it on that date. R32, R33 and R34 are the second
+kind. They are as binding as the first and they are not derivable from the spec, so anyone asking
+later "why is it like this" gets the answer here rather than by searching for a criterion that
+never existed.
+
 | # | Requirement | Source | Status |
 |---|---|---|---|
 | R1 | The Overview card row holds **exactly two** cards — INTENT and BLAST RADIUS. No brief card in the row. | `specs/SPEC-02-pr-why-risk-brief.md § AC-46` | clear |
@@ -49,13 +57,16 @@ accounted for under `## Out of scope`.
 | R29 | Once a completed run exists for the current `head_sha`, the prose slot shows that run's summary and `what`/`why` leave the screen — while staying in the record and in the route's response. | `§ AC-74`, D21 | clear |
 | R30 | When a completed run exists only for a previous `head_sha`, the banner says a review exists for an earlier state of the PR. | `§ AC-75` | clear |
 | R31 | The INTENT area shows the intent and the in/out-of-scope columns in **all** states of the prose slot. | `§ AC-76` | clear |
-| R32 | The brief's provenance block (which inputs went in, which were truncated, which dropped) keeps a home in the new composition — the foot of the REVIEW FOCUS section — and carries the brief's own cost and token count there, labelled as the brief's. | assumed; `§ AC-33` (round one, must not regress) + `§ AC-70` | **assumed** |
-| R33 | The "Risk areas" section renders in **every** INTENT state — including intent loading, intent error and no-intent-derived — because its producer is the brief, not the intent. | assumed; consequence of `§ AC-47` + `§ AC-50` | **assumed** |
-| R34 | The seeded demo PR (#482) records the `head_sha` its seeded review describes, so a fresh install shows the banner in its reviewed state rather than in the never-reviewed one. | assumed; `db/seed.ts:110-152` + the mockup | **assumed** |
+| R32 | The brief's provenance block (which inputs went in, which were truncated, which dropped) keeps a home in the new composition — the foot of the REVIEW FOCUS section — and carries the brief's own cost and token count there, labelled as the brief's. | human decision 2026-08-16, on a placement the amendment left open; serves `§ AC-33` (round one, must not regress) + `§ AC-70` | clear · human decision 2026-08-16 |
+| R33 | The "Risk areas" section renders in **every** INTENT state — including intent loading, intent error and no-intent-derived — because its producer is the brief, not the intent. | human decision 2026-08-16; consequence of `§ AC-47` + `§ AC-50`, which do not state the case where the intent is absent | clear · human decision 2026-08-16 |
+| R34 | The seeded demo PR (#482) records the `head_sha` its seeded review describes, so a fresh install shows the banner in its reviewed state rather than in the never-reviewed one. **No `agent_runs` row is seeded** — the cost badge and the blocker count stay absent. | human decision 2026-08-16; `db/seed.ts:110-152` + the mockup, against the no-fabricated-demo-data rule | clear · human decision 2026-08-16 |
 
-Three `assumed` rows, and each is a placement or fixture question the amendment did not answer.
-They are the rows to overturn first if the human disagrees; nothing else in the plan depends on
-them beyond one step each.
+These three were `assumed` when the plan was first written and were **confirmed by the human on
+2026-08-16**, before any package was dispatched. Each was a placement or fixture question the
+amendment did not answer; the decision taken is the one stated in the row, and R34's second
+sentence is half the decision, not a note on it — the fixture records the state its review
+describes and invents nothing else. Nothing outside one step each depends on any of the three, so
+overturning one is a step-level edit rather than a re-plan.
 
 ## Out of scope
 
