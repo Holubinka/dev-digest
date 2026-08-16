@@ -2,7 +2,48 @@ import { and, asc, desc, eq, ne, notInArray, sql } from 'drizzle-orm';
 import type { Db } from '../../db/client.js';
 import * as t from '../../db/schema.js';
 import type { PrBriefRow } from '../../db/rows.js';
+import { stripNul, stripNulDeep } from '../../db/text.js';
 import type { BriefDiffStats, BriefPull, BriefReads, BriefRepoRef, BriefValues } from './types.js';
+
+/**
+ * The columns that came out of the model, with U+0000 removed.
+ *
+ * `what` and `why` are `text`, `risks` / `review_focus` / `dropped_refs` are
+ * `jsonb`, and Postgres refuses the byte in both — `invalid byte sequence for
+ * encoding "UTF8": 0x00` and `unsupported Unicode escape sequence`
+ * (`db/text.ts:20-21,40-41`). One NUL anywhere in that set kills the whole
+ * INSERT, so a brief that was already computed and already paid for is lost and
+ * the route answers 502. `insertReview` and `saveRunTrace` have carried this
+ * since run `ce536de2` bought ~167k input tokens and stored nothing.
+ *
+ * FIELD BY FIELD, and not `stripNulDeep(values)` over the object: `stripNulDeep`
+ * rebuilds any object from its own enumerable entries, and a `Date` has none —
+ * the wholesale call would hand `{}` to `intent_computed_at`.
+ *
+ * `provider` and `model` are stripped too, and they are not model output —
+ * `review.repo.ts:28-32` had to correct itself on exactly this point. They are
+ * `z.string().min(1)` off a workspace's own settings with no charset
+ * constraint, so a slug saved with a NUL in it loses every brief computed
+ * against that model, which is the same row and the same 502 by a different
+ * door. Unlike `insertReview`'s pair these two are non-nullable here
+ * (`types.ts:185-186`), so they need no null branch.
+ *
+ * The rest is left alone with a reason each. `riskLevel`, `intentFreshness` and
+ * `blastStatus` are Zod enums, so the value would have failed to parse long
+ * before this; `linkSha` is a sha this server read off git; `inputs` and
+ * `refLines` are composed here from file paths, labels and counters rather than
+ * from the model's answer; numbers and booleans cannot hold the byte at all.
+ */
+const sanitize = (values: BriefValues): BriefValues => ({
+  ...values,
+  what: stripNul(values.what),
+  why: stripNul(values.why),
+  risks: stripNulDeep(values.risks),
+  reviewFocus: stripNulDeep(values.reviewFocus),
+  droppedRefs: stripNulDeep(values.droppedRefs),
+  provider: stripNul(values.provider),
+  model: stripNul(values.model),
+});
 
 /**
  * brief — the ONLY layer here that touches the DB.
@@ -109,6 +150,10 @@ export class BriefRepository implements BriefReads {
     values: BriefValues,
     maxStates: number,
   ): Promise<PrBriefRow> {
+    // ONE sanitised object for both halves of the upsert: `set` is what a
+    // recomputation of a state that already has a row goes through, which is the
+    // ordinary case rather than the corner one.
+    const clean = sanitize(values);
     return this.db.transaction(async (tx) => {
       const computedAt = new Date();
       const [existingMax] = await tx
@@ -119,10 +164,10 @@ export class BriefRepository implements BriefReads {
 
       const [written] = await tx
         .insert(t.prBrief)
-        .values({ prId, headSha, ...values, computedAt, evictedCount: priorEvicted })
+        .values({ prId, headSha, ...clean, computedAt, evictedCount: priorEvicted })
         .onConflictDoUpdate({
           target: [t.prBrief.prId, t.prBrief.headSha],
-          set: { ...values, computedAt, evictedCount: priorEvicted },
+          set: { ...clean, computedAt, evictedCount: priorEvicted },
         })
         .returning();
 

@@ -316,6 +316,42 @@ count is part of the count: a fence, an escape, a separator. `test/brief-budget.
 fixture containing the fence literal, so the escape was a no-op in every case the suite exercised
 and only the fixture stood between this and shipping.
 
+### `stripNulDeep` over a whole values object silently empties every `Date` in it
+
+**Symptom.** `pr_brief` needed the NUL strip its neighbours already had (found 2026-08-17 by
+`/pr-self-review`, `major`). The one-line fix reads as `stripNulDeep(values)` — one call, every
+string, nothing to forget. It typechecks, because the helper is `<T>(value: T): T`, and it
+writes `{}` into `intent_computed_at`.
+
+**Cause.** `db/text.ts:51-60` rebuilds any non-array object from `Object.entries(value)`, and a
+`Date` has no own enumerable properties: `Object.fromEntries(Object.entries(new Date()))` is
+`{}`, and `instanceof Date` is then false. `BriefValues` mixes model jsonb with
+`intentComputedAt: Date | null`, so the generic signature promises a `BriefValues` back while
+handing a `timestamptz` column an empty object. Nothing in `tsc` can see it; whether the driver
+or Postgres rejects it depends on the column.
+
+**Fix.** Sanitise field by field — `stripNul` for the `text` columns, `stripNulDeep` for the
+`jsonb` ones — and leave everything else named in a comment with the reason it needs nothing
+(`modules/brief/repository.ts:8-31`). `stripNulDeep` is safe only over a value that is already
+JSON-shaped, which is exactly why `saveRunTrace` can pass it a whole `RunTrace` and a repository
+holding column values cannot pass it a whole row.
+
+### The NUL strip is a per-write-path obligation, and the fourth path missed it
+
+`pr_brief` is the third table to receive model output and the first to be written without the
+guard: `insertReview` (`modules/reviews/repository/review.repo.ts:39-40`), `insertFindings`
+(`:60-69`) and `saveRunTrace` (`repository/run.repo.ts:186`) all carry it, `upsertBrief` did not,
+and `review.repo.ts:34` was edited on the same branch that added `upsertBrief` — the rule was on
+screen while the new table was left out of it.
+
+`pnpm arch` cannot see this, `tsc` cannot see this, and the brief's own unit suite could not:
+`test/brief-service.test.ts` fakes the repository, so the only place the constraint exists is
+real Postgres. The check that works is one grep per new table that stores model output —
+`grep -n 'stripNul' src/modules/<m>/repository.ts` — plus an `*.it.test.ts` case that inserts
+`String.fromCharCode(0)` through the repository, both halves of any upsert included: the
+`onConflictDoUpdate.set` object is a second, separate parameter list, and it is the one every
+recomputation of an existing state goes through.
+
 ## Codebase Patterns
 
 ### The allowed-refs invariant is checkable in one line against a real PR

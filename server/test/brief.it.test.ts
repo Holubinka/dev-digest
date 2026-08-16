@@ -31,6 +31,9 @@ const config = () => loadConfig({ ...process.env, NODE_ENV: 'test' } as NodeJS.P
 
 const PATCH = '@@ -10,3 +10,4 @@\n   port: 3000,\n+  stripeKey: "sk_live_xxx",\n   redisUrl: x,';
 
+/** Built, never written literally — a raw NUL is invisible in a diff and in a review. */
+const NUL = String.fromCharCode(0);
+
 const ANSWER: RiskBrief = {
   what: 'Adds a per-state risk brief to the PR overview.',
   why: 'A reviewer opens a pull request without knowing what it changes.',
@@ -307,6 +310,115 @@ d('10 risk brief — the state-keyed table (Testcontainers pg)', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]!.computedAt.getTime()).toBeGreaterThan(before!.computedAt.getTime());
     await app.close();
+  });
+
+  /**
+   * A NUL in the model's answer must not destroy the brief that was paid for.
+   *
+   * `what` and `why` are `text`; `risks`, `review_focus` and `dropped_refs` are
+   * `jsonb`. Postgres refuses U+0000 in BOTH — `invalid byte sequence for
+   * encoding "UTF8": 0x00` and `unsupported Unicode escape sequence` — and every
+   * one of these fields is model output that only `truncateCodePoints` touched on
+   * the way here. Without the strip the whole INSERT throws, `run()` fails,
+   * `compute` answers `{ok:false}`, the route answers 502, and the one paid call
+   * this feature makes bought nothing. That is `reviews-nul-persist.it.test.ts`
+   * one table over (run `ce536de2`, ~167k input tokens for an empty table).
+   *
+   * Through the repository against real Postgres, never through `stripNul`
+   * directly: `server/INSIGHTS.md` records that testing a guard by calling its
+   * classifier can pass while the guard is not wired into the write at all.
+   */
+  it('stores a brief whose model prose arrived with a NUL (the INSERT half)', async () => {
+    const { pr } = await setupPr(workspaceId, 'sha-nul-insert');
+    const repo = new BriefRepository(pg.handle.db);
+
+    const written = await repo.upsertBrief(
+      pr.id,
+      pr.headSha,
+      values({
+        what: `Adds a per-state${NUL} risk brief.`,
+        why: `A reviewer opens${NUL} a pull request without knowing what it changes.`,
+        risks: [
+          {
+            kind: 'public API',
+            title: `A new${NUL} paid route`,
+            explanation: `POST /pulls/:id/brief${NUL} spends money on every call.`,
+            severity: 'medium',
+            file_refs: [`server/src/config${NUL}.ts`],
+          },
+        ],
+        reviewFocus: [
+          { ref: 'server/src/config.ts', kind: 'file', reason: `the new${NUL} configuration` },
+        ],
+        droppedRefs: [`server/src/never${NUL}/printed.ts`],
+      }),
+      BRIEF_MAX_STATES,
+    );
+
+    expect(written.what).toBe('Adds a per-state risk brief.');
+
+    const [row] = await pg.handle.db
+      .select()
+      .from(t.prBrief)
+      .where(and(eq(t.prBrief.prId, pr.id), eq(t.prBrief.headSha, pr.headSha)));
+    expect(row!.what).toBe('Adds a per-state risk brief.');
+    expect(row!.why).toBe('A reviewer opens a pull request without knowing what it changes.');
+    expect(row!.risks[0]).toEqual({
+      kind: 'public API',
+      title: 'A new paid route',
+      explanation: 'POST /pulls/:id/brief spends money on every call.',
+      severity: 'medium',
+      file_refs: ['server/src/config.ts'],
+    });
+    expect(row!.reviewFocus[0]).toEqual({
+      ref: 'server/src/config.ts',
+      kind: 'file',
+      reason: 'the new configuration',
+    });
+    expect(row!.droppedRefs).toEqual(['server/src/never/printed.ts']);
+  });
+
+  /**
+   * The same, on the branch that runs EVERY time a state is recomputed.
+   *
+   * `onConflictDoUpdate` carries its own `set` object, so a sanitiser applied to
+   * `.values()` alone would leave the path that a re-computation of an existing
+   * state always takes — the common case, not the corner one — exactly as it was.
+   */
+  it('stores it on the UPDATE half of the upsert as well', async () => {
+    const { pr } = await setupPr(workspaceId, 'sha-nul-update');
+    const repo = new BriefRepository(pg.handle.db);
+
+    await repo.upsertBrief(pr.id, pr.headSha, values(), BRIEF_MAX_STATES);
+    const rewritten = await repo.upsertBrief(
+      pr.id,
+      pr.headSha,
+      values({
+        what: `Recomputed${NUL} for the same state.`,
+        risks: [
+          {
+            kind: 'cost',
+            title: 'Recomputed',
+            explanation: `Still${NUL} one paid call.`,
+            severity: 'low',
+            file_refs: [],
+          },
+        ],
+      }),
+      BRIEF_MAX_STATES,
+    );
+
+    expect(rewritten.what).toBe('Recomputed for the same state.');
+
+    const rows = await pg.handle.db
+      .select()
+      .from(t.prBrief)
+      .where(and(eq(t.prBrief.prId, pr.id), eq(t.prBrief.headSha, pr.headSha)));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.what).toBe('Recomputed for the same state.');
+    expect((rows[0]!.risks[0] as { explanation: string }).explanation).toBe(
+      'Still one paid call.',
+    );
   });
 
   /**
