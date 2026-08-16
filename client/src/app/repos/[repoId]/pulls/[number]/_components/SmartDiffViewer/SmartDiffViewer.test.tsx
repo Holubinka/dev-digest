@@ -230,6 +230,40 @@ describe("SmartDiffViewer", () => {
     expect(screen.queryByText(/registry.npmjs.org/)).toBeTruthy();
   });
 
+  it("scrolls to the jump target's LINE, inside a card its role started collapsed", () => {
+    // The scroll runs in an effect after the expanding commit. Capturing `this`
+    // is what proves the line existed by the time it ran — asserting only that
+    // the card opened would leave the real risk untested.
+    const scrolled: Element[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = vi.fn(function (this: Element) {
+      scrolled.push(this);
+    });
+    try {
+      renderViewer({ openFile: "package-lock.json", openLine: 1204 });
+
+      const target = document.getElementById(lineDomId("package-lock.json", 1204));
+      expect(target).not.toBeNull();
+      expect(scrolled).toEqual([target]);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
+  it("scrolls nowhere on mount when the jump carried no line", () => {
+    const scrolled: Element[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = vi.fn(function (this: Element) {
+      scrolled.push(this);
+    });
+    try {
+      renderViewer({ openFile: "package-lock.json" });
+      expect(scrolled).toEqual([]);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
   it("leaves every other file's role default alone when a jump target is set", () => {
     renderViewer({ openFile: "src/middleware/ratelimit.ts" });
     expect(screen.queryByText(/registry.npmjs.org/)).toBeNull();

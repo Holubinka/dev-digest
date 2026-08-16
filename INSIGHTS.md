@@ -1579,6 +1579,46 @@ any test, doc-generation or grep whose payload has to contain a gated phrase. Do
 `PR_SELF_REVIEW_SKIP=1` — it is recorded as a bypass in the next report, which is the wrong
 signal for a test that never intended to push.
 
+### Widening a vendored record breaks its object-literal CONSTRUCTORS, and the two typechecks see different ones
+
+**Symptom.** 2026-08-16, adding one required field to `RiskBriefRecord` and one to `ReviewRecord`
+in `server/src/vendor/shared/contracts/` produced three TS2741/TS2719 errors in three files that
+the contract diff does not mention — and `cd server && pnpm typecheck` and `cd client && pnpm
+typecheck` each reported only their own.
+
+**Cause.** A `z.infer` type is structural, so the break lands wherever an object *literal* is
+annotated with it, not where the type is merely read. Those sites are few and they are not
+adjacent to the contract: `server/src/modules/brief/helpers.ts` `toRiskBriefRecord` (row → DTO),
+`client/…/PrBriefCard/PrBriefCard.test.tsx` `record()`, `client/…/FindingsTab/helpers.test.ts`
+`run()`. A `as SomeRecord` cast — `OverviewTab.test.tsx:73`, `brief.test.tsx:30` — is NOT a
+construction site and stays green while being wrong at runtime, which is the reason `client/CLAUDE.md`
+says `lib/api.ts` validates nothing.
+
+**Fix.** Before widening, list the constructors instead of discovering them:
+`grep -rn "RiskBriefRecord" --include='*.ts' --include='*.tsx' server/src client/src server/test | grep -v vendor/shared`
+and read each hit for `): X {` or `: X = {`. Budget one edit per hit. Then run **both** typechecks —
+`INSIGHTS.md:967-977`'s "fourth file" is this same shape, and in this session there were two of them
+on the client, not one.
+
+### A work package that owns a contract but not its only constructor cannot pass its own gate
+
+**Symptom.** `plans/11-pr-brief-overview-composition.md` gives P1 the vendored contracts, the schema
+and the migration, and requires `cd server && pnpm typecheck` green before P2 is dispatched. The
+required field made `toRiskBriefRecord` — a P2-owned file — a type error, so P1's gate could not go
+green inside P1's own file set.
+
+**Cause.** The split was drawn by *concern* (contract · derivation · persistence · screen) while
+`tsc` fails by *structure*. A required field and the one function that builds the record are the
+same unit of work whatever the concern boundary says.
+
+**Fix, for whoever writes the next multi-agent plan.** Either put every construction site in the
+package that widens the type, or state in the owning package's steps which foreign line it may
+write and what it must contain. The implementer's honest move when neither is stated is the
+minimal edit plus a named deviation in the report — a package that stops here blocks three others
+over one line, and a package that widens its scope quietly is worse. Here it was one line,
+`ref_lines: RiskBriefRefLine.array().catch([]).parse(row.refLines)`, which P2 · 6 was going to
+write anyway.
+
 ## Session Notes
 
 ### 2026-07-27

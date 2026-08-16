@@ -221,6 +221,21 @@
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 
+/* The PR Brief's disclosures — a risk row's explanation, and the "N more"
+   overflow under RISK AREAS and REVIEW FOCUS. A native <details> is the cheapest
+   keyboard-reachable disclosure there is and needs no state, but its default
+   marker is a triangle on the LEFT and the design draws a chevron on the RIGHT.
+   Hiding the marker cannot be done from `styles.ts`: `list-style` alone does not
+   reach WebKit's own pseudo-element, and a pseudo-element has no inline form.
+   This is not a responsive rule; nothing here changes at a breakpoint. */
+.dd-brief-disclosure > summary {
+  list-style: none;
+}
+
+.dd-brief-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
 @media (max-width: 900px) {
   .dd-sidebar {
     position: fixed;

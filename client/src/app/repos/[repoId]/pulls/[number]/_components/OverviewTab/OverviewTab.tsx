@@ -1,13 +1,17 @@
 "use client";
 
 import React from "react";
+import { useTranslations } from "next-intl";
 import { Markdown, SectionLabel } from "@devdigest/ui";
 import { useBriefComputeAttempted, usePrBrief, useComputeBrief } from "@/lib/hooks/brief";
 import { usePrIntent, useRecomputeIntent } from "@/lib/hooks/core";
 import type { PrFile } from "@/lib/types";
+import type { ReviewRecord, RunSummary } from "@devdigest/shared";
 import { BlastRadiusCard } from "../BlastRadiusCard";
 import { IntentCard } from "../IntentCard";
-import { PrBriefCard } from "../PrBriefCard";
+import { PrBriefBanner, hasReviewForOtherState, pickReviewForHead } from "../PrBriefBanner";
+import { RiskAreas } from "../RiskAreas";
+import { ReviewFocusSection } from "../ReviewFocusSection";
 import { s } from "./styles";
 
 interface OverviewTabProps {
@@ -22,8 +26,19 @@ interface OverviewTabProps {
   headSha: string | null;
   prFiles: PrFile[];
   repoFullName: string | null;
-  /** Hands a path up to the page, which opens it in Files changed. */
-  onOpenFile: (path: string) => void;
+  /**
+   * Every persisted review for this PR, from the page (which already fetches
+   * them). The banner needs to know which state each describes.
+   */
+  reviews: ReviewRecord[] | undefined;
+  /**
+   * Every `agent_runs` row for this PR. Joined to the reviews by `run_id` HERE
+   * rather than by widening `ReviewRecord`: cost, tokens and blockers are run
+   * telemetry and belong on the run (`client/INSIGHTS.md:497-511`).
+   */
+  prRuns: RunSummary[] | undefined;
+  /** Hands a path — and a line, when one is known — up to the page. */
+  onOpenFile: (path: string, line?: number) => void;
 }
 
 export function OverviewTab({
@@ -32,9 +47,12 @@ export function OverviewTab({
   headSha,
   prFiles,
   repoFullName,
+  reviews,
+  prRuns,
   onOpenFile,
 }: OverviewTabProps) {
-  // The tab owns the data so `IntentCard` and `PrBriefCard` stay presentational.
+  const t = useTranslations("brief");
+  // The tab owns the data so every block below stays presentational.
   const { data: intent, isLoading, isError } = usePrIntent(prId);
   const recompute = useRecomputeIntent(prId);
 
@@ -84,30 +102,79 @@ export function OverviewTab({
   // carries `config_error` — but a failed GET must not read as an empty card.
   const briefFailure = compute.error ?? brief.error;
 
+  // Derived during render, never mirrored into state. A failed brief shows its
+  // failure once, in the banner, and the two sections below fall to their own
+  // empty state rather than repeating the sentence.
+  const record = briefFailure != null ? null : briefData ?? null;
+  const briefBusy = compute.isPending || brief.isLoading;
+
+  const reviewList = reviews ?? [];
+  const runsById = new Map((prRuns ?? []).map((r) => [r.run_id, r]));
+  const bannerReview = pickReviewForHead(reviewList, headSha);
+  const bannerRun =
+    bannerReview?.run_id != null ? runsById.get(bannerReview.run_id) ?? null : null;
+
   return (
     <>
-      <div className="dd-overview-cards" style={s.cardRow}>
-        {/* First in the row: it is the card that answers "where do I start". */}
-        <PrBriefCard
-          brief={briefData}
+      {/* ONE heading over the banner, the card row and the review-focus section
+          (AC-49). The three are siblings, which is also what gives R6 its
+          stacking order below 1024px with no CSS at all. */}
+      <section>
+        <SectionLabel icon="FileText">{t("riskBrief.sectionTitle")}</SectionLabel>
+
+        <PrBriefBanner
+          brief={record}
           isLoading={brief.isLoading}
           isError={briefFailure != null}
           error={briefFailure}
           computing={compute.isPending}
           onCompute={() => computeBrief()}
+          review={bannerReview}
+          run={bannerRun}
+          hasOtherStateReview={hasReviewForOtherState(reviewList, headSha)}
+        />
+
+        {/* TWO cards (AC-46). The brief no longer has a card of its own — its
+            places are the banner's prose slot, the risks section inside INTENT
+            and the review-focus section below, so a missing brief leaves these
+            two fully rendered and unresized (AC-50). */}
+        <div className="dd-overview-cards" style={s.cardRow}>
+          <IntentCard
+            intent={intent}
+            isLoading={isLoading}
+            isError={isError}
+            onRecompute={() => recompute.mutate()}
+            recomputing={recompute.isPending}
+            riskAreas={
+              <RiskAreas
+                risks={record?.risks ?? null}
+                riskLevel={record?.risk_level ?? null}
+                refLines={record?.ref_lines ?? []}
+                linkSha={record?.link_sha ?? null}
+                indexMatchesHead={record?.index_matches_head ?? false}
+                repoFullName={repoFullName}
+                intentFreshness={record?.intent_freshness ?? null}
+                intentComputedAt={record?.intent_computed_at ?? null}
+                isLoading={briefBusy}
+              />
+            }
+          />
+          <BlastRadiusCard prId={prId} />
+        </div>
+
+        <ReviewFocusSection
+          items={record?.review_focus ?? null}
+          refLines={record?.ref_lines ?? []}
+          linkSha={record?.link_sha ?? null}
+          indexMatchesHead={record?.index_matches_head ?? false}
           prFiles={prFiles}
-          repoFullName={repoFullName}
           onOpenFile={onOpenFile}
+          inputs={record?.inputs ?? null}
+          costUsd={record?.cost_usd ?? null}
+          tokensIn={record?.tokens_in ?? null}
+          isLoading={briefBusy}
         />
-        <IntentCard
-          intent={intent}
-          isLoading={isLoading}
-          isError={isError}
-          onRecompute={() => recompute.mutate()}
-          recomputing={recompute.isPending}
-        />
-        <BlastRadiusCard prId={prId} />
-      </div>
+      </section>
 
       {prBody && (
         <section>

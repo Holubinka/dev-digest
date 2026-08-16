@@ -6,7 +6,6 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "@/../messages/en/brief.json";
 import type { IntentRecord } from "@/lib/types";
 import { IntentCard } from "./IntentCard";
-import { riskChip, RISK_ICON_FALLBACK } from "./constants";
 
 afterEach(cleanup);
 
@@ -32,6 +31,7 @@ function renderCard(props: Partial<React.ComponentProps<typeof IntentCard>> = {}
         isError={false}
         onRecompute={() => {}}
         recomputing={false}
+        riskAreas={<div data-testid="risk-areas" />}
         {...props}
       />
     </NextIntlClientProvider>,
@@ -88,7 +88,7 @@ describe("IntentCard — the four states are four different things", () => {
     );
   });
 
-  it("renders the goal, both scope lists, the risk badges and the model", () => {
+  it("renders the goal, both scope lists and the model", () => {
     renderCard();
 
     expect(screen.getByText(`“${RECORD.intent}”`)).toBeInTheDocument();
@@ -97,9 +97,6 @@ describe("IntentCard — the four states are four different things", () => {
     expect(screen.getByText(messages.intent.outOfScope)).toBeInTheDocument();
     for (const item of [...RECORD.in_scope, ...RECORD.out_of_scope]) {
       expect(screen.getByText(item)).toBeInTheDocument();
-    }
-    for (const area of RECORD.risk_areas) {
-      expect(screen.getByText(area)).toBeInTheDocument();
     }
     expect(screen.getByText(`via ${RECORD.model}`)).toBeInTheDocument();
   });
@@ -123,15 +120,44 @@ describe("IntentCard — the four states are four different things", () => {
     }
   });
 
-  /**
-   * A risk area is a <span> Badge, never a <Chip>: `Chip` renders a <button>
-   * (`vendor/ui/primitives/Chip.tsx:22`) and a button with no action is an
-   * accessibility defect. The only buttons on the card are Recompute.
-   */
-  it("renders risk areas as non-interactive elements", () => {
+  it("renders one button, Recompute, and no chip row of its own", () => {
     renderCard();
     expect(screen.getAllByRole("button")).toHaveLength(1);
-    expect(screen.getByText("security").closest("button")).toBeNull();
+  });
+});
+
+/**
+ * `Intent.risk_areas` is DELIBERATELY not drawn any more (D18): two sections
+ * called "risk areas", one grounded against the repository index and one not,
+ * is what the amendment removes. The field stays in the contract and in the
+ * record — only this card stops rendering it — and the slot below carries the
+ * BRIEF's risks instead.
+ */
+describe("IntentCard — RISK AREAS is a slot, not the intent's own chips", () => {
+  it("does not draw the intent's own risk areas", () => {
+    renderCard();
+
+    for (const area of RECORD.risk_areas) {
+      expect(screen.queryByText(area)).not.toBeInTheDocument();
+    }
+    expect(screen.queryByText(messages.intent.riskAreas)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["the loaded intent", {}],
+    ["a loading intent", { intent: undefined, isLoading: true }],
+    ["a failed intent", { intent: undefined, isError: true }],
+    ["no intent derived", { intent: null }],
+  ])("fills the slot in %s", (_label, props) => {
+    // The producer of RISK AREAS is the brief, not the intent, so a section
+    // that vanished with the intent would report the wrong thing's absence.
+    renderCard(props as Partial<React.ComponentProps<typeof IntentCard>>);
+    expect(screen.getByTestId("risk-areas")).toBeInTheDocument();
+  });
+
+  it("renders nothing extra when the slot is not filled", () => {
+    renderCard({ riskAreas: undefined });
+    expect(screen.queryByTestId("risk-areas")).not.toBeInTheDocument();
   });
 });
 
@@ -143,95 +169,6 @@ describe("IntentCard — degrading rather than crashing", () => {
     expect(screen.getByText(messages.intent.none)).toBeInTheDocument();
     // The one remaining bullet is out_of_scope's; nothing was fabricated for in_scope.
     expect(screen.getAllByRole("listitem")).toHaveLength(1);
-  });
-
-  it("renders an unrecognised risk area with the fallback icon and does not throw", () => {
-    renderCard({ intent: { ...RECORD, risk_areas: ["quantum flux"] } });
-
-    const badge = screen.getByText("quantum flux");
-    expect(badge).toBeInTheDocument();
-    // An icon was resolved: the fallback, since nothing maps this string.
-    expect(badge.querySelector("svg")).not.toBeNull();
-    expect(riskChip("quantum flux").icon).toBe(RISK_ICON_FALLBACK);
-  });
-
-  /**
-   * The prototype-chain half of the same defect: `"constructor" in OBJ` is true,
-   * so an allowlist built with `in` is not one (`client/INSIGHTS.md:594-618`).
-   * Naming the inherited keys is what makes this test fail before the fix.
-   */
-  it.each(["constructor", "toString", "valueOf", "hasOwnProperty", "__proto__"])(
-    "resolves the inherited key %s to the fallback icon",
-    (key) => {
-      expect(riskChip(key).icon).toBe(RISK_ICON_FALLBACK);
-    },
-  );
-
-  it("still maps a known risk area, case- and space-insensitively", () => {
-    expect(riskChip("  Security ").icon).toBe("Shield");
-    expect(riskChip("security").icon).not.toBe(RISK_ICON_FALLBACK);
-  });
-
-  /**
-   * Every string here is verbatim model output taken from `pr_intent` on this
-   * workspace. The exact-match table this replaced resolved only two of them and
-   * gave the rest the same triangle — which is the whole defect, so the cases are
-   * the real phrases rather than the tidy keywords a table would like to receive.
-   */
-  it.each([
-    ["public API", "Code"],
-    ["client-server contract", "Code"],
-    ["performance", "Zap"],
-    ["tests", "FlaskConical"],
-    ["PR list grid layout", "Layers"],
-    ["Text overflow in findings cell", "Layers"],
-    ["Client-side conventions UI (new page, modals, shell integration)", "Layers"],
-    ["Conventions extraction pipeline (model hallucination, quote verification gates)", "Workflow"],
-    ["Feature models configuration", "Wrench"],
-  ])("maps the real phrase %j to %s", (phrase, icon) => {
-    expect(riskChip(phrase).icon).toBe(icon);
-  });
-
-  it("lets an earlier rule win: a security phrase that also mentions the API", () => {
-    expect(riskChip("auth bypass on the public API").icon).toBe("Shield");
-  });
-
-  it("does not match a keyword buried inside a longer word", () => {
-    // \b is what keeps `ui` out of "building" and `job` out of "jobless".
-    expect(riskChip("building the sidebar").icon).toBe(RISK_ICON_FALLBACK);
-  });
-});
-
-/**
- * Tint is a signal, and a signal every chip carries is not one. These assertions
- * pin the restraint as much as the colours: only the irreversible families are
- * tinted, and the tokens are the theme's own — a literal hex here would mean a
- * second copy of `SEV` (`client/INSIGHTS.md:307-338`).
- */
-describe("IntentCard — risk tone", () => {
-  it.each([
-    ["auth surface touched", "var(--crit)", "var(--crit-bg)"],
-    ["secret rotation", "var(--crit)", "var(--crit-bg)"],
-    ["migration drops a column", "var(--warn)", "var(--warn-bg)"],
-  ])("tints %j as an irreversible risk", (phrase, color, bg) => {
-    expect(riskChip(phrase)).toMatchObject({ color, bg });
-  });
-
-  it.each(["performance", "public API", "tests", "quantum flux"])(
-    "leaves %j on the neutral default",
-    (phrase) => {
-      expect(riskChip(phrase)).toMatchObject({
-        color: "var(--text-secondary)",
-        bg: "var(--bg-hover)",
-      });
-    },
-  );
-
-  it("carries the tone through to the rendered badge", () => {
-    renderCard({ intent: { ...RECORD, risk_areas: ["auth surface touched"] } });
-
-    const badge = screen.getByText("auth surface touched");
-    expect(badge.getAttribute("style")).toContain("var(--crit)");
   });
 });
 

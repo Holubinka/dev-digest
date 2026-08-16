@@ -55,13 +55,20 @@ vi.mock("./_components/FindingsTab", () => ({ FindingsTab: () => <div /> }));
 vi.mock("./_components/RunTraceDrawer", () => ({ default: () => <div /> }));
 // The two that carry the jump: one end sends a path up, the other receives it.
 vi.mock("./_components/OverviewTab", () => ({
-  OverviewTab: ({ onOpenFile }: { onOpenFile: (path: string) => void }) => (
-    <button onClick={() => onOpenFile(TARGET)}>focus item</button>
+  OverviewTab: ({ onOpenFile }: { onOpenFile: (path: string, line?: number) => void }) => (
+    <>
+      <button onClick={() => onOpenFile(TARGET)}>focus item</button>
+      <button onClick={() => onOpenFile(TARGET, 12)}>focus item with line</button>
+    </>
   ),
 }));
 vi.mock("./_components/DiffTab", () => ({
-  DiffTab: ({ targetFile }: { targetFile?: string | null }) => (
-    <div data-testid="diff-tab" data-target-file={String(targetFile)} />
+  DiffTab: ({ targetFile, targetLine }: { targetFile?: string | null; targetLine?: number | null }) => (
+    <div
+      data-testid="diff-tab"
+      data-target-file={String(targetFile)}
+      data-target-line={String(targetLine)}
+    />
   ),
 }));
 
@@ -134,5 +141,68 @@ describe("PR detail — the jump from a review-focus item to Files changed", () 
     renderPage();
 
     expect(screen.getByTestId("diff-tab")).toHaveAttribute("data-target-file", "null");
+    expect(screen.getByTestId("diff-tab")).toHaveAttribute("data-target-line", "null");
+  });
+});
+
+describe("PR detail — the line the jump carries", () => {
+  it("writes the tab, the file AND the line in ONE router.replace", () => {
+    renderPage();
+    fireEvent.click(screen.getByText("focus item with line"));
+
+    expect(nav.replace).toHaveBeenCalledTimes(1);
+    const url = new URL(nav.replace.mock.calls[0]![0] as string, "http://localhost");
+    expect(url.searchParams.get("tab")).toBe("diff");
+    expect(url.searchParams.get("file")).toBe(TARGET);
+    expect(url.searchParams.get("line")).toBe("12");
+  });
+
+  it("CLEARS a stale line when the next reference names none", () => {
+    // Left behind, the reader would land on a line the reference they just
+    // pressed never named — which is worse than not jumping at all.
+    nav.params = new URLSearchParams("tab=overview&line=12");
+    renderPage();
+    fireEvent.click(screen.getByText("focus item"));
+
+    expect(nav.replace).toHaveBeenCalledTimes(1);
+    const url = new URL(nav.replace.mock.calls[0]![0] as string, "http://localhost");
+    expect(url.searchParams.get("file")).toBe(TARGET);
+    expect(url.searchParams.has("line")).toBe(false);
+  });
+
+  it("hands a usable line in the URL to the Files changed tab", () => {
+    nav.params = new URLSearchParams(`tab=diff&file=${encodeURIComponent(TARGET)}&line=12`);
+    renderPage();
+
+    expect(screen.getByTestId("diff-tab")).toHaveAttribute("data-target-line", "12");
+  });
+
+  /**
+   * `?line=` is a string someone can type. `Number.parseInt` reads the first
+   * three of these as 12, 1 and 12 respectively, and it has no upper bound —
+   * which is exactly why the whole string is matched against a pattern instead.
+   * The jump still lands on the FILE in every case: it degrades, it does not
+   * disappear.
+   */
+  it.each(["12abc", "1e3", " 12", "0", "-1", "99999999", "", "1.5", "0x0c", "١٢"])(
+    "ignores the unusable line %j and still targets the file",
+    (raw) => {
+      nav.params = new URLSearchParams(
+        `tab=diff&file=${encodeURIComponent(TARGET)}&line=${encodeURIComponent(raw)}`,
+      );
+      renderPage();
+
+      expect(screen.getByTestId("diff-tab")).toHaveAttribute("data-target-line", "null");
+      expect(screen.getByTestId("diff-tab")).toHaveAttribute("data-target-file", TARGET);
+    },
+  );
+
+  it.each(["1", "12", "9999999"])("accepts the usable line %j", (raw) => {
+    nav.params = new URLSearchParams(
+      `tab=diff&file=${encodeURIComponent(TARGET)}&line=${raw}`,
+    );
+    renderPage();
+
+    expect(screen.getByTestId("diff-tab")).toHaveAttribute("data-target-line", raw);
   });
 });

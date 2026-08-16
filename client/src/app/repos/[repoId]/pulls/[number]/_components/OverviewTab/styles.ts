@@ -12,7 +12,8 @@ export const s = {
    */
   cardRow: {
     gap: 16,
-    marginBottom: 24,
+    marginTop: 20,
+    marginBottom: 20,
     alignItems: "start",
   } satisfies CSSProperties,
   /** No `whiteSpace: pre-wrap` here: `<Markdown>` owns block layout, and pre-wrap

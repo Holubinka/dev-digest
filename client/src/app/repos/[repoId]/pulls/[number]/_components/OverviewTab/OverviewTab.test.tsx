@@ -1,8 +1,12 @@
 import React from "react";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, cleanup, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, waitFor, within } from "@testing-library/react";
+import { NextIntlClientProvider } from "next-intl";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { PrFile, RiskBriefRecord } from "@/lib/types";
+import type { ReviewRecord, RunSummary } from "@devdigest/shared";
+import brief from "@/../messages/en/brief.json";
+import prReview from "@/../messages/en/prReview.json";
 
 const hooks = vi.hoisted(() => ({
   usePrIntent: vi.fn(),
@@ -36,28 +40,25 @@ vi.mock("@/lib/hooks/core", () => ({
   usePrIntent: hooks.usePrIntent,
   useRecomputeIntent: hooks.useRecomputeIntent,
 }));
-// All three cards in the row have their own tests and want providers this file
-// does not supply — next-intl for each, plus a QueryClient for BLAST RADIUS,
-// which owns its data. What is under test here is the Description beside them
-// and the one automatic computation this tab is responsible for.
+/**
+ * INTENT is a stand-in that renders its `riskAreas` SLOT and nothing else — the
+ * card has its own test, and what this file is about is the composition. The
+ * slot is passed through rather than swallowed because the section inside it is
+ * one of the brief's three places, and a slot the tab forgot to fill would
+ * otherwise look exactly like a card that renders it.
+ */
 vi.mock("../IntentCard", () => ({
-  IntentCard: () => <div data-testid="intent-card" />,
+  IntentCard: ({ riskAreas }: { riskAreas?: React.ReactNode }) => (
+    <div data-testid="intent-card">{riskAreas}</div>
+  ),
 }));
 // The stand-in records `prId`: the card is useless without it, and a prop the
 // parent never passes is invisible to `tsc` when it has a default
-// (`client/INSIGHTS.md:163-249`).
+// (`client/INSIGHTS.md:163-249`). It also owns its own query, which this file
+// does not want in `api.get`.
 vi.mock("../BlastRadiusCard", () => ({
   BlastRadiusCard: ({ prId }: { prId: string | null }) => (
     <div data-testid="blast-radius-card" data-pr-id={String(prId)} />
-  ),
-}));
-vi.mock("../PrBriefCard", () => ({
-  PrBriefCard: ({ brief, computing }: { brief: unknown; computing: boolean }) => (
-    <div
-      data-testid="pr-brief-card"
-      data-has-brief={String(brief != null)}
-      data-computing={String(computing)}
-    />
   ),
 }));
 
@@ -69,8 +70,33 @@ const FILES: PrFile[] = [
 
 const HEAD = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432";
 
-/** Only the fields this tab reads; the card's own test carries a full record. */
-const BRIEF = { head_sha: HEAD, risk_level: "high" } as unknown as RiskBriefRecord;
+/** A real record: the banner and both sections render it for real here. */
+const BRIEF = {
+  what: "Adds a per-head_sha Risk Brief computed from one model call.",
+  why: "Reviewers open a 40-file PR with no idea where the danger is.",
+  risk_level: "high",
+  risks: [],
+  review_focus: [],
+  head_sha: HEAD,
+  intent_computed_at: null,
+  intent_freshness: "fresh",
+  blast_status: "full",
+  link_sha: null,
+  index_matches_head: false,
+  inputs: [],
+  ref_lines: [],
+  dropped_refs: [],
+  dropped_risks: 0,
+  budget: 8000,
+  input_tokens_counted: 2040,
+  tokenizer: "cl100k_base",
+  attempts: 1,
+  tokens_in: 2101,
+  provider: "openai",
+  model: "gpt-4.1",
+  cost_usd: 0.014,
+  computed_at: "2026-08-16T09:00:00.000Z",
+} as unknown as RiskBriefRecord;
 
 /**
  * ONE client for the whole test, across every mount inside it.
@@ -94,6 +120,31 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+type TabProps = Partial<React.ComponentProps<typeof OverviewTab>>;
+
+/** The tab as `page.tsx` renders it: same mount, different props. */
+function tabWith(props: TabProps) {
+  return (
+    <QueryClientProvider client={client}>
+      <NextIntlClientProvider locale="en" messages={{ brief, prReview }}>
+        <React.StrictMode>
+          <OverviewTab
+            prBody={null}
+            prId="pr-1"
+            headSha={HEAD}
+            prFiles={FILES}
+            repoFullName="acme/payments-api"
+            reviews={[]}
+            prRuns={[]}
+            onOpenFile={vi.fn()}
+            {...props}
+          />
+        </React.StrictMode>
+      </NextIntlClientProvider>
+    </QueryClientProvider>
+  );
+}
+
 /**
  * StrictMode is not decoration here. It is the cheapest reproduction of one of
  * the two ways this tab could pay twice: React deliberately runs an effect's
@@ -101,22 +152,8 @@ afterEach(cleanup);
  * is none" starts TWO paid model calls for one PR state. The other way is the
  * remount, which needs `unmount()` and has its own case below.
  */
-function renderTab(props: Partial<React.ComponentProps<typeof OverviewTab>> = {}) {
-  return render(
-    <QueryClientProvider client={client}>
-      <React.StrictMode>
-        <OverviewTab
-          prBody={null}
-          prId="pr-1"
-          headSha={HEAD}
-          prFiles={FILES}
-          repoFullName="acme/payments-api"
-          onOpenFile={vi.fn()}
-          {...props}
-        />
-      </React.StrictMode>
-    </QueryClientProvider>,
-  );
+function renderTab(props: TabProps = {}) {
+  return render(tabWith(props));
 }
 
 // Shaped like a real GitHub PR body: a heading, emphasis, inline code and a GFM
@@ -157,11 +194,34 @@ describe("OverviewTab — description", () => {
     expect(screen.queryByText("Description")).not.toBeInTheDocument();
     expect(screen.getByTestId("intent-card")).toBeInTheDocument();
   });
+});
 
-  it("fills the second card slot with BLAST RADIUS, wired to the PR", () => {
+describe("OverviewTab — the composition the design asks for", () => {
+  it("puts one PR Brief heading over the banner, the cards and the focus section", () => {
     renderTab();
 
+    // ONE heading, and it stands over all three (AC-49).
+    expect(screen.getAllByText("PR Brief")).toHaveLength(1);
+    const group = screen.getByText("PR Brief").closest("section") as HTMLElement;
+    expect(within(group).getByText("This state has not been reviewed")).toBeInTheDocument();
+    expect(within(group).getByText("Review focus — read these first")).toBeInTheDocument();
+    expect(group.querySelector(".dd-overview-cards")).not.toBeNull();
+  });
+
+  it("leaves exactly two cards in the row — INTENT and BLAST RADIUS", () => {
+    const { container } = renderTab();
+    const row = container.querySelector(".dd-overview-cards")!;
+
+    // AC-46. The brief lost its card; a third child here would be that card back.
+    expect(row.children).toHaveLength(2);
+    expect(row.firstElementChild).toBe(screen.getByTestId("intent-card"));
+    expect(row.lastElementChild).toBe(screen.getByTestId("blast-radius-card"));
     expect(screen.getByTestId("blast-radius-card")).toHaveAttribute("data-pr-id", "pr-1");
+  });
+
+  it("fills INTENT's risk-areas slot rather than leaving it empty", () => {
+    renderTab();
+    expect(within(screen.getByTestId("intent-card")).getByText("Risk areas")).toBeInTheDocument();
   });
 
   /**
@@ -185,32 +245,88 @@ describe("OverviewTab — description", () => {
     expect(row!.getAttribute("style") ?? "").not.toMatch(/display|grid-template-columns/);
   });
 
-  it("puts the Risk Brief first in the row — it answers where to start", () => {
+  it("stacks banner, cards and focus section in the order the design reads", () => {
+    // Siblings in document order — which is what gives the one-column layout its
+    // order below 1024px with no CSS at all (AC-51).
     const { container } = renderTab();
-    const row = container.querySelector(".dd-overview-cards")!;
+    const group = screen.getByText("PR Brief").closest("section") as HTMLElement;
+    const positions = [
+      screen.getByText("This state has not been reviewed"),
+      container.querySelector(".dd-overview-cards")!,
+      screen.getByText("Review focus — read these first"),
+    ].map((el) => [...group.querySelectorAll("*")].indexOf(el as Element));
 
-    expect(row.firstElementChild).toBe(screen.getByTestId("pr-brief-card"));
+    expect(positions[0]).toBeLessThan(positions[1]!);
+    expect(positions[1]).toBeLessThan(positions[2]!);
+  });
+
+  it("keeps INTENT, BLAST and the focus section rendered while there is no brief", async () => {
+    // AC-50: the brief's absence resizes nothing and removes nothing. The focus
+    // section stays put with the count 0 — a `{n && …}` there would print a
+    // literal `0` instead of the sentence.
+    api.post.mockRejectedValue(new Error("no key configured"));
+    renderTab();
+
+    await waitFor(() => expect(api.post).toHaveBeenCalled());
+    expect(screen.getByTestId("intent-card")).toBeInTheDocument();
+    expect(screen.getByTestId("blast-radius-card")).toBeInTheDocument();
+    expect(screen.getByText("Review focus — read these first")).toBeInTheDocument();
+    expect(within(screen.getByTestId("intent-card")).getByText("Risk areas")).toBeInTheDocument();
+  });
+
+  it("keeps the focus section with the count 0 when the brief singled out nothing", async () => {
+    api.get.mockResolvedValue(BRIEF);
+    renderTab();
+
+    expect(await screen.findByText("0")).toBeInTheDocument();
+    expect(
+      screen.getByText("Nothing was singled out for this state of the pull request."),
+    ).toBeInTheDocument();
   });
 });
 
-/** The tab as `page.tsx` re-renders it: same mount, different props. */
-function tabWith(props: Partial<React.ComponentProps<typeof OverviewTab>>) {
-  return (
-    <QueryClientProvider client={client}>
-      <React.StrictMode>
-        <OverviewTab
-          prBody={null}
-          prId="pr-1"
-          headSha={HEAD}
-          prFiles={FILES}
-          repoFullName="acme/payments-api"
-          onOpenFile={vi.fn()}
-          {...props}
-        />
-      </React.StrictMode>
-    </QueryClientProvider>
-  );
-}
+describe("OverviewTab — which review the banner speaks for", () => {
+  const review = (over: Partial<ReviewRecord>): ReviewRecord =>
+    ({
+      id: "rev-1",
+      pr_id: "pr-1",
+      agent_id: "agent-1",
+      run_id: "run-1",
+      agent_name: "Security",
+      head_sha: HEAD,
+      kind: "review",
+      verdict: "request_changes",
+      summary: "A Stripe key is committed in plaintext.",
+      score: 61,
+      model: "gpt-4.1",
+      created_at: "2026-08-16T09:00:00.000Z",
+      findings: [],
+      ...over,
+    }) as unknown as ReviewRecord;
+
+  const run = (over: Partial<RunSummary>): RunSummary =>
+    ({ run_id: "run-1", blockers: 2, cost_usd: 0.014, tokens_in: 8200, tokens_out: 1300, ...over }) as unknown as RunSummary;
+
+  it("joins the run to the review by run_id and shows the stored blocker count", async () => {
+    api.get.mockResolvedValue(BRIEF);
+    renderTab({ reviews: [review({})], prRuns: [run({})] });
+
+    expect(await screen.findByText("Request changes")).toBeInTheDocument();
+    expect(screen.getByText("0 findings · 2 blockers")).toBeInTheDocument();
+    expect(screen.getByText("$0.014")).toBeInTheDocument();
+  });
+
+  it("ignores a review belonging to another state of the pull request", async () => {
+    api.get.mockResolvedValue(BRIEF);
+    renderTab({ reviews: [review({ head_sha: "0".repeat(40) })], prRuns: [run({})] });
+
+    expect(await screen.findByText("This state has not been reviewed")).toBeInTheDocument();
+    expect(
+      screen.getByText("A review exists for an earlier state of this pull request."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Request changes")).not.toBeInTheDocument();
+  });
+});
 
 describe("OverviewTab — the automatic first computation", () => {
   it("computes a brief for a state the server holds none for, exactly once", async () => {
@@ -230,7 +346,7 @@ describe("OverviewTab — the automatic first computation", () => {
 
   /**
    * The case the guard is really for, and the one every other case here missed
-   * until 2026-08-16: `page.tsx:171` renders this tab as
+   * until 2026-08-16: `page.tsx` renders this tab as
    * `{tab === "overview" && <OverviewTab …/>}`, so a look at Files changed and
    * back UNMOUNTS it. A guard whose lifetime is the mount is reset by that,
    * while the fact it records — "this `(prId, headSha)` has been computed for" —
@@ -251,7 +367,15 @@ describe("OverviewTab — the automatic first computation", () => {
     view.unmount();
     renderTab();
 
-    expect(await screen.findByTestId("pr-brief-card")).toBeInTheDocument();
+    // The remounted mutation starts at `error: null`, so the banner falls to the
+    // empty state rather than the failure — and the call count is the assertion
+    // that matters: a second paid `POST` here is the defect.
+    // The banner's own empty state, once — the two sections say their own
+    // sentence, so the same words do not land on screen three times.
+    expect(await screen.findByText("Brief not available yet.")).toBeInTheDocument();
+    expect(
+      screen.getAllByText("The brief for this state has not been computed."),
+    ).toHaveLength(2);
     expect(api.post).toHaveBeenCalledTimes(1);
   });
 
@@ -262,7 +386,9 @@ describe("OverviewTab — the automatic first computation", () => {
     renderTab();
 
     await waitFor(() =>
-      expect(screen.getByTestId("pr-brief-card")).toHaveAttribute("data-has-brief", "true"),
+      expect(
+        screen.getByText("Adds a per-head_sha Risk Brief computed from one model call."),
+      ).toBeInTheDocument(),
     );
     expect(api.post).not.toHaveBeenCalled();
   });
@@ -290,7 +416,7 @@ describe("OverviewTab — the automatic first computation", () => {
   it("computes nothing while the pull request id is still being resolved", async () => {
     renderTab({ prId: null });
 
-    await waitFor(() => expect(screen.getByTestId("pr-brief-card")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("intent-card")).toBeInTheDocument());
     expect(api.get).not.toHaveBeenCalled();
     expect(api.post).not.toHaveBeenCalled();
   });

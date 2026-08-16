@@ -3,6 +3,10 @@ import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import type { FindingRecord, PrFile, SmartDiff } from "@devdigest/shared";
 import messages from "../../../../../../../../messages/en/prReview.json";
+import { lineDomId as realLineDomId } from "@/components/diff-viewer/helpers";
+
+/** The new-side lines both stand-in viewers render, so a line jump has a target. */
+const LINES = [12, 26, 27, 28];
 
 /**
  * DiffTab is the only way a reviewer reaches Smart Diff, so what is tested here
@@ -25,12 +29,20 @@ vi.mock("@/lib/hooks/reviews", () => ({
 // `data-file-path` on every rendered card. The real attribute lives on
 // `FileCard`, which BOTH viewers render — which is precisely why the jump has
 // to care about which of the two trees is on screen when it runs.
-vi.mock("@/components/diff-viewer", () => ({
+vi.mock("@/components/diff-viewer", async (importOriginal) => ({
+  // `lineDomId` stays REAL: the stand-in below stamps ids with it and the effect
+  // looks them up with it, so a mock here would make the two agree by
+  // construction — which is the one thing worth pinning.
+  lineDomId: (await importOriginal<typeof import("@/components/diff-viewer")>()).lineDomId,
   DiffViewer: ({ files }: { files: PrFile[] }) => (
     <div data-testid="plain-viewer">
       {files.length} files
       {files.map((f) => (
-        <div key={f.path} data-file-path={f.path} />
+        <div key={f.path} data-file-path={f.path}>
+          {LINES.map((n) => (
+            <div key={n} id={realLineDomId(f.path, n)} />
+          ))}
+        </div>
       ))}
     </div>
   ),
@@ -39,16 +51,26 @@ vi.mock("../SmartDiffViewer", () => ({
   SmartDiffViewer: ({
     onOpenFinding,
     openFile,
+    openLine,
     files,
   }: {
     onOpenFinding?: (id: string) => void;
     openFile?: string;
+    openLine?: number;
     files: PrFile[];
   }) => (
-    <div data-testid="smart-viewer" data-open-file={String(openFile)}>
+    <div
+      data-testid="smart-viewer"
+      data-open-file={String(openFile)}
+      data-open-line={String(openLine)}
+    >
       <button onClick={() => onOpenFinding?.("f-42")}>chip</button>
       {files.map((f) => (
-        <div key={f.path} data-file-path={f.path} />
+        <div key={f.path} data-file-path={f.path}>
+          {LINES.map((n) => (
+            <div key={n} id={realLineDomId(f.path, n)} />
+          ))}
+        </div>
       ))}
     </div>
   ),
@@ -214,6 +236,31 @@ describe("DiffTab — arriving from a review-focus item", () => {
     const card = document.querySelector(`[data-file-path="${CSS.escape(HOSTILE)}"]`);
     expect(card).not.toBeNull();
     expect(scrolled).toEqual([card]);
+  });
+
+  it("scrolls to the LINE, not merely the file, when the reference carried one", () => {
+    renderTab({ targetFile: "package-lock.json", targetLine: 26 });
+
+    const line = document.getElementById(realLineDomId("package-lock.json", 26));
+    expect(line).not.toBeNull();
+    expect(scrolled).toEqual([line]);
+    // And the smart viewer is told, so it can open a collapsed card first.
+    expect(screen.getByTestId("smart-viewer")).toHaveAttribute("data-open-line", "26");
+  });
+
+  it("falls back to the file card when the targeted line is not rendered", () => {
+    // In the plain viewer a collapsed card renders no lines at all. A jump that
+    // found nothing must still land on the file rather than sit still.
+    renderTab({ targetFile: "package-lock.json", targetLine: 4321 });
+
+    const card = document.querySelector('[data-file-path="package-lock.json"]');
+    expect(document.getElementById(realLineDomId("package-lock.json", 4321))).toBeNull();
+    expect(scrolled).toEqual([card]);
+  });
+
+  it("hands no line down when the URL carried none", () => {
+    renderTab({ targetFile: "package-lock.json" });
+    expect(screen.getByTestId("smart-viewer")).toHaveAttribute("data-open-line", "undefined");
   });
 
   it("scrolls nowhere when the URL names no file", () => {

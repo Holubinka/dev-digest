@@ -3,7 +3,7 @@
 import React from "react";
 import { useTranslations } from "next-intl";
 import { SectionLabel, Button } from "@devdigest/ui";
-import { DiffViewer, type DiffCommentApi } from "@/components/diff-viewer";
+import { DiffViewer, lineDomId, type DiffCommentApi } from "@/components/diff-viewer";
 import { usePrComments, useCreatePrComment } from "@/lib/hooks/reviews";
 import { useSmartDiff } from "@/lib/hooks/core";
 import { notify } from "@/lib/toast";
@@ -28,6 +28,12 @@ interface DiffTabProps {
    */
   targetFile?: string | null;
   /**
+   * The LINE inside that file, when the reference the reader pressed carried one
+   * — also from the URL (`?line=`), already parsed and bounded by the page. Null
+   * means the reference named no line, and the jump degrades to the file.
+   */
+  targetLine?: number | null;
+  /**
    * Smart order vs GitHub's order. Held in the URL by the page rather than here:
    * this component unmounts on every tab switch, so following a severity chip to
    * Agent runs and coming back would silently reset the reader's choice.
@@ -44,6 +50,7 @@ export function DiffTab({
   canComment,
   onOpenFinding,
   targetFile,
+  targetLine,
   smartOrder,
   onSmartOrderChange,
 }: DiffTabProps) {
@@ -64,8 +71,14 @@ export function DiffTab({
   const scrolled = React.useRef(new Set<string>());
 
   /**
-   * Scroll the targeted file into view. Every `FileCard` carries its own path as
-   * `data-file-path`, in both viewers, so this works whichever one is on screen.
+   * Scroll the targeted file — or the targeted LINE inside it — into view. Every
+   * `FileCard` carries its own path as `data-file-path` and every rendered
+   * new-side line carries `lineDomId(path, newNo)`, in both viewers, so this
+   * works whichever one is on screen.
+   *
+   * The line is tried first and the file is the fallback, never the other way
+   * round: in the plain viewer a collapsed card renders no lines at all, and a
+   * jump that found nothing must still land on the file rather than sit still.
    *
    * Keyed on `showSmart` as well as the target — the same reason the finding
    * jump keys on `shown` (`FindingsPanel.tsx:68-76`): the tree this scrolls
@@ -77,17 +90,25 @@ export function DiffTab({
    * `CSS.escape`, not interpolation: a path is GitHub-supplied text and a `"`
    * or a `]` in one would otherwise end the attribute selector and throw a
    * `SyntaxError` out of `querySelector` — the same rule the finding jump
-   * follows (`FindingsPanel.tsx:74`).
+   * follows (`FindingsPanel.tsx:74`). `getElementById` needs none of that:
+   * `lineDomId` percent-encodes the path itself.
    */
   React.useEffect(() => {
     if (!targetFile) return;
-    const key = `${showSmart ? "smart" : "plain"}:${targetFile}`;
+    const key = `${showSmart ? "smart" : "plain"}:${targetFile}:${targetLine ?? ""}`;
     if (scrolled.current.has(key)) return;
+    const line =
+      targetLine != null ? document.getElementById(lineDomId(targetFile, targetLine)) : null;
+    if (line) {
+      scrolled.current.add(key);
+      line.scrollIntoView({ block: "center", behavior: "smooth" });
+      return;
+    }
     const card = document.querySelector(`[data-file-path="${CSS.escape(targetFile)}"]`);
     if (!card) return;
     scrolled.current.add(key);
     card.scrollIntoView({ block: "start", behavior: "smooth" });
-  }, [targetFile, showSmart]);
+  }, [targetFile, targetLine, showSmart]);
 
   const commentCount = comments?.length ?? 0;
 
@@ -166,6 +187,7 @@ export function DiffTab({
           commenting={commenting}
           {...(onOpenFinding ? { onOpenFinding } : {})}
           {...(targetFile ? { openFile: targetFile } : {})}
+          {...(targetFile && targetLine != null ? { openLine: targetLine } : {})}
         />
       ) : (
         <DiffViewer files={files} commenting={commenting} />

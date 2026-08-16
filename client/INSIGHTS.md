@@ -85,6 +85,28 @@ Pair it with a second test that re-renders under a *different* `headSha` and ass
 goes to 2. Together they say the guard is keyed by state rather than being a once-per-mount
 latch, and that pair is what a plain "called once" assertion cannot distinguish.
 
+### A throwaway vitest file can drive the RUNNING API and print the real rendered tree
+
+**Symptom.** No browser automation is available in a session, so a screen built against a live
+server can only be checked with `curl` — which sees the SSR skeleton of a `"use client"` page and
+nothing of what the reader would see.
+
+**Cause / what makes it work.** `src/test/setup.ts` stubs `ResizeObserver` and registers
+jest-dom, and that is all: **global `fetch` is not mocked there**, it is mocked per test file. A
+test that does not mock it reaches `localhost:3001` for real.
+
+**Fix.** Drop a temporary `src/__live-*.test.tsx` that renders the real component with props taken
+from the live API, `await waitFor` on something the tab only renders once its queries settle, then
+walk `document.body` and `console.log` a tag/text/`href` outline. On 2026-08-16 this rendered the
+whole PR Brief composition against `Holubinka/dev-digest#20` — five risk rows, the "1 more risk
+areas" disclosure, every `github.com` href pinned to `link_sha` and carrying no `#L` because
+`ref_lines` was still `[]`, and the provenance block's `$0.0011 / 5718 tokens in`. Delete the file
+afterwards; it is a probe, not a test, and it would fail in CI where nothing is serving.
+
+Give the probe **every** message namespace the tree needs. Supplying only `brief` and `prReview`
+left `BlastRadiusCard` printing `blast.title` and `blast.stat.symbols` — a probe artefact that
+looks exactly like a missing-key bug in the code under review.
+
 ## What Doesn't Work
 
 ### A popover anchored inside a PR-list row gets clipped
@@ -803,7 +825,36 @@ selection is better carried by `--accent-bg` + `--accent`, which is a hue change
 a 2% luminance one. Judge any surface decision against both blocks of that file, not against
 the running theme.
 
+### A `<details>` marker cannot be hidden from `styles.ts`, so its rule lives in `globals.css`
+
+`client/AGENTS.md` says responsive rules go in `app/globals.css` and everything else goes in a
+colocated `styles.ts`. A native disclosure breaks the second half: `list-style: none` on the
+`<summary>` is inlineable, but WebKit draws its own `::-webkit-details-marker`, and a
+pseudo-element has no inline form at all. So `.dd-brief-disclosure > summary` and its
+`::-webkit-details-marker` sit in `globals.css` under a comment saying they are NOT a breakpoint
+rule — otherwise the next reader deletes them as misplaced.
+
+The reason to pay that cost: `<details>` is the cheapest keyboard-reachable disclosure available
+and needs no `useState`, which is what `RiskAreas` and `ReviewFocusSection` use for the risk
+explanations and the "N more" overflow.
+
 ## Tool & Library Notes
+
+### lucide-react stamps `class="lucide lucide-<kebab>"`, and the kebab is not always the `Icon` key
+
+**Symptom.** You want a test that says "this row got the *shield* icon, not the fallback triangle",
+and `svg` carries no `data-icon` or `name` attribute to assert on.
+
+**Cause / fact.** lucide-react 0.469 puts the icon name in `class`. Probed on 2026-08-16:
+`Icon.Shield` → `lucide lucide-shield`, `Boxes` → `lucide-boxes`, `Zap` → `lucide-zap`,
+`ChevronDown` → `lucide-chevron-down`. **But `Icon.AlertTriangle` → `lucide-triangle-alert`** —
+upstream renamed the icon and `vendor/ui/icons.tsx` keeps the old key, so the class does not
+kebab-case the key you wrote.
+
+**Fix.** Assert `svg.getAttribute("class")` contains `lucide-<name>`, and **scope the query to the
+row**: a section heading that uses the same icon makes an unscoped assertion pass against a row
+with no icon at all. When in doubt, probe rather than guess — render the icon in a scratch test and
+print the class.
 
 ### `@testing-library/user-event` is not installed here — every test uses `fireEvent`
 
@@ -947,6 +998,26 @@ Two layers below the component already refuse a `javascript:` URL — `react-mar
 `urlTransform` rewrites it to `""`, and React blocks such an `href` at the DOM — which is why
 `isSafeUrl` is unit-tested directly in `components/context-doc-view/helpers.test.ts`. A
 rendering-only assertion passes whether that function works or not.
+
+### A fixture that trips two independent gates at once tests exactly one of them
+
+**Symptom.** `lineFor` refuses a line number when `index_matches_head` is false **or** when
+`link_sha` is null — two independent gates, per AC-61. The test named "renders every reference as
+text when there is no commit to link them at" set `{ linkSha: null, indexMatchesHead: false }`,
+because that is the pair a real stale record carries. Deleting the `linkSha == null` line from
+`lineFor` left the whole suite green: the first gate had already returned.
+
+**Cause.** Realistic fixtures correlate. The state the server actually produces trips several
+guards together, so a test written from a real payload can only ever pin the guard that fires
+first.
+
+**Fix.** For a predicate with N independent gates, write N fixtures that each violate exactly one
+and satisfy the rest — even when the combination cannot occur in production
+(`{ linkSha: null, indexMatchesHead: true }` here). Then prove it: comment out one gate at a time
+and confirm the suite goes red. On 2026-08-16 a 23-mutation sweep over the PR Brief composition
+found exactly two survivors, and this was one; the other was a `?? null` normalisation whose only
+observable difference needed a fixture with `head_sha: undefined`, which no realistic payload from
+a *current* server would carry.
 
 ## Recurring Errors & Fixes
 
