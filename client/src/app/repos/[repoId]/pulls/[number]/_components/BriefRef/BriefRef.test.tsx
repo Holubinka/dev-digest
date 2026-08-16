@@ -23,6 +23,18 @@ const PATH = "src/middleware/ratelimit.ts";
 
 const REF_LINES: RiskBriefRefLine[] = [{ ref: PATH, line: 12, source: "blast_symbol" }];
 
+/**
+ * A real reference off PR #21 — the longest the brief has produced here. Every
+ * case below uses THIS one: a short path fits, and a test that passes because
+ * nothing could have overflowed proves nothing about a component whose job is
+ * to survive one that does not.
+ */
+const LONG_PATH =
+  "client/src/app/repos/[repoId]/pulls/[number]/_components/PrBriefCard/PrBriefCard.tsx";
+const LONG_REF_LINES: RiskBriefRefLine[] = [
+  { ref: LONG_PATH, line: 12, source: "blast_symbol" },
+];
+
 function renderLink(props: Partial<React.ComponentProps<typeof BriefRef>> = {}) {
   return render(
     <NextIntlClientProvider locale="en" messages={{ brief: messages }}>
@@ -157,5 +169,51 @@ describe("BriefRef — the rules both forms answer the same way", () => {
     renderOpen({ refValue: ref, changedPaths: new Set([ref]) });
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
     expect(screen.getByText(ref, { normalizer: (value) => value })).toBeInTheDocument();
+  });
+});
+
+/**
+ * A repository path is ONE unbreakable word. Chrome finds no break opportunity
+ * in `client/src/app/…/PrBriefCard.tsx` — not at a `/`, only at a `-`, which a
+ * path need not contain — so on PR #21 at a 1440px window this reference laid
+ * out 650px wide on ONE line inside a 449px card and hung 201px past its border
+ * (measured 2026-08-17).
+ *
+ * BOTH declarations below are needed and neither is enough alone:
+ * `overflow-wrap: break-word` is deliberately NOT counted in min-content, so a
+ * flex item keeping the default `min-width: auto` still refuses to shrink under
+ * its longest word and the wrap never gets a narrower line to happen in.
+ *
+ * jsdom lays nothing out, so the declaration is all a unit test can pin. The
+ * layout it buys was measured in a real browser, before and after.
+ */
+describe("BriefRef — a path is one unbreakable word", () => {
+  const long = { refValue: LONG_PATH, refLines: LONG_REF_LINES };
+
+  it.each([
+    ["a link", () => renderLink(long)],
+    ["plain text", () => renderLink({ ...long, repoFullName: null })],
+    ["a control", () => renderOpen({ ...long, changedPaths: new Set([LONG_PATH]) })],
+  ])("%s may break inside itself and shrink under its own content", (_label, renderRef) => {
+    const { container } = renderRef();
+
+    // The element the two rows lay out as a flex item — `MonoLink` renders an
+    // anchor this component cannot style, so for a link that item is the span
+    // wrapped around it.
+    // `"0"`, not `"0px"`: jsdom keeps the declaration as it was written and
+    // `toHaveStyle` compares the two strings, so `0px` never matches a `0`.
+    expect(container.firstElementChild).toHaveStyle({
+      overflowWrap: "break-word",
+      minWidth: "0",
+    });
+  });
+
+  it("keeps the line number in the path's own text, not in a box of its own", () => {
+    renderLink(long);
+
+    // One text node, so nothing can lay `:12` out as an independent thing that
+    // ends up alone on a line reading as a number about nothing.
+    const label = screen.getByText(`${LONG_PATH}:12`);
+    expect(label.childElementCount).toBe(0);
   });
 });

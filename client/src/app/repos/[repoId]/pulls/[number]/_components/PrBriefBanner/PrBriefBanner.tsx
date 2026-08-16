@@ -92,8 +92,9 @@ export function PrBriefBanner({
    * — a retry taken away in the state it recovers from is no retry at all
    * (`client/INSIGHTS.md:316-331`).
    *
-   * It sits INSIDE the banner card, top-right and left of the gauge, which is
-   * where the mockup puts it. Both states of the banner place it the same way.
+   * It sits INSIDE the banner card, in the right-hand column and UNDER the
+   * `PR SCORE` slot. Both states of the banner place it the same way, which is
+   * what keeps it from moving when a review lands for this state.
    */
   const action =
     brief == null || isError ? (
@@ -171,16 +172,17 @@ export function PrBriefBanner({
             {hasBriefState && briefState}
             {hasOtherStateReview && <p style={s.hint}>{t("riskBrief.reviewedEarlierState")}</p>}
           </div>
-          {/* The action and, beside it, the empty PR SCORE slot: the label and an
-              em dash. No verdict, no zero counters — the state was not reviewed,
-              so there is nothing to count (AC-66). Same corner as the gauge in
-              the reviewed state, so the control does not move between them. */}
+          {/* The empty PR SCORE slot — the label and an em dash — with the
+              action under it. No verdict, no zero counters: the state was not
+              reviewed, so there is nothing to count (AC-66). Same corner and
+              same order as the reviewed banner, so the control does not move
+              when a review lands. */}
           <div style={s.aside}>
-            {action}
             <div style={s.scoreCol}>
               <span style={s.scoreDash}>—</span>
               <ScoreLabel />
             </div>
+            {action}
           </div>
         </div>
       )}

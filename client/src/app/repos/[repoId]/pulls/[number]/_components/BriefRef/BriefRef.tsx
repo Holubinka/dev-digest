@@ -84,7 +84,9 @@ export function BriefRef(props: BriefRefProps) {
         : undefined;
 
     return href ? (
-      <MonoLink href={href}>{label}</MonoLink>
+      <span style={s.refLink}>
+        <MonoLink href={href}>{label}</MonoLink>
+      </span>
     ) : (
       <span className="mono" style={s.refPlain}>
         {label}

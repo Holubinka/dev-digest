@@ -103,7 +103,7 @@ describe("VerdictBanner — the places the design puts things", () => {
     expect(follows(screen.getByText("PR SCORE"), screen.getByText("8k→1.3k"))).toBe(true);
   });
 
-  it("puts an action slot inside the card, left of the gauge", () => {
+  it("puts an action slot inside the card, under the PR SCORE label", () => {
     const { container } = banner({ action: <button type="button">Regenerate brief</button> });
 
     const card = container.firstElementChild as HTMLElement;
@@ -113,7 +113,13 @@ describe("VerdictBanner — the places the design puts things", () => {
     // sibling standing to the right of it, which is where it used to be.
     expect(card).toContainElement(action);
     expect(within(card).getByText("Request changes")).toBeInTheDocument();
-    expect(follows(action, screen.getByText("PR SCORE"))).toBe(true);
+    // AFTER the score and its label, not left of the gauge as the mockup drew
+    // it: the number is what the reader came for, the control is what they do
+    // about it. `PrBriefBanner` has no cost row in its never-reviewed state, so
+    // this is also the ONE place the control sits identically in both states.
+    expect(follows(screen.getByText("PR SCORE"), action)).toBe(true);
+    // And above the cost, which is provenance rather than the thing to do next.
+    expect(follows(action, screen.getByText("$0.014"))).toBe(true);
     // And out of the prose: it is a control on the card, not part of the summary.
     expect(within(titleRow()).queryByRole("button")).not.toBeInTheDocument();
   });

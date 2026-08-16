@@ -51,14 +51,15 @@ export const s = {
     color: "var(--text-primary)",
   } satisfies CSSProperties,
   /**
-   * The card's right-hand column: the recompute action and, beside it, the empty
-   * PR SCORE slot — the same corner `VerdictBanner` puts its own action and gauge
-   * in, so the control does not jump when a review appears for this state.
+   * The card's right-hand column: the empty PR SCORE slot with the recompute
+   * action under it — the same corner and the same order `VerdictBanner` uses,
+   * so the control does not jump when a review appears for this state.
    */
   aside: {
     display: "flex",
-    alignItems: "center",
-    gap: 10,
+    flexDirection: "column",
+    alignItems: "flex-end",
+    gap: 8,
     flexShrink: 0,
   } satisfies CSSProperties,
   scoreCol: {

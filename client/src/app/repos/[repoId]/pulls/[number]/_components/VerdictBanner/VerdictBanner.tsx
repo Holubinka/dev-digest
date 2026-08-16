@@ -33,8 +33,9 @@ export function VerdictBanner({
   tokensIn?: number | null;
   tokensOut?: number | null;
   /**
-   * An optional control for the card's top-right corner, left of the gauge — the
-   * place the mockup puts the Overview's regenerate button.
+   * An optional control for the card's right-hand column, UNDER the gauge and
+   * its `PR SCORE` label. The mockup draws it left of the gauge; it was moved
+   * below on 2026-08-17 at the request of the person reading the screen.
    *
    * A SLOT rather than knowledge of what the control does: this banner is shared
    * with `ReviewRunAccordion`, which has no such control and passes nothing, so
@@ -76,20 +77,18 @@ export function VerdictBanner({
         </div>
         {summary && <p style={s.summary}>{summary}</p>}
       </div>
-      {/* The right-hand column of the mockup: the action and the gauge on one
-          row, the run's cost under them. Rendered only when it would hold
+      {/* The right-hand column, top to bottom: the gauge, its label, the action
+          under them, and the run's cost last. Rendered only when it would hold
           something — an empty column would still take its gap. */}
       {(action != null || score != null || costUsd != null) && (
         <div style={s.aside}>
-          <div style={s.asideTop}>
-            {action}
-            {score != null && (
-              <div style={s.scoreCol}>
-                <CircularScore score={score} size={52} stroke={5} />
-                <span style={s.scoreLabel}>{t("verdict.prScore")}</span>
-              </div>
-            )}
-          </div>
+          {score != null && (
+            <div style={s.scoreCol}>
+              <CircularScore score={score} size={52} stroke={5} />
+              <span style={s.scoreLabel}>{t("verdict.prScore")}</span>
+            </div>
+          )}
+          {action}
           {costUsd != null && (
             <RunCostBadge
               costUsd={costUsd}

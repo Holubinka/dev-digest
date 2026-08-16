@@ -130,6 +130,27 @@ about. `client/AGENTS.md` § *A design is an acceptance criterion* makes placeme
 this is what pins one. Same shape works for "the cost is under the gauge, not in the title row" —
 `VerdictBanner.test.tsx` (2026-08-17) uses it for three of the mockup's placements.
 
+### Measuring a layout bug: headless Chrome over CDP, in ~60 lines of Node
+
+`agent-browser` (what `e2e/` drives) is not installed on this machine, and jsdom lays nothing out, so
+neither the unit suite nor the e2e suite can answer "does this element stick out of its card". Node
+22 has a global `WebSocket` and Chrome ships a CDP server, which is the whole dependency list:
+
+```
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new \
+  --remote-debugging-port=9333 --user-data-dir=$(mktemp -d) --window-size=1440,1000
+# then: GET http://127.0.0.1:9333/json/list → webSocketDebuggerUrl → Runtime.evaluate
+```
+
+Poll `Runtime.evaluate` until the TanStack queries have resolved (a marker element appears), then ask
+the page arithmetic questions it can answer and a screenshot cannot: `card.scrollWidth -
+card.clientWidth`, `el.getBoundingClientRect().right - cardInnerRight`, and — for "does the line
+number end up alone on its own line" — `Range.getClientRects()` per character, grouped by `top`, which
+reconstructs the text of each line box at every container width in a sweep. On 2026-08-17 that turned
+"the path leaves the card" into `+201px at 1440` before and `−16px` after, and turned a yes/no worry
+about `:12` into 80 widths out of 561. Screenshots still matter — they are what showed the break
+landing inside `[number]` — but they cannot be asserted on.
+
 ## What Doesn't Work
 
 ### A popover anchored inside a PR-list row gets clipped
@@ -544,6 +565,46 @@ is only correct when `data` itself is `null`. Two things make that safe here and
 before copying it: the query key carries the state (`["brief", prId, headSha]`), so a stale record
 cannot be another head's answer, and the in-flight case is still covered separately by `isPending`,
 which is what keeps AC-7 ("never present a previous state as current") true while a computation runs.
+
+### `overflow-wrap: break-word` alone never shrinks a flex item, and Chrome does not break a path at `/`
+
+**Symptom.** `client/src/app/repos/[repoId]/pulls/[number]/_components/PrBriefCard/PrBriefCard.tsx`
+— a `Risk.file_refs` entry on PR #21 — rendered 650px wide on ONE line inside a 449px INTENT card
+at a 1440px window and hung 201px past the card border (`card.scrollWidth - card.clientWidth` = 183).
+Reported 2026-08-17 by a human looking at the screen; no gate can see it.
+
+**Cause.** Two independent facts, and fixing either alone leaves the bug.
+
+1. A repository path is ONE word to a line breaker. Chrome breaks `scan-executor.ts` at the
+   **hyphen** and finds no opportunity at a `/` at all — measured, not assumed. That is why the same
+   card looks fine on PR #20 (every long ref there happens to contain a `-`) and breaks on PR #21.
+2. `overflow-wrap: break-word` is deliberately **not** counted when computing min-content, so a flex
+   item that keeps the default `min-width: auto` still refuses to shrink under its longest word — and
+   a wrap it is never given a narrower line for cannot happen. (`overflow-wrap: anywhere` IS counted,
+   which is why it appears to work alone; `BlastRadiusCard/styles.ts:143` rejects it for a different
+   reason — it splits `helpers.ts:` from `82`.)
+
+**Fix.** Both, together, on the element that IS the flex item:
+`{ minWidth: 0, overflowWrap: "break-word" }` — `BriefRef/styles.ts`. Where the item is a vendored
+component that takes no `style` (`MonoLink`), wrap it in a span that carries them; `overflow-wrap`
+inherits into the anchor, and `min-width` belongs to the flex item, which is then the span.
+
+### `<wbr>` fixes where a path breaks and costs it its accessible name
+
+**Symptom.** Adding `<wbr>` after each `/` so a path breaks at its separators — the standard trick,
+and it does work — turned the accessible name of every reference from `src/middleware/ratelimit.ts`
+into `src/ middleware/ ratelimit.ts` and failed 14 existing tests on 2026-08-17.
+
+**Cause.** `dom-accessibility-api`, which RTL's `getByRole({ name })` uses, joins the name from child
+nodes with a space, and `<wbr>` makes the one text node into three. `getByText` is unaffected — it
+reads direct text-node children and joins them with nothing.
+
+**Fix.** None available here, which is the point: the name could be restored with `aria-label`, but
+the element is `vendor/ui/primitives/MonoLink.tsx`, a read-only copy whose props are
+`children | onClick | href`. So the emergency break stays, and with it a measured ~14% of card widths
+(80 of the 561 between 140px and 700px) where the last line is `:12` alone. Anyone reaching for
+`<wbr>` here should know it is an accessibility trade-off through a component they may not edit, and
+that the decision is the human's, not the implementer's.
 
 ## Codebase Patterns
 
@@ -1090,6 +1151,14 @@ and confirm the suite goes red. On 2026-08-16 a 23-mutation sweep over the PR Br
 found exactly two survivors, and this was one; the other was a `?? null` normalisation whose only
 observable difference needed a fixture with `head_sha: undefined`, which no realistic payload from
 a *current* server would carry.
+
+### `toHaveStyle({ minWidth: "0px" })` never matches a `min-width: 0` declaration
+
+jsdom keeps a declaration as it was written — React renders `{ minWidth: 0 }` as `min-width: 0`, and
+`toHaveStyle` compares the two strings, so the `0px` you would write by habit fails against a
+component that is correct. Assert `minWidth: "0"`. The failure output is no help: jest-dom prints the
+whole expected block with no "received", so a one-property mismatch reads as though every property is
+missing (2026-08-17, `BriefRef.test.tsx`).
 
 ## Recurring Errors & Fixes
 

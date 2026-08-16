@@ -43,8 +43,8 @@ export const s = {
     cursor: "help",
   } satisfies CSSProperties,
   /**
-   * The card's right-hand column, as the design draws it: the action and the
-   * gauge on one row, the run's cost beneath them and right-aligned.
+   * The card's right-hand column, right-aligned and stacked: the gauge, its
+   * label, the action, then the run's cost.
    */
   aside: {
     display: "flex",
@@ -52,11 +52,6 @@ export const s = {
     alignItems: "flex-end",
     gap: 8,
     flexShrink: 0,
-  } satisfies CSSProperties,
-  asideTop: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
   } satisfies CSSProperties,
   scoreCol: {
     display: "flex",

@@ -246,7 +246,27 @@ describe("PrBriefBanner — a completed review for this state", () => {
   });
 });
 
+const follows = (first: HTMLElement, second: HTMLElement) =>
+  Boolean(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING);
+
 describe("PrBriefBanner — the recompute action", () => {
+  it("stands under the PR SCORE slot in both states, so it does not move when a review lands", () => {
+    // Never reviewed: the slot holds an em dash, and the control is under it.
+    renderForReviews([], HEAD);
+    expect(
+      follows(screen.getByText("PR SCORE"), screen.getByRole("button", { name: "Regenerate brief" })),
+    ).toBe(true);
+
+    cleanup();
+
+    // Reviewed: the slot holds the gauge, and the control is under it — the same
+    // corner and the same order, which is what stops it jumping between states.
+    renderForReviews([review()], HEAD, [RUN]);
+    expect(
+      follows(screen.getByText("PR SCORE"), screen.getByRole("button", { name: "Regenerate brief" })),
+    ).toBe(true);
+  });
+
   it("names the brief while the review's summary stands in the prose slot", () => {
     const { onCompute } = renderForReviews([review()], HEAD, [RUN]);
 
