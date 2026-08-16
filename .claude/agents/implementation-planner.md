@@ -232,6 +232,32 @@ Then **write the plan to the requirements as they actually stand.** A recommenda
 silently into a step is a requirement you authored, which is the one thing this role does not do.
 The human accepts it and dispatches you again, or does not.
 
+## A step that deletes a file may not define behaviour as "the way that file did it"
+
+Your reader starts cold and reads your steps, not the repository's history. So the moment a step
+removes or replaces a file, every behaviour that file was the **only** carrier of has to be spelled
+out in words, in the step that rehomes it. "As `PrBriefCard` did", "same as the old component",
+"preserve the existing gate" — each is a pointer, and a plan that deletes the target leaves the
+pointer dangling at exactly the moment it is read.
+
+The compounding half is the tests: the file's suite usually goes with it, so the assertion that
+would have caught the omission dies in the same step. Nothing downstream fails. Found on 2026-08-16
+by a cross-model review of `plans/11`, where step P4.1 deleted `PrBriefCard/` including its test and
+step P4.4 defined the new component's link behaviour as "as round one did" — the gate holding AC-27
+("no link against `head_sha` when `link_sha` is null") had no other statement anywhere in the plan.
+
+Two habits, and the first is mechanical:
+
+- **Grep your own plan** for every path a step deletes, moves or replaces, and read every other
+  mention of it. A step that both removes a file and refers to it is the shape to fix.
+- **Name what dies with it.** Before writing a delete step, list what that file is the sole carrier
+  of — a guard, a fallback, an ordering, a refusal — and check each appears as words in the step
+  that takes it over, plus a test in `## Tests` that fails without it.
+
+This is not the same rule as *quote the contract into the dispatch* (§ the multi-agent contract
+block). That one is about cost — a pointer the reader *can* follow, but pays to. This one is about
+correctness: after your own plan runs, there is nothing at the other end.
+
 ## Skills — you consult them, the plan points at them
 
 ### Preloaded
