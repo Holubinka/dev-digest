@@ -46,4 +46,4 @@ with, `LNN-` included; a new plan takes the next free `NN`.
 | [`07-blast-radius.md`](07-blast-radius.md) | repo-wide | legacy | In progress 2026-08-09 |
 | [`08-project-context.md`](08-project-context.md) | repo-wide | single-agent | Planned 2026-08-13 |
 | [`09-project-context-authoring.md`](09-project-context-authoring.md) | server · client | multi-agent | Planned 2026-08-14 |
-| [`10-pr-why-risk-brief.md`](10-pr-why-risk-brief.md) | server · client | multi-agent | Planned 2026-08-16 |
+| [`10-pr-why-risk-brief.md`](10-pr-why-risk-brief.md) | server · client | multi-agent | Round one implemented 2026-08-16 (P4/P5 deferred) |
