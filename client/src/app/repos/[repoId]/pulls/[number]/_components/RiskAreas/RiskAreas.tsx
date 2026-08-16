@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 import { Badge, Icon, Skeleton } from "@devdigest/ui";
 import type { RiskBriefRefLine } from "@/lib/types";
 import type { IntentFreshness, Risk } from "@devdigest/shared";
-import { BriefRef } from "./BriefRef";
+import { BriefRef } from "../BriefRef";
 import { riskChip, riskTone, RISKS_SHOWN } from "./constants";
 import { shortSha } from "./helpers";
 import { s } from "./styles";

@@ -35,6 +35,29 @@ export const s = {
     color: "var(--text-secondary)",
     marginTop: 8,
   } satisfies CSSProperties,
+  /** The icon beside the counts. Inline-flex so it sits on the text baseline. */
+  countsHint: {
+    display: "inline-flex",
+    alignItems: "center",
+    color: "var(--text-muted)",
+    cursor: "help",
+  } satisfies CSSProperties,
+  /**
+   * The card's right-hand column, as the design draws it: the action and the
+   * gauge on one row, the run's cost beneath them and right-aligned.
+   */
+  aside: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-end",
+    gap: 8,
+    flexShrink: 0,
+  } satisfies CSSProperties,
+  asideTop: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+  } satisfies CSSProperties,
   scoreCol: {
     display: "flex",
     flexDirection: "column",

@@ -9,7 +9,7 @@ import type { PrFile } from "@/lib/types";
 import type { ReviewRecord, RunSummary } from "@devdigest/shared";
 import { BlastRadiusCard } from "../BlastRadiusCard";
 import { IntentCard } from "../IntentCard";
-import { PrBriefBanner, hasReviewForOtherState, pickReviewForHead } from "../PrBriefBanner";
+import { PrBriefBanner, hasReviewForOtherState, reviewsForHead } from "../PrBriefBanner";
 import { RiskAreas } from "../RiskAreas";
 import { ReviewFocusSection } from "../ReviewFocusSection";
 import { s } from "./styles";
@@ -102,15 +102,34 @@ export function OverviewTab({
   // carries `config_error` — but a failed GET must not read as an empty card.
   const briefFailure = compute.error ?? brief.error;
 
-  // Derived during render, never mirrored into state. A failed brief shows its
-  // failure once, in the banner, and the two sections below fall to their own
-  // empty state rather than repeating the sentence.
-  const record = briefFailure != null ? null : briefData ?? null;
+  /**
+   * Derived during render, never mirrored into state — and DELIBERATELY not
+   * gated on `briefFailure`.
+   *
+   * A failed *re*computation must not remove the record it was recomputing. The
+   * mutation's `error` is sticky for the life of the mount, so a regenerate that
+   * 429s (`riskBrief.rateLimited` exists for exactly that) used to empty RISK
+   * AREAS, REVIEW FOCUS, the provenance block and the brief cost for the rest of
+   * the visit — three regions saying "not computed" about a brief that is
+   * computed and cached. A failed background refetch did the same to a query
+   * that already had data.
+   *
+   * The failure is still surfaced, as a failure, by the banner — which owns that
+   * copy. Losing the data is only right when there is no data, and `briefData` is
+   * `null` exactly then: the cache key is `["brief", prId, headSha]`, so it can
+   * never resolve to another head's record.
+   */
+  const record = briefData ?? null;
   const briefBusy = compute.isPending || brief.isLoading;
 
   const reviewList = reviews ?? [];
   const runsById = new Map((prRuns ?? []).map((r) => [r.run_id, r]));
-  const bannerReview = pickReviewForHead(reviewList, headSha);
+  // Every completed review of THIS state, most blocking first. The banner speaks
+  // with the first and reports how many there were — several agents can review
+  // one head and disagree, and the top-level "should I merge" signal must not
+  // pick the reassuring one of them in silence.
+  const headReviews = reviewsForHead(reviewList, headSha);
+  const bannerReview = headReviews[0] ?? null;
   const bannerRun =
     bannerReview?.run_id != null ? runsById.get(bannerReview.run_id) ?? null : null;
 
@@ -130,6 +149,7 @@ export function OverviewTab({
           computing={compute.isPending}
           onCompute={() => computeBrief()}
           review={bannerReview}
+          reviewCount={headReviews.length}
           run={bannerRun}
           hasOtherStateReview={hasReviewForOtherState(reviewList, headSha)}
         />

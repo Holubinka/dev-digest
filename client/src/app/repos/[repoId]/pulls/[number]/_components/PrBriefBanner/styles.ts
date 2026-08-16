@@ -9,13 +9,6 @@ import type { CSSProperties } from "react";
  * media query anyway (`client/AGENTS.md`).
  */
 export const s = {
-  /** The banner and, beside it, the action that recomputes the brief. */
-  wrap: {
-    display: "flex",
-    alignItems: "flex-start",
-    gap: 10,
-  } satisfies CSSProperties,
-  bannerCol: { flex: 1, minWidth: 0 } satisfies CSSProperties,
   /** The never-reviewed banner, in the shape `VerdictBanner` gives the other one. */
   card: {
     display: "flex",
@@ -56,6 +49,17 @@ export const s = {
     fontSize: 13.5,
     lineHeight: 1.6,
     color: "var(--text-primary)",
+  } satisfies CSSProperties,
+  /**
+   * The card's right-hand column: the recompute action and, beside it, the empty
+   * PR SCORE slot — the same corner `VerdictBanner` puts its own action and gauge
+   * in, so the control does not jump when a review appears for this state.
+   */
+  aside: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    flexShrink: 0,
   } satisfies CSSProperties,
   scoreCol: {
     display: "flex",

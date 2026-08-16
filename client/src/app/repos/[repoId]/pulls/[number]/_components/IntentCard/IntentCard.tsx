@@ -131,12 +131,16 @@ export function IntentCard({
           not, is the thing the amendment removes — the slot below carries the
           brief's `risks[]`, which is the checked one. The field stays in the
           contract and in the record; only this card stops drawing it. */}
+      {/* Directly under the scope columns, with nothing wedged between: that is
+          where the design puts it, and the `via {model}` / Recompute footer used
+          to sit in the gap. The other three states of this card already render
+          the slot last, which in them IS directly under their own content. */}
+      {riskAreas}
+
       <div style={s.footer}>
         <span>{t("intent.model", { model: intent.model })}</span>
         {recompute}
       </div>
-
-      {riskAreas}
     </section>
   );
 }

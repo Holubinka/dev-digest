@@ -37,6 +37,7 @@
     "moreFocus": "{count} more to read",
     "notReviewed": "This state has not been reviewed",
     "reviewedEarlierState": "A review exists for an earlier state of this pull request.",
+    "severalReviews": "{count} reviews ran on this state — the most blocking verdict is shown. See Agent runs for the rest.",
     "briefCost": "Brief cost",
     "briefTokens": "{count} tokens in",
     "openFile": "Open this file in Files changed",

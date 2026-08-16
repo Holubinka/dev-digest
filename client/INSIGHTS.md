@@ -107,6 +107,29 @@ Give the probe **every** message namespace the tree needs. Supplying only `brief
 left `BlastRadiusCard` printing `blast.title` and `blast.stat.symbols` — a probe artefact that
 looks exactly like a missing-key bug in the code under review.
 
+### A placement requirement needs an ORDER assertion, not three presence assertions
+
+`IntentCard` rendered its RISK AREAS slot *after* the `via {model}` / Recompute footer for a whole
+round, so a loaded card read scope lists → model/Recompute → RISK AREAS while the design put RISK
+AREAS directly under the scope columns. Every test passed the whole time: all three regions were on
+screen, and "on screen" was all anything asserted. Two independent readers (`plan-verifier` item
+210 and `/code-review`) had to find it by eye.
+
+Assert the order, in the state that has all three:
+
+```ts
+const follows = (first: HTMLElement, second: HTMLElement) =>
+  Boolean(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+expect(follows(scope, risks)).toBe(true);
+expect(follows(risks, footer)).toBe(true);
+```
+
+Cheaper to read than indexing `container.querySelectorAll("*")`, and it fails for the reason it is
+about. `client/AGENTS.md` § *A design is an acceptance criterion* makes placement a requirement;
+this is what pins one. Same shape works for "the cost is under the gauge, not in the title row" —
+`VerdictBanner.test.tsx` (2026-08-17) uses it for three of the mockup's placements.
+
 ## What Doesn't Work
 
 ### A popover anchored inside a PR-list row gets clipped
@@ -501,6 +524,27 @@ run for real and the assertions move from `computeBrief` to `api.post`, which is
 costs money anyway. `hooks/core` stays mocked deliberately: leaving it real would put the intent's
 own reads into `api.get` and make the brief's call counts ambiguous.
 
+### A mutation's `error` is sticky, so deriving "is there data" from it empties the page for good
+
+**Symptom.** A brief is on screen for the current head. The reader presses the regenerate icon, the
+POST 429s, and RISK AREAS, REVIEW FOCUS, the provenance block and the brief cost all vanish for the
+rest of the mount — three regions printing "The brief for this state has not been computed." about a
+record that is computed and cached. A failed background refetch of a query that already holds data
+does the same thing.
+
+**Cause.** `OverviewTab.tsx:108` derived the record as
+`briefFailure != null ? null : briefData ?? null`. `useMutation().error` is **not** transient: it
+stays set until the mutation is reset or the component unmounts, so one failed *re*computation reads
+forever after as "there is no record". A `useQuery`'s `error` behaves the same beside a populated
+`data`.
+
+**Fix.** Derive the record from `data` alone and render the failure beside it, not instead of it
+(2026-08-17). A failed recomputation must not remove the record it was recomputing; losing the data
+is only correct when `data` itself is `null`. Two things make that safe here and are worth checking
+before copying it: the query key carries the state (`["brief", prId, headSha]`), so a stale record
+cannot be another head's answer, and the in-flight case is still covered separately by `isPending`,
+which is what keeps AC-7 ("never present a previous state as current") true while a computation runs.
+
 ## Codebase Patterns
 
 ### A security predicate gets exported, not restated — `hasDotSegment` is the dot-segment rule
@@ -544,6 +588,34 @@ over the same PR with identical severity counts can report different `blockers`.
 **Fix.** Show it as its own thing, sourced from `RunSummary.blockers` — never recompute it
 from findings. `RunFindings` (2026-07-30) renders it as a separate chip behind a divider
 for exactly this reason.
+
+**Correction, 2026-08-17.** Still true about what the column *is*. No longer the number the two
+PR-detail verdict banners show. A round-11 review found the Overview banner reading `run.blockers`
+while `ReviewRunAccordion.tsx:85` counted CRITICAL-and-not-dismissed for the same review: dismiss two
+criticals on Agent runs and the accordion dropped to 3 while the Overview still said 5 — two numbers
+for one review on one page, and only one of them responded to what the reader had just done. The
+stored column is frozen at the end of the run and cannot see a dismissal, so both surfaces now count
+`countBlockingFindings` (`src/lib/blockers.ts`).
+
+Read the entry above as: `RunSummary.blockers` is the agent's gate **decision**, which is history.
+Render it under a label that says whose decision it was — the CI chip in `RunFindings` still does,
+correctly. Do not render it as the live count of what still blocks a merge, and never sum or average
+it across runs.
+
+**Correction to that correction, 2026-08-17.** Reverted the same day, before it left the working
+tree, and the reason above was the weaker of the two available. The recount
+`findings.filter(f => f.severity === "CRITICAL" && !f.dismissed_at)` hardcodes **one** threshold,
+while the stored column is `countBlockers(kept, agent.ciFailOn)` and `ciFailOn` is configured per
+agent. So for any agent that does not gate on critical the recount is not a fresher view of the same
+number — it is the wrong number. Staleness is a delay; a hardcoded threshold is an error for a whole
+class of agents, and it is the one the original entry was written about.
+
+Both surfaces now read the stored column through `blockersForRun` (`src/lib/blockers.ts`), which is
+plan 11's own recommendation 1. The original entry stands unamended and is the rule. The first
+correction is deliberately left in place rather than deleted: it records a decision that was taken,
+written into a review brief, implemented and reversed, and the reversal only reads correctly with
+both steps visible. What survives it is the shared function — one place both banners read from, so
+they cannot drift again in either direction.
 
 ### `FindingRecord` is structurally a superset of `ListFinding`, so one card renders both
 
@@ -1641,6 +1713,16 @@ source stays ASCII and the character is visible in a diff.
 
 ## Open Questions
 
+- **A dismissed critical does not move `agent_runs.blockers`, and the fix belongs on the server**
+  (2026-08-17). Repro: open a PR whose completed run has `blockers > 0`, dismiss a CRITICAL finding
+  on Agent runs, and both verdict banners keep the old number. The column is written once, when the
+  run finishes (`server/src/modules/reviews/run-executor.ts:240`). The client must NOT paper over
+  it — recounting there hardcodes CRITICAL and throws away the agent's `ciFailOn`, which is what the
+  Codebase Patterns entry and its two corrections are about. Open on two counts: whether the server
+  should recompute the column on a dismissal at all, and whether it should, given the same column is
+  the CI gate's record of what it decided at the time rather than a live number. Until that is
+  answered, the ⓘ beside the counts in `VerdictBanner` states the as-of ("counted when the run
+  finished") instead of hiding it.
 - Should the accordion header keep showing the run's own totals (`5 findings`) while a
   severity filter is active, or switch to `2 of 5`? Left as totals on 2026-07-28 — the
   header describes the run, not the current view — but it does read oddly next to a

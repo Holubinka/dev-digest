@@ -6,7 +6,8 @@
  * reader will see comes off the blast answer the server already computed. Which
  * makes three things load-bearing, and this file is each of them:
  *
- *  - WHICH number a path gets, when the block prints more than one fact about it;
+ *  - WHETHER a path gets a number at all, when the block prints more than one fact
+ *    about it — it does only where they AGREE (round 11);
  *  - WHICH references get one at all — a blast fact, never a changed file, never a
  *    spec path, never an endpoint label, and never anything past the caps or out
  *    of a block the budget dropped;
@@ -16,8 +17,11 @@
  * NEGATIVE CONTROLS, each run on 2026-08-16 and each failing exactly the case
  * named beside it:
  *
- *   - drop the `!refLines.has(ref)` guard in `blastBlock`, so the LAST occurrence
- *     wins → both ordering cases fail;
+ *   - restore first-occurrence-wins in `mergeRefLine` (`if (into.has(ref)) return`)
+ *     → the two disagreement cases and the third-fact case fail, in both orders;
+ *   - count facts instead of numbers (`if (into.has(ref)) into.set(ref, null)`,
+ *     before the `line > 0` guard) → the duplicate-print case and the
+ *     `line: 0` + later-fact case fail;
  *   - `buildRefLines(buildBlocks(sources))` in `service.ts` instead of
  *     `fit.included` → only the changed-files case fails. It is the only fixture
  *     here where a reference outlives the block that carried its number, which is
@@ -43,6 +47,7 @@ import {
 } from '../src/modules/brief/helpers.js';
 import { BriefService } from '../src/modules/brief/service.js';
 import type {
+  BriefBlock,
   BriefContainer,
   BriefReads,
   BriefSources,
@@ -111,11 +116,16 @@ function linesFor(blast: BlastRadiusView, budget = 100_000): Record<string, Risk
 
 describe('buildRefLines — which fact the number comes off (R14)', () => {
   /**
-   * The block prints symbol 0, then its callers, then symbol 1. `src/shared.ts`
-   * appears first as a CALLER, so the caller's line is the one a reader sees —
-   * the rule is the printed order, not a ranking of the three sources.
+   * THE RULE: a path keeps a number only where every located fact about it names
+   * the SAME line. Here `src/shared.ts` is a caller of `api` at line 9 and a
+   * changed symbol of its own at line 100 — two measurements of two different
+   * things. Nothing in the input says which of them a risk citing
+   * `src/shared.ts` meant, so neither is shown and the reference renders bare.
+   *
+   * The path with one fact still gets its number in the same view, which is what
+   * keeps this from passing vacuously.
    */
-  it('the first occurrence of a path wins: a caller printed before the symbol keeps the caller line', () => {
+  it('two facts naming one path at different lines yield no entry for it', () => {
     const lines = linesFor(
       view({
         symbols: [
@@ -131,16 +141,18 @@ describe('buildRefLines — which fact the number comes off (R14)', () => {
       }),
     );
 
-    expect(lines['src/shared.ts']).toEqual({
-      ref: 'src/shared.ts',
-      line: 9,
-      source: 'blast_caller',
-    });
+    expect(lines['src/shared.ts']).toBeUndefined();
     expect(lines['src/api.ts']).toEqual({ ref: 'src/api.ts', line: 10, source: 'blast_symbol' });
   });
 
-  /** The converse of the same rule, so a passing pair cannot mean "symbols always win". */
-  it('and the symbol line when the symbol is printed first', () => {
+  /**
+   * The same two facts in the other printed order. Under first-occurrence-wins
+   * this fixture and the one above disagreed about `src/shared.ts` — 100 here, 9
+   * there — which is the defect: the number was a function of the print order and
+   * not of the reference. Both now answer nothing, and that agreement is the
+   * property being asserted.
+   */
+  it('and the same two facts in the other printed order yield the same nothing', () => {
     const lines = linesFor(
       view({
         symbols: [
@@ -156,11 +168,54 @@ describe('buildRefLines — which fact the number comes off (R14)', () => {
       }),
     );
 
+    expect(lines['src/shared.ts']).toBeUndefined();
+    expect(lines['src/api.ts']).toEqual({ ref: 'src/api.ts', line: 10, source: 'blast_symbol' });
+  });
+
+  /**
+   * Why the rule counts NUMBERS and not facts. One caller that reaches two changed
+   * symbols is printed once under each of them, so the same measurement arrives
+   * twice — measured on the real index of this repository on 2026-08-16, PR #17
+   * prints `forPull` in `server/src/modules/smart-diff/service.ts` twice at line
+   * 34, and PRs #19 and #20 carry three more paths of the same shape. Two prints
+   * of one measurement are not two answers, so the number survives.
+   */
+  it('one path named twice at the same line keeps it', () => {
+    const caller = { file: 'src/shared.ts', symbol: 'callsBoth', line: 34, rank: 80 };
+    const lines = linesFor(
+      view({
+        symbols: [
+          symbol({ name: 'a', file: 'src/a.ts', line: 5, callers: [caller], caller_count: 1 }),
+          symbol({ name: 'b', file: 'src/b.ts', line: 6, callers: [caller], caller_count: 1 }),
+        ],
+      }),
+    );
+
     expect(lines['src/shared.ts']).toEqual({
       ref: 'src/shared.ts',
-      line: 100,
-      source: 'blast_symbol',
+      line: 34,
+      source: 'blast_caller',
     });
+  });
+
+  /**
+   * And a disagreement is final: the entry two facts agreed on is erased by a
+   * third that does not, rather than surviving on a majority. There is no vote
+   * here — one contradicted number is a number the input did not establish.
+   */
+  it('a third fact that disagrees erases the number the first two agreed on', () => {
+    const caller = { file: 'src/shared.ts', symbol: 'callsBoth', line: 34, rank: 80 };
+    const lines = linesFor(
+      view({
+        symbols: [
+          symbol({ name: 'a', file: 'src/a.ts', line: 5, callers: [caller], caller_count: 1 }),
+          symbol({ name: 'b', file: 'src/b.ts', line: 6, callers: [caller], caller_count: 1 }),
+          symbol({ name: 'shared', file: 'src/shared.ts', line: 100 }),
+        ],
+      }),
+    );
+
+    expect(lines['src/shared.ts']).toBeUndefined();
   });
 
   /**
@@ -229,7 +284,15 @@ describe('buildRefLines — which fact the number comes off (R14)', () => {
     expect(buildRefLines(fit.included).map((entry) => entry.ref)).toEqual(['src/api.ts']);
   });
 
-  /** So the guard is per FACT, not per file: a later fact may still supply the number. */
+  /**
+   * A fact with no usable line is not a competing answer, so it neither supplies a
+   * number nor suppresses one: `src/route.ts` is printed as an endpoint at `0` and
+   * as a symbol at 88, and 88 is what the input established for it. This is the
+   * case that separates "every LOCATED fact agrees" from "the path is named once"
+   * — under the latter, an endpoint whose offset the indexer does not know would
+   * veto a number nothing disagrees with, and all 125 endpoints of the real blast
+   * answer for PR #20 report `line: 0`.
+   */
   it('a later fact about the same file still supplies one', () => {
     const lines = linesFor(
       view({
@@ -319,6 +382,36 @@ describe('buildRefLines — only the blocks that reached the prompt (R14, R15)',
     expect(fit.inputs.find((row) => row.id === 'blast')?.status).toBe('dropped');
     expect(buildAllowedRefs(fit.included).has('src/caller.ts')).toBe(false);
     expect(buildRefLines(fit.included)).toEqual([]);
+  });
+
+  /**
+   * The same agreement rule ACROSS blocks, which is the half no fixture above can
+   * reach: only `blast` fills `refLines` today, so this is the one place a second
+   * producer's behaviour is pinned. Two blocks naming one ref at one line are two
+   * prints of one measurement and keep it; two blocks naming it at different lines
+   * are a disagreement, and a merge that took whichever block was iterated first
+   * would decide it by block order — the file-level form of the very defect this
+   * rule removes.
+   */
+  it('two blocks agreeing about a ref keep it; two that disagree keep nothing', () => {
+    const block = (id: 'blast' | 'specs', refLines: RiskBriefRefLine[]): BriefBlock => ({
+      id,
+      text: '',
+      refs: refLines.map((entry) => entry.ref),
+      refLines,
+      detail: null,
+    });
+    const agree = buildRefLines([
+      block('blast', [{ ref: 'src/api.ts', line: 12, source: 'blast_symbol' }]),
+      block('specs', [{ ref: 'src/api.ts', line: 12, source: 'blast_caller' }]),
+    ]);
+    const disagree = buildRefLines([
+      block('blast', [{ ref: 'src/api.ts', line: 12, source: 'blast_symbol' }]),
+      block('specs', [{ ref: 'src/api.ts', line: 90, source: 'blast_caller' }]),
+    ]);
+
+    expect(agree).toEqual([{ ref: 'src/api.ts', line: 12, source: 'blast_symbol' }]);
+    expect(disagree).toEqual([]);
   });
 
   /**

@@ -24,7 +24,8 @@
     "comment": "Comment",
     "findingsCount": "{count} findings",
     "blockers": " · {count} blockers",
-    "prScore": "PR SCORE"
+    "prScore": "PR SCORE",
+    "countsHint": "Findings are everything this run reported. Blockers are the ones that crossed this agent's own fail threshold, counted when the run finished."
   },
   "severityFilter": {
     "groupLabel": "Filter findings by severity",

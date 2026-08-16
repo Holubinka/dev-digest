@@ -207,16 +207,37 @@ function diffStatsBlock(sources: BriefSources, keep = sources.filePaths.length):
  * of them — the rendered text is byte-identical to what it was before `refLines`
  * existed — and `RiskBrief` has no field one could arrive in (AC-57).
  *
- * FIRST OCCURRENCE OF A PATH WINS, in the order this block prints its facts, so
- * the number a reader is shown is the one carried by the first fact they read
- * about that file. A path that is both a caller and a symbol gets the symbol's
- * line, because the symbol line is printed first.
+ * A NUMBER IS SHOWN ONLY WHERE THE FACTS AGREE ON IT. A reference is a PATH,
+ * while the facts carry a line each — a symbol declaration, a call site, an
+ * endpoint — so a file this block prints twice at two offsets has two candidate
+ * numbers and nothing in the input saying which one a given risk meant. Until
+ * round 11 the first print won, and three risks citing one file therefore rendered
+ * one line, one `#L<n>` link and one diff jump between them, all pointing at
+ * whichever fact happened to be printed first. That is the failure
+ * `client/INSIGHTS.md:418-441` already records once: "the link opened, the file
+ * existed, the line existed, and it was a comment".
+ *
+ * So a path keeps a number only while every LOCATED fact about it names the same
+ * line, and a disagreement erases it for good (`mergeRefLine`). Two prints of one
+ * measurement are not a disagreement: one caller reaching two changed symbols is
+ * printed under each of them, which is four paths across PRs #17, #19 and #20 of
+ * this repository's own index — counting facts instead of numbers would drop those
+ * for nothing. Run over four real blast answers from this repository's own index
+ * on 2026-08-17 (PRs #17, #19, #20, #21), the agreement rule keeps 53 of the 105
+ * numbers first-occurrence-wins produced; the other 52 were guesses, and the drop
+ * is the fix working.
+ *
+ * `source` is still the first agreeing fact's, and only `source`: it says which
+ * kind of structure the number was read off, every agreeing fact establishes the
+ * same number, and nothing renders it.
  *
  * An endpoint LABEL gets no entry. It is a member of the allowed set — a focus
  * item may legitimately name `POST /pulls/:id/brief` — but it is not a path, and
  * `POST /pulls/:id/brief:45` is not a thing that exists.
  *
- * A NON-POSITIVE LINE IS NOT A LINE, and this is the one rule the plan's step did
+ * A NON-POSITIVE LINE IS NOT A LINE, and it is not a disagreement either — a fact
+ * whose offset the indexer does not know establishes nothing, so it neither
+ * supplies a number nor suppresses one. This is the one rule the plan's step did
  * not name because nothing in a fixture carries one. Against the real index of
  * this repository on 2026-08-16, ALL 125 endpoints of the blast answer for PR #20
  * report `line: 0` — the indexer knows the file an endpoint is in and not the
@@ -226,14 +247,13 @@ function diffStatsBlock(sources: BriefSources, keep = sources.filePaths.length):
  * definition of a usable line (`/^[1-9][0-9]{0,6}$/`) rejects it one layer later —
  * so the text would claim a line the jump then refuses to go to. A file whose
  * first fact carries no usable number may still get one from a LATER fact, which
- * is why the guard sits inside `noteLine` rather than around the loop.
+ * is why the guard sits inside `mergeRefLine` rather than around the loop.
  */
 function blastBlock(view: BlastRadiusView): BriefBlock {
   const refs = new Set<string>();
-  const refLines = new Map<string, RiskBriefRefLine>();
-  const noteLine = (ref: string, line: number, source: RiskBriefRefLineSource) => {
-    if (line > 0 && !refLines.has(ref)) refLines.set(ref, { ref, line, source });
-  };
+  const refLines = new Map<string, RiskBriefRefLine | null>();
+  const noteLine = (ref: string, line: number, source: RiskBriefRefLineSource) =>
+    mergeRefLine(refLines, { ref, line, source });
   const lines = [
     `Index status: ${view.status}${view.reason ? ` (${clamp(view.reason)})` : ''}`,
     `Index commit: ${view.link_sha ?? 'unknown'}${view.index_matches_head ? '' : ' (NOT the PR head)'}`,
@@ -277,9 +297,42 @@ function blastBlock(view: BlastRadiusView): BriefBlock {
     id: 'blast',
     text: `## Blast radius\n${wrapUntrusted('blast-facts', lines.join('\n'))}`,
     refs: [...refs],
-    refLines: [...refLines.values()],
+    refLines: agreedRefLines(refLines),
     detail: view.status,
   };
+}
+
+/**
+ * Record one candidate number for one reference, under the only rule this feature
+ * can defend: a path keeps a line while every located fact about it names the same
+ * one, and `null` marks a path whose facts disagreed.
+ *
+ * The `null` is a TOMBSTONE and not an absence, which is the whole mechanism. A
+ * disagreement has to survive every later fact about that path — a third fact
+ * agreeing with the first would otherwise resurrect a number two facts already
+ * contradicted, and a map that simply deleted the key would let it be re-added.
+ *
+ * `line <= 0` returns before any of that: the indexer spells "I know the file and
+ * not the offset" as `0`, so such a fact establishes nothing, disagrees with
+ * nothing, and must not veto a number that nothing contradicts.
+ *
+ * One function for both merges — the block's own facts and `buildRefLines` across
+ * blocks — because the two are the same decision at two scales, and a second
+ * producer of `refLines` must not get a different rule by being written later.
+ */
+function mergeRefLine(into: Map<string, RiskBriefRefLine | null>, entry: RiskBriefRefLine): void {
+  if (entry.ref.length === 0 || entry.line <= 0) return;
+  if (!into.has(entry.ref)) {
+    into.set(entry.ref, entry);
+    return;
+  }
+  const known = into.get(entry.ref);
+  if (known && known.line !== entry.line) into.set(entry.ref, null);
+}
+
+/** The references a single line was agreed on; a tombstone is dropped, not rendered. */
+function agreedRefLines(merged: Map<string, RiskBriefRefLine | null>): RiskBriefRefLine[] {
+  return [...merged.values()].filter((entry): entry is RiskBriefRefLine => entry !== null);
 }
 
 /** Title and body are one input with two labels: they are two different kinds of author text. */
@@ -602,19 +655,18 @@ export function buildAllowedRefs(included: BriefBlock[]): Set<string> {
  * gathered sources instead would do exactly that, and nothing downstream could
  * tell: a line looks equally plausible whichever block it came from.
  *
- * First occurrence wins across blocks as it does inside one, so this stays a
- * function of the printed order and of nothing else. Only `blast` sets `refLines`
- * today; the loop does not assume it, because a second producer would otherwise
- * silently depend on iteration order to decide whose number a reader sees.
+ * Numbers must AGREE across blocks as they must inside one, so this is
+ * `mergeRefLine` again and not a second rule. Only `blast` sets `refLines` today;
+ * the loop does not assume it, because a second producer would otherwise let block
+ * order decide whose number a reader sees — the same defect as first-occurrence-
+ * wins, one level up.
  */
 export function buildRefLines(included: BriefBlock[]): RiskBriefRefLine[] {
-  const lines = new Map<string, RiskBriefRefLine>();
+  const lines = new Map<string, RiskBriefRefLine | null>();
   for (const block of included) {
-    for (const entry of block.refLines ?? []) {
-      if (entry.ref.length > 0 && !lines.has(entry.ref)) lines.set(entry.ref, entry);
-    }
+    for (const entry of block.refLines ?? []) mergeRefLine(lines, entry);
   }
-  return [...lines.values()];
+  return agreedRefLines(lines);
 }
 
 /* --------------------------------------------------------------- grounding */

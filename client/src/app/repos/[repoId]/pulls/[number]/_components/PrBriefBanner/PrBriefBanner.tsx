@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { Button, Icon, Skeleton } from "@devdigest/ui";
 import { ApiError } from "@/lib/api";
+import { blockersForRun } from "@/lib/blockers";
 import type { RiskBriefRecord } from "@/lib/types";
 import type { ReviewRecord, RunSummary, Verdict } from "@devdigest/shared";
 import { VerdictBanner } from "../VerdictBanner";
@@ -26,10 +27,19 @@ interface PrBriefBannerProps {
    */
   review: ReviewRecord | null;
   /**
+   * How many completed reviews exist for this head, `review` among them.
+   *
+   * The banner speaks with ONE of them and multi-agent review is first-class, so
+   * the number has to be visible: a reader who sees a single verdict must be able
+   * to tell that there were others. Nothing is summed across them.
+   */
+  reviewCount: number;
+  /**
    * The `agent_runs` row behind that review. Cost, tokens and the blocker count
    * come off it and off nothing else: `blockers` is the agent's own gate
    * threshold applied server-side and cannot be recomputed on the client
-   * (`client/INSIGHTS.md:512-524`, AC-68).
+   * (`client/INSIGHTS.md:512-524`, AC-68). `src/lib/blockers.ts` is the one place
+   * both this banner and `ReviewRunAccordion` read it from.
    */
   run: RunSummary | null;
   /** A completed review exists for some other state of the PR (AC-75). */
@@ -62,6 +72,7 @@ export function PrBriefBanner({
   computing,
   onCompute,
   review,
+  reviewCount,
   run,
   hasOtherStateReview,
 }: PrBriefBannerProps) {
@@ -75,85 +86,105 @@ export function PrBriefBanner({
   const briefState = <BriefState brief={brief} isLoading={isLoading} isError={isError} error={error} computing={computing} />;
   const hasBriefState = computing || isLoading || isError || brief == null;
 
+  /**
+   * The action names the BRIEF as its subject whatever prose stands beside it
+   * (AC-71), and it is disabled by its own in-flight mutation and by nothing else
+   * — a retry taken away in the state it recovers from is no retry at all
+   * (`client/INSIGHTS.md:316-331`).
+   *
+   * It sits INSIDE the banner card, top-right and left of the gauge, which is
+   * where the mockup puts it. Both states of the banner place it the same way.
+   */
+  const action =
+    brief == null || isError ? (
+      <Button
+        kind="ghost"
+        size="sm"
+        icon="Sparkles"
+        onClick={onCompute}
+        disabled={computing}
+        aria-label={t("riskBrief.compute")}
+      >
+        {t("riskBrief.compute")}
+      </Button>
+    ) : (
+      <Button
+        kind="ghost"
+        size="sm"
+        icon="RefreshCw"
+        onClick={onCompute}
+        disabled={computing}
+        title={t("riskBrief.regenerate")}
+        aria-label={t("riskBrief.regenerate")}
+      />
+    );
+
   return (
-    <div style={s.wrap}>
-      <div style={s.bannerCol}>
-        {reviewed ? (
-          <>
-            <VerdictBanner
-              verdict={review.verdict as Verdict}
-              summary={review.summary}
-              score={review.score}
-              findingsCount={review.findings.length}
-              /* `?? 0` is not a recount and not a claim: with no run row behind
-                 the review there is no stored blocker count, and `VerdictBanner`
-                 renders the findings count ALONE at zero rather than "0
-                 blockers" (AC-68). */
-              blockers={run?.blockers ?? 0}
-              agentName={review.agent_name}
-              costUsd={run?.cost_usd ?? null}
-              tokensIn={run?.tokens_in ?? null}
-              tokensOut={run?.tokens_out ?? null}
-            />
-            {hasBriefState && <div style={s.briefState}>{briefState}</div>}
-          </>
-        ) : (
-          <div style={s.card}>
-            <div style={s.iconBox}>
-              <Icon.Gauge size={22} />
-            </div>
-            <div style={s.main}>
-              <span style={s.title}>{t("riskBrief.notReviewed")}</span>
-              {hasBriefState ? (
-                briefState
-              ) : (
-                <>
-                  <div style={s.colLabel}>{t("riskBrief.what")}</div>
-                  <p style={s.prose}>{brief!.what}</p>
-                  <div style={s.colLabel}>{t("riskBrief.why")}</div>
-                  <p style={s.prose}>{brief!.why}</p>
-                </>
-              )}
-              {hasOtherStateReview && <p style={s.hint}>{t("riskBrief.reviewedEarlierState")}</p>}
-            </div>
-            {/* The empty PR SCORE slot: the label and an em dash. No verdict, no
-                zero counters — the state was not reviewed, so there is nothing
-                to count (AC-66). */}
+    <>
+      {reviewed ? (
+        <div>
+          <VerdictBanner
+            verdict={review.verdict as Verdict}
+            summary={review.summary}
+            score={review.score}
+            findingsCount={review.findings.length}
+            /* The one place both banners on this page read the count from
+               (`src/lib/blockers.ts`). A client-side recount would hardcode
+               CRITICAL and ignore the agent's own `ciFailOn`, which is not a
+               second opinion about the number — it is the wrong number for every
+               agent whose threshold is not `critical` (AC-68). */
+            blockers={blockersForRun(run)}
+            agentName={review.agent_name}
+            costUsd={run?.cost_usd ?? null}
+            tokensIn={run?.tokens_in ?? null}
+            tokensOut={run?.tokens_out ?? null}
+            action={action}
+          />
+          {/* One verdict is on screen and more than one was produced. Saying so
+              is what keeps this from reading as THE answer for the state. */}
+          {reviewCount > 1 && (
+            <p style={s.hint}>{t("riskBrief.severalReviews", { count: reviewCount })}</p>
+          )}
+          {hasBriefState && <div style={s.briefState}>{briefState}</div>}
+        </div>
+      ) : (
+        <div style={s.card}>
+          <div style={s.iconBox}>
+            <Icon.Gauge size={22} />
+          </div>
+          <div style={s.main}>
+            <span style={s.title}>{t("riskBrief.notReviewed")}</span>
+            {/* The prose and the failure are no longer alternatives. A brief
+                that is on screen stays on screen when a REGENERATION fails —
+                the record is still the server's answer for this head — and the
+                failure prints beneath it. Only `computing`/`isLoading` take the
+                prose away, because those are the states in which showing it
+                would present a previous state as current (AC-7). */}
+            {brief != null && !computing && !isLoading && (
+              <>
+                <div style={s.colLabel}>{t("riskBrief.what")}</div>
+                <p style={s.prose}>{brief.what}</p>
+                <div style={s.colLabel}>{t("riskBrief.why")}</div>
+                <p style={s.prose}>{brief.why}</p>
+              </>
+            )}
+            {hasBriefState && briefState}
+            {hasOtherStateReview && <p style={s.hint}>{t("riskBrief.reviewedEarlierState")}</p>}
+          </div>
+          {/* The action and, beside it, the empty PR SCORE slot: the label and an
+              em dash. No verdict, no zero counters — the state was not reviewed,
+              so there is nothing to count (AC-66). Same corner as the gauge in
+              the reviewed state, so the control does not move between them. */}
+          <div style={s.aside}>
+            {action}
             <div style={s.scoreCol}>
               <span style={s.scoreDash}>—</span>
               <ScoreLabel />
             </div>
           </div>
-        )}
-      </div>
-
-      {/* The action names the BRIEF as its subject whatever prose stands beside
-          it (AC-71), and it is disabled by its own in-flight mutation and by
-          nothing else — a retry taken away in the state it recovers from is no
-          retry at all (`client/INSIGHTS.md:316-331`). */}
-      {brief == null || isError ? (
-        <Button
-          kind="ghost"
-          size="sm"
-          icon="Sparkles"
-          onClick={onCompute}
-          disabled={computing}
-          aria-label={t("riskBrief.compute")}
-        >
-          {t("riskBrief.compute")}
-        </Button>
-      ) : (
-        <Button
-          kind="ghost"
-          size="sm"
-          icon="RefreshCw"
-          onClick={onCompute}
-          disabled={computing}
-          title={t("riskBrief.regenerate")}
-          aria-label={t("riskBrief.regenerate")}
-        />
+        </div>
       )}
-    </div>
+    </>
   );
 }
 

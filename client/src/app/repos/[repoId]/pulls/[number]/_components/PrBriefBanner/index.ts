@@ -1,2 +1,9 @@
 export { PrBriefBanner, PrBriefBanner as default } from "./PrBriefBanner";
-export { pickReviewForHead, hasReviewForOtherState, byNewestThenId, reviewHead } from "./helpers";
+export {
+  pickReviewForHead,
+  reviewsForHead,
+  hasReviewForOtherState,
+  byMostBlockingThenNewest,
+  byNewestThenId,
+  reviewHead,
+} from "./helpers";

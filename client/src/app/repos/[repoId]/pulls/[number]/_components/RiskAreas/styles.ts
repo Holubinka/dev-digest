@@ -80,19 +80,6 @@ export const s = {
     gap: 10,
     marginTop: 6,
   } satisfies CSSProperties,
-  /** A reference that could not become a link. Text, never a dead control. */
-  refPlain: { fontSize: 12.5, color: "var(--text-muted)" } satisfies CSSProperties,
-  /** A bare button: the affordance is the underline, not a second box. */
-  refButton: {
-    background: "none",
-    border: "none",
-    padding: 0,
-    fontSize: 12.5,
-    cursor: "pointer",
-    color: "var(--accent-text)",
-    textDecoration: "underline",
-    textUnderlineOffset: 2,
-  } satisfies CSSProperties,
   /** The overflow disclosure: how many rows the section is not showing. */
   more: {
     marginTop: 8,

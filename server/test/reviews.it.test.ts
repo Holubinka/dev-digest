@@ -242,6 +242,73 @@ d('A2 reviews + agents (Testcontainers pg)', () => {
     await app.close();
   });
 
+  /**
+   * `head_sha` on the REVIEWS PAYLOAD — the plan named this file for it, and it is
+   * the one link in the chain no hermetic test can see. `reviewToDto` is covered
+   * by `review-head-sha.test.ts`; between it and the response sit the repository's
+   * column list, the service and the route, and a change in any of them drops the
+   * field with every unit test still green. That is not hypothetical: the column,
+   * the contract, both vendored copies and migration `0020` were all in place
+   * while `GET /pulls/:id/reviews` answered without the field
+   * (`INSIGHTS.md:357-381`).
+   *
+   * BOTH VALUES, because they fail differently. A review the executor wrote must
+   * carry the head it reviewed — asserted against the pull's own `head_sha`, not
+   * against a literal, so a mapper that reads the head from some other row fails
+   * here. A row written before the column existed must arrive as an explicit
+   * `null` WITH ITS KEY: `client/src/lib/api.ts` validates nothing, so a dropped
+   * key reads `undefined` in the browser, and "unknown" would silently become
+   * "the head you are looking at".
+   *
+   * NEGATIVE CONTROLS, both run on 2026-08-16 against a live testcontainer:
+   * delete `head_sha` from `reviewToDto` → "expected undefined to be 'a1b2c3d4'";
+   * serve it as `review.headSha ?? ''` → "expected '' to be null".
+   */
+  it('GET /pulls/:id/reviews carries head_sha — the reviewed head, and null for a row written before the column', async () => {
+    const app = await appWith(REVIEW_FIXTURE);
+    const { pr } = await setupRepoAndPr(pg.handle.db, workspaceId);
+    const agent = (
+      await app.inject({
+        method: 'POST',
+        url: '/agents',
+        payload: { name: 'Head A', provider: 'openai', model: 'gpt-4.1', system_prompt: 'rev' },
+      })
+    ).json();
+
+    await app.inject({
+      method: 'POST',
+      url: `/pulls/${pr.id}/review`,
+      payload: { agentId: agent.id },
+    });
+    await waitForPrRuns(pg.handle.db, pr.id, { expected: 1 });
+
+    // The pre-column row goes in through the schema, so nothing on the write path
+    // can hand it a default the migration deliberately did not give it.
+    const [legacy] = await pg.handle.db
+      .insert(t.reviews)
+      .values({
+        workspaceId,
+        prId: pr.id,
+        kind: 'review',
+        verdict: 'comment',
+        summary: 'Written before reviews.head_sha existed.',
+      })
+      .returning();
+
+    const reviews = (
+      await app.inject({ method: 'GET', url: `/pulls/${pr.id}/reviews` })
+    ).json();
+    expect(reviews).toHaveLength(2);
+
+    const reviewed = reviews.find((r: { id: string }) => r.id !== legacy!.id);
+    const before = reviews.find((r: { id: string }) => r.id === legacy!.id);
+    expect(reviewed.head_sha).toBe(pr.headSha);
+    expect(before.head_sha).toBeNull();
+    expect(Object.hasOwn(before, 'head_sha')).toBe(true);
+
+    await app.close();
+  });
+
   it('dual-provider structured output: anthropic provider returns the same Review shape', async () => {
     const app = await appWith(REVIEW_FIXTURE, 'anthropic');
     const { pr } = await setupRepoAndPr(pg.handle.db, workspaceId);

@@ -8,7 +8,24 @@ Failures and surprises specific to this package. Repo-wide ones live in the root
 
 ## What Works
 
-_Nothing recorded yet._
+### Size a derivation change on real inputs with `tsx`, without paying for the endpoint that produces them
+
+A pure transform under `modules/*/helpers.ts` can be run over production-shaped input in one
+command, and on 2026-08-17 that is what turned "expect the count to drop" into "105 → 53":
+
+```sh
+curl -s localhost:3001/pulls/<id>/blast -o /tmp/blast.json     # the real indexed answer
+cd server && pnpm exec tsx /tmp/derive.ts                      # imports the real helpers
+```
+
+`tsx` resolves the tsconfig `paths` from the CWD, so a scratch script outside the repo can import
+`/…/server/src/modules/brief/helpers.js` and `@devdigest/shared` resolves inside it. Two reasons this
+beats the obvious alternatives: `POST /pulls/:id/brief`, the real entry point, spends a live model
+call for a derivation the model plays no part in, and both stored briefs on this machine have
+`index_matches_head = false`, which gates `ref_lines` to `[]` before the rule under test is reached.
+Re-running the same script with the old rule restored for one minute gives the before/after from the
+same code path rather than from a reimplementation of it — a Python model of the same rule agreed to
+the number, which is how the model was known to be trustworthy in the first place.
 
 ## What Doesn't Work
 
@@ -816,6 +833,49 @@ where the number is valid, and the client's own definition of a usable line (`/^
 `plans/11` P4·8) rejects `0` one layer later — so the text would claim a line the jump then refuses.
 The guard belongs per FACT, not per file: a file whose endpoint entry has no line may still get one
 from a later symbol or caller fact about the same path.
+
+### A number keyed by PATH is a guess when the input carries a number per FACT
+
+**Symptom.** `pr_brief.ref_lines` is keyed by reference, i.e. by path, and the blast answer it is
+derived from carries a line per fact — a symbol declaration, a call site, an endpoint. Three risks
+citing `src/middleware/ratelimit.ts` therefore rendered the same `:45`, the same `#L45` GitHub link
+and the same diff jump, off whichever fact `blastBlock` happened to print first. Reviewer round 11
+called it, correctly: the number located the file's first fact, not the reference.
+
+**Cause.** `noteLine` was first-occurrence-wins (`modules/brief/helpers.ts`, until 2026-08-17). Every
+number it stored was real; which one a reader saw was a function of print order and of nothing else,
+and nothing downstream could tell the difference.
+
+**Fix (2026-08-17).** A path keeps a line only while every located fact about it names the same one;
+a disagreement writes a `null` TOMBSTONE that later facts cannot lift. The guard now lives in
+`mergeRefLine`, shared with `buildRefLines` so the cross-block merge cannot acquire a different rule
+— read that name, not `noteLine`, in the `BlastEndpoint.line` entry above.
+
+**Two ways of counting that look equivalent and are not.** Measured over four real blast answers
+(PRs #17, #19, #20, #21) on 2026-08-17: first-occurrence-wins produced 105 numbers, agreement keeps
+**53**. Counting FACTS instead of NUMBERS would have kept 43, and both of the six it loses are wrong
+to lose — a fact with `line: 0` (all 125 endpoints of PR #20) establishes nothing and so cannot
+disagree with anything, and one caller reaching two changed symbols is printed once under each, which
+is four paths in those four PRs where the same measurement arrives twice. Halving the count is the
+fix working; losing the duplicates would have been a second bug with the same shape.
+
+### The annotation that closes a DTO hole cannot check a column the schema left as plain `text`
+
+**Symptom.** `reviewToDto` is annotated `: ReviewRecord` as of 2026-08-17, which closes the hole the
+two entries above describe — proved both ways against the live tree: adding `bogus: review.prId` to
+the literal fails `TS2353`, deleting `head_sha` fails `TS2741`. One field would not compile:
+`verdict`.
+
+**Cause.** `reviews.verdict` is `text('verdict')` while `reviews.kind` beside it — and
+`pr_intent.confidence`, `findings.severity`, `pull_requests.status`, every enum column in
+`pr_brief` — is `text(name, { enum })`, the TypeScript-level vocabulary this schema's own comment
+(`db/schema/reviews.ts:99-102`) says is the pattern. So the row type is `string | null` against the
+contract's `Verdict | null`, and the mapper carries a cast.
+
+**Fix.** Narrowing the column removes the cast and generates no migration — `text(name, { enum })`
+emits the same SQL. It is a schema change, so it was left for a human; all 285 rows in the local
+database already hold one of the three values (measured 2026-08-17). Until then, treat the cast as
+the one unchecked field on that payload.
 
 ## Tool & Library Notes
 

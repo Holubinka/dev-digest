@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 import { Badge, Icon, SectionLabel, Skeleton } from "@devdigest/ui";
 import { RunCostBadge } from "@/components/run-cost-badge";
 import type { PrFile, ReviewFocusItem, RiskBriefInput, RiskBriefRefLine } from "@/lib/types";
-import { BriefRef } from "../RiskAreas";
+import { BriefRef } from "../BriefRef";
 import { FOCUS_SHOWN, statusKey } from "./constants";
 import { s } from "./styles";
 

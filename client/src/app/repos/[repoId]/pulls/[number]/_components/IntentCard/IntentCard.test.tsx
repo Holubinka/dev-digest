@@ -159,6 +159,28 @@ describe("IntentCard — RISK AREAS is a slot, not the intent's own chips", () =
     renderCard({ riskAreas: undefined });
     expect(screen.queryByTestId("risk-areas")).not.toBeInTheDocument();
   });
+
+  /**
+   * ORDER, not presence. All three regions were on screen before this test
+   * existed and the card still read scope lists → `via {model}` / Recompute →
+   * RISK AREAS, because the loaded branch rendered the slot after its footer. The
+   * design puts RISK AREAS directly under IN SCOPE / OUT OF SCOPE with nothing
+   * wedged between, and placement is an acceptance criterion (`client/AGENTS.md`
+   * § *A design is an acceptance criterion*).
+   */
+  it("puts RISK AREAS under the scope columns and above the model/Recompute footer", () => {
+    renderCard();
+
+    const scope = screen.getByText(messages.intent.outOfScope);
+    const risks = screen.getByTestId("risk-areas");
+    const footer = screen.getByText(`via ${RECORD.model}`);
+
+    const follows = (first: HTMLElement, second: HTMLElement) =>
+      Boolean(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+    expect(follows(scope, risks)).toBe(true);
+    expect(follows(risks, footer)).toBe(true);
+  });
 });
 
 describe("IntentCard — degrading rather than crashing", () => {

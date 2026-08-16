@@ -1,10 +1,11 @@
 import React from "react";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, cleanup, waitFor, within } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { PrFile, RiskBriefRecord } from "@/lib/types";
 import type { ReviewRecord, RunSummary } from "@devdigest/shared";
+import { ApiError } from "@/lib/api";
 import brief from "@/../messages/en/brief.json";
 import prReview from "@/../messages/en/prReview.json";
 
@@ -96,6 +97,32 @@ const BRIEF = {
   model: "gpt-4.1",
   cost_usd: 0.014,
   computed_at: "2026-08-16T09:00:00.000Z",
+} as unknown as RiskBriefRecord;
+
+/**
+ * The same record with something in each of the brief's three places, so a
+ * regression that empties one of them is visible here rather than only in the
+ * three component files.
+ */
+const FULL_BRIEF = {
+  ...BRIEF,
+  risks: [
+    {
+      kind: "security",
+      title: "Auth surface touched",
+      explanation: "The limiter runs before the session is resolved.",
+      severity: "high",
+      file_refs: ["src/middleware/ratelimit.ts"],
+    },
+  ],
+  review_focus: [
+    {
+      ref: "src/config.ts",
+      kind: "file",
+      reason: "live Stripe key (sk_live_…) committed in plaintext",
+    },
+  ],
+  inputs: [{ id: "diff_stats", status: "included", tokens: 180, detail: "12 files" }],
 } as unknown as RiskBriefRecord;
 
 /**
@@ -272,6 +299,43 @@ describe("OverviewTab — the composition the design asks for", () => {
     expect(screen.getByTestId("blast-radius-card")).toBeInTheDocument();
     expect(screen.getByText("Review focus — read these first")).toBeInTheDocument();
     expect(within(screen.getByTestId("intent-card")).getByText("Risk areas")).toBeInTheDocument();
+  });
+
+  /**
+   * The regression this pins: `record` used to be
+   * `briefFailure != null ? null : briefData`, and the mutation's error is sticky
+   * for the life of the mount. One 429 on the regenerate icon therefore emptied
+   * RISK AREAS, REVIEW FOCUS, the provenance block and the brief cost for the
+   * rest of the visit, and both sections printed "The brief for this state has
+   * not been computed." about a brief that is computed and cached.
+   */
+  it("keeps a cached brief on screen when a regeneration fails", async () => {
+    api.get.mockResolvedValue(FULL_BRIEF);
+    api.post.mockRejectedValue(new ApiError("Rate limit exceeded", 429));
+    renderTab();
+
+    // The stored brief for this head, in all three of its places.
+    expect(await screen.findByText("Auth surface touched")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate brief" }));
+
+    // The failure arrives, in the banner, which owns that copy…
+    expect(await screen.findByText(/too many briefs were requested/i)).toBeInTheDocument();
+    // …and takes nothing with it.
+    expect(screen.getByText("Auth surface touched")).toBeInTheDocument();
+    expect(screen.getByText("— live Stripe key (sk_live_…) committed in plaintext")).toBeInTheDocument();
+    expect(screen.getByText("Built from")).toBeInTheDocument();
+    expect(screen.getByText("diff_stats")).toBeInTheDocument();
+    expect(screen.getByText("$0.014")).toBeInTheDocument();
+    expect(
+      screen.getByText("Adds a per-head_sha Risk Brief computed from one model call."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("The brief for this state has not been computed."),
+    ).not.toBeInTheDocument();
+
+    // And it is not a paid retry loop either: one POST, the one that was clicked.
+    expect(api.post).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the focus section with the count 0 when the brief singled out nothing", async () => {

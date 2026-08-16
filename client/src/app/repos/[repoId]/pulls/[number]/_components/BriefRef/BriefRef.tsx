@@ -1,3 +1,9 @@
+/* BriefRef — ONE reference out of a risk brief, in the two forms the two
+   consumers need. Its own folder because it is its own component with its own
+   props contract and two callers in two other folders — `RiskAreas/` and
+   `ReviewFocusSection/` — neither of which owns it. It used to sit un-nested
+   inside `RiskAreas/` and reach the second caller through that folder's barrel,
+   which then exported two different components. */
 "use client";
 
 import React from "react";

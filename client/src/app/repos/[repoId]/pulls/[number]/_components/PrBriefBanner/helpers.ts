@@ -44,23 +44,74 @@ export function byNewestThenId(a: ReviewRecord, b: ReviewRecord): number {
 }
 
 /**
- * The completed review for THIS state of the PR, or null.
+ * How much a verdict blocks a merge. Higher wins.
+ *
+ * `src/lib/api.ts` validates nothing at runtime, so the lookup is `Object.hasOwn`
+ * with an explicit fallback rather than a bare index — `"constructor"` is a key
+ * every object literal answers to (`client/INSIGHTS.md:594-618`). An unrecognised
+ * verdict lands on `comment`, which is where `VerdictBanner` already renders it:
+ * it is not evidence that the state is blocked, and it is not an approval either.
+ */
+const BLOCKING_RANK: Record<string, number> = {
+  request_changes: 2,
+  comment: 1,
+  approve: 0,
+};
+
+const blockingRank = (review: ReviewRecord): number => {
+  const verdict = review.verdict ?? "";
+  return Object.hasOwn(BLOCKING_RANK, verdict) ? BLOCKING_RANK[verdict]! : BLOCKING_RANK.comment!;
+};
+
+/**
+ * Most blocking first; ties broken by `byNewestThenId`.
+ *
+ * The banner's question is "can this merge", and several agents can answer it
+ * differently about the same state: Security returning `request_changes` and a
+ * Docs agent returning `approve` minutes later is an ordinary multi-agent run
+ * (`ReviewRunAccordion.tsx:3`). Presenting the NEWEST as the verdict of the state
+ * would put **Approve · 0 blockers** at the top of the page while a blocking
+ * review sat one tab away, so recency is the tie-break and never the rule.
+ *
+ * Nothing is summed or averaged across reviews: `score` and `blockers` belong to
+ * one run, and mixing them produces a number no run produced.
+ */
+export function byMostBlockingThenNewest(a: ReviewRecord, b: ReviewRecord): number {
+  const rank = blockingRank(b) - blockingRank(a);
+  return rank !== 0 ? rank : byNewestThenId(a, b);
+}
+
+/**
+ * Every completed review for THIS state of the PR, most blocking first.
  *
  * A `head_sha` of `null` is "the row was written before that column existed", so
  * it is never this state — treating it as the current head would make every
  * historical review a review of whatever is checked out now (AC-69). A null
  * `headSha` on the PR side means we do not know which state is current, so
  * nothing can match it either.
+ *
+ * `filter` already returns a new array, so the `sort` cannot touch TanStack's
+ * cached response.
+ */
+export function reviewsForHead(reviews: ReviewRecord[], headSha: string | null): ReviewRecord[] {
+  if (headSha == null) return [];
+  return reviews
+    .filter((r) => isCompleted(r) && reviewHead(r) === headSha)
+    .sort(byMostBlockingThenNewest);
+}
+
+/**
+ * The one review the banner speaks with, or null.
+ *
+ * It is one of several when several ran, which is why the banner also reports
+ * HOW MANY stand behind it — a reader who sees one verdict has to be able to
+ * tell that there were others.
  */
 export function pickReviewForHead(
   reviews: ReviewRecord[],
   headSha: string | null,
 ): ReviewRecord | null {
-  if (headSha == null) return null;
-  const candidates = reviews.filter((r) => isCompleted(r) && reviewHead(r) === headSha);
-  if (candidates.length === 0) return null;
-  // A copy: `sort` mutates, and the array here is TanStack's cached response.
-  return [...candidates].sort(byNewestThenId)[0] ?? null;
+  return reviewsForHead(reviews, headSha)[0] ?? null;
 }
 
 /**

@@ -7,7 +7,13 @@ import { ApiError } from "@/lib/api";
 import brief from "@/../messages/en/brief.json";
 import prReview from "@/../messages/en/prReview.json";
 import { PrBriefBanner } from "./PrBriefBanner";
-import { byNewestThenId, hasReviewForOtherState, pickReviewForHead, reviewHead } from "./helpers";
+import {
+  byNewestThenId,
+  hasReviewForOtherState,
+  pickReviewForHead,
+  reviewHead,
+  reviewsForHead,
+} from "./helpers";
 
 afterEach(cleanup);
 
@@ -109,6 +115,7 @@ function renderBanner(props: Partial<React.ComponentProps<typeof PrBriefBanner>>
         computing={false}
         onCompute={onCompute}
         review={null}
+        reviewCount={0}
         run={null}
         hasOtherStateReview={false}
         {...props}
@@ -128,10 +135,12 @@ function renderForReviews(
   runs: RunSummary[] = [],
   props: Partial<React.ComponentProps<typeof PrBriefBanner>> = {},
 ) {
-  const picked = pickReviewForHead(reviews, headSha);
+  const forHead = reviewsForHead(reviews, headSha);
+  const picked = forHead[0] ?? null;
   const runsById = new Map(runs.map((r) => [r.run_id, r]));
   return renderBanner({
     review: picked,
+    reviewCount: forHead.length,
     run: picked?.run_id != null ? runsById.get(picked.run_id) ?? null : null,
     hasOtherStateReview: hasReviewForOtherState(reviews, headSha),
     ...props,
@@ -207,7 +216,8 @@ describe("PrBriefBanner — a completed review for this state", () => {
 
     // Five findings are CRITICAL and undismissed; the agent's own gate counted
     // two. A client-side recount is exactly what AC-68 rejects
-    // (`client/INSIGHTS.md:512-524`).
+    // (`client/INSIGHTS.md:512-524`) — it hardcodes CRITICAL and so ignores
+    // `ciFailOn`, which is the agent's, not this component's.
     expect(screen.getByText("6 findings · 2 blockers")).toBeInTheDocument();
     expect(screen.queryByText(/5 blockers/)).not.toBeInTheDocument();
   });
@@ -328,9 +338,77 @@ describe("PrBriefBanner — which review, when several completed at this head", 
   const older = review({ id: "rev-a", created_at: "2026-08-16T08:00:00.000Z" });
   const newer = review({ id: "rev-b", created_at: "2026-08-16T09:00:00.000Z" });
 
-  it("takes the newest", () => {
+  /** Security blocks; a Docs agent approves the same head minutes later. */
+  const blocking = review({
+    id: "rev-security",
+    agent_name: "Security",
+    verdict: "request_changes",
+    created_at: "2026-08-16T08:00:00.000Z",
+  });
+  const approving = review({
+    id: "rev-docs",
+    agent_name: "Docs",
+    verdict: "approve",
+    summary: "Docs read fine.",
+    score: 95,
+    created_at: "2026-08-16T09:00:00.000Z",
+    findings: [],
+  });
+
+  it("takes the newest of two that agree", () => {
     expect(pickReviewForHead([older, newer], HEAD)?.id).toBe("rev-b");
     expect(pickReviewForHead([newer, older], HEAD)?.id).toBe("rev-b");
+  });
+
+  /**
+   * Both orders, because a test that passes only because the fixture happened to
+   * be ordered proves nothing — and the approving review here is the NEWER of the
+   * two, so recency alone would pick it either way round.
+   */
+  it("takes the most blocking verdict, not the newest, whichever order they arrive in", () => {
+    expect(pickReviewForHead([blocking, approving], HEAD)?.id).toBe("rev-security");
+    expect(pickReviewForHead([approving, blocking], HEAD)?.id).toBe("rev-security");
+  });
+
+  it("ranks a comment above an approve", () => {
+    const commenting = review({
+      id: "rev-comment",
+      verdict: "comment",
+      created_at: "2026-08-16T07:00:00.000Z",
+    });
+    expect(pickReviewForHead([commenting, approving], HEAD)?.id).toBe("rev-comment");
+    expect(pickReviewForHead([approving, commenting], HEAD)?.id).toBe("rev-comment");
+  });
+
+  it("treats a verdict nothing maps as neither blocking nor an approval", () => {
+    // `src/lib/api.ts` validates nothing, and `"constructor"` is a key every
+    // object literal answers to — an allowlist built with `in` is not one
+    // (`client/INSIGHTS.md:594-618`).
+    const unknown = review({ id: "rev-x", verdict: "constructor" as ReviewRecord["verdict"] });
+    expect(pickReviewForHead([unknown, blocking], HEAD)?.id).toBe("rev-security");
+    expect(pickReviewForHead([unknown, approving], HEAD)?.id).toBe("rev-x");
+  });
+
+  it("shows the blocking verdict and says how many reviews stand behind it", () => {
+    renderForReviews([approving, blocking], HEAD, [RUN]);
+
+    // The page's top-level "should I merge" signal. Approve · 0 blockers here,
+    // with the blocking review one tab away, is the defect.
+    expect(screen.getByText("Request changes")).toBeInTheDocument();
+    expect(screen.queryByText("Approve")).not.toBeInTheDocument();
+    expect(screen.getByText(/2 reviews ran on this state/)).toBeInTheDocument();
+  });
+
+  it("shows the same thing when the two arrive the other way round", () => {
+    renderForReviews([blocking, approving], HEAD, [RUN]);
+
+    expect(screen.getByText("Request changes")).toBeInTheDocument();
+    expect(screen.getByText(/2 reviews ran on this state/)).toBeInTheDocument();
+  });
+
+  it("says nothing about other reviews when there is only one", () => {
+    renderForReviews([review()], HEAD, [RUN]);
+    expect(screen.queryByText(/reviews ran on this state/)).not.toBeInTheDocument();
   });
 
   it("breaks a tie on created_at by id, whichever order the two arrive in", () => {
