@@ -137,12 +137,22 @@ export async function seed(db: Db): Promise<{ workspaceId: string; userId: strin
       author: 'marisa.koch',
     });
 
-    // a sample review + findings so the PR shows results before the first run
+    // A sample review + findings so the PR shows results before the first run.
+    //
+    // `headSha` is the head this PR declares above, because that is the state
+    // this summary describes — without it the overview banner reads the review as
+    // belonging to an unknown state and renders "not reviewed yet".
+    //
+    // Deliberately NOT seeded: an `agent_runs` row. No run produced this review,
+    // so it has no cost, no token count and no blocker count, and inventing them
+    // to fill the banner's badges would be fabricating a run that never happened.
+    // The empty badges on a fresh install are the truth about this fixture.
     const [review] = await db
       .insert(t.reviews)
       .values({
         workspaceId,
         prId: pr!.id,
+        headSha: 'a1b2c3d4e5f6',
         kind: 'review',
         verdict: 'request_changes',
         summary:

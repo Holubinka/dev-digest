@@ -73,6 +73,8 @@ export type {
   RiskBriefTimeline,
   RiskBriefTimelineEntry,
   RiskBriefInput,
+  RiskBriefRefLine,
+  RiskBriefRefLineSource,
   ReviewFocusItem,
   RiskBriefTokenizer,
   IntentFreshness,

@@ -18,6 +18,7 @@ import {
   RiskBrief,
   RiskBriefRecord,
   RiskBriefTimeline,
+  ReviewRecord,
 } from '@devdigest/shared';
 
 /**
@@ -240,6 +241,9 @@ describe('Risk Brief contracts', () => {
       { id: 'specs', status: 'truncated', tokens: 1200, detail: 'specs/SPEC-02-pr-why-risk-brief.md' },
       { id: 'linked_issue', status: 'missing', tokens: 0, detail: 'no linked issue' },
     ],
+    ref_lines: [
+      { ref: 'server/src/modules/brief/routes.ts', line: 42, source: 'blast_symbol' },
+    ],
     dropped_refs: ['../../etc/passwd'],
     dropped_risks: 2,
     budget: 8000,
@@ -272,6 +276,58 @@ describe('Risk Brief contracts', () => {
     expect(parsed.tokens_in).toBe(4402);
     expect(parsed.inputs).toHaveLength(4);
     expect(parsed.index_matches_head).toBe(false);
+    expect(parsed.ref_lines).toEqual([
+      { ref: 'server/src/modules/brief/routes.ts', line: 42, source: 'blast_symbol' },
+    ]);
+  });
+
+  /**
+   * `ref_lines` carries the line beside the refs, never inside them: `RiskBrief`
+   * — the schema the model fills — has no line field, so a number can only come
+   * from the blast answer the server measured.
+   */
+  it('ref_lines round-trips one entry of each source, and never reaches RiskBrief', () => {
+    const parsed = RiskBriefRecord.parse({
+      ...record,
+      ref_lines: [
+        { ref: 'src/middleware/ratelimit.ts', line: 12, source: 'blast_symbol' },
+        { ref: 'src/api/public/index.ts', line: 23, source: 'blast_caller' },
+        { ref: 'GET /api/public/items', line: 88, source: 'blast_endpoint' },
+      ],
+    });
+    expect(parsed.ref_lines.map((r) => r.source)).toEqual([
+      'blast_symbol',
+      'blast_caller',
+      'blast_endpoint',
+    ]);
+    expect(parsed.ref_lines[1]!.line).toBe(23);
+    // The refs themselves keep their shapes — plain strings, no `:<n>` suffix in
+    // the stored value and no line field on Risk / ReviewFocusItem.
+    expect(parsed.risks[0]!.file_refs).toEqual(['server/src/modules/brief/routes.ts']);
+    expect(RiskBrief.parse(record)).not.toHaveProperty('ref_lines');
+  });
+
+  it('a ref_lines source outside the enum, or a non-integer line, is rejected', () => {
+    expect(() =>
+      RiskBriefRecord.parse({
+        ...record,
+        ref_lines: [{ ref: 'src/a.ts', line: 12, source: 'pr_files_patch' }],
+      }),
+    ).toThrow();
+    // A model-written number is the one thing this field must not be able to hold,
+    // and a fractional or string line is what a guessed one looks like.
+    expect(() =>
+      RiskBriefRecord.parse({
+        ...record,
+        ref_lines: [{ ref: 'src/a.ts', line: 12.5, source: 'blast_symbol' }],
+      }),
+    ).toThrow();
+    expect(() =>
+      RiskBriefRecord.parse({
+        ...record,
+        ref_lines: [{ ref: 'src/a.ts', line: '12', source: 'blast_symbol' }],
+      }),
+    ).toThrow();
   });
 
   it('cost_usd and link_sha are nullable — an unpriced model and a missing index are rows, not errors', () => {
@@ -348,6 +404,48 @@ describe('Risk Brief contracts', () => {
     // `evicted` is the count carried on the rows, never inferred from entries.length:
     // a PR at exactly max_states has evicted nothing.
     expect(timeline.evicted).toBe(0);
+  });
+});
+
+/**
+ * `ReviewRecord.head_sha` — which STATE of the PR a review describes. The banner
+ * asks "is there a completed review for the head I am looking at", and nothing
+ * else in the schema answers it: `pull_requests.last_reviewed_sha` speaks only for
+ * the newest completed run. `null` is "written before this column existed", which
+ * is why it is nullable rather than defaulted to the current head.
+ */
+describe('ReviewRecord head_sha', () => {
+  const review = {
+    id: 'r1',
+    pr_id: 'pr1',
+    agent_id: null,
+    run_id: 'run-1',
+    agent_name: 'Security Reviewer',
+    head_sha: 'a'.repeat(40),
+    kind: 'review',
+    verdict: 'request_changes',
+    summary: 'Two blockers before merge.',
+    score: 61,
+    model: 'gpt-4.1',
+    grounding: '3/3 passed',
+    created_at: '2026-08-16T09:05:00.000Z',
+    findings: [],
+  };
+
+  it('carries the head it describes', () => {
+    const parsed = ReviewRecord.parse(review);
+    expect(parsed.head_sha).toBe('a'.repeat(40));
+  });
+
+  it('null is a row from before the column, not a claim about the current head', () => {
+    const parsed = ReviewRecord.parse({ ...review, head_sha: null });
+    expect(parsed.head_sha).toBeNull();
+  });
+
+  it('the key is required — an absent head_sha is not the same as an unknown one', () => {
+    const { head_sha: _omitted, ...withoutHead } = review;
+    expect(() => ReviewRecord.parse(withoutHead)).toThrow();
+    expect(() => ReviewRecord.parse({ ...review, head_sha: 42 })).toThrow();
   });
 });
 

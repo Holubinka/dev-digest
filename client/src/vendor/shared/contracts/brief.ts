@@ -235,6 +235,40 @@ export const RiskBriefInput = z.object({
 });
 export type RiskBriefInput = z.infer<typeof RiskBriefInput>;
 
+/**
+ * WHICH blast structure the line was read off. The three are the only structures
+ * `blastBlock` walks, and each carries its own `line` on `BlastRadiusView` — so the
+ * source is also the answer to "where do I go back and check this number".
+ */
+export const RiskBriefRefLineSource = z.enum(['blast_symbol', 'blast_caller', 'blast_endpoint']);
+export type RiskBriefRefLineSource = z.infer<typeof RiskBriefRefLineSource>;
+
+/**
+ * A line number for ONE reference, carried beside the refs rather than inside them.
+ *
+ * Three facts this shape fixes, and none of them is a style choice:
+ *
+ *  - **The number never enters `RiskBrief`.** `RiskBrief` is the schema the model
+ *    fills, and a line it wrote would be a line nobody measured. Every number here
+ *    comes off the blast answer the server already computed; a reference admitted to
+ *    the allowed set any other way (a changed file, a spec path) gets no entry at
+ *    all, and no placeholder stands in for one.
+ *  - **`Risk.file_refs` and `ReviewFocusItem.ref` do not change.** They stay arrays
+ *    of plain strings, matched here by exact `ref` value. Widening them would put a
+ *    number in the model's own schema, which is the first fact again.
+ *  - **An empty array is a record without numbers, not a broken record.** Every row
+ *    written before this field existed reads back as `[]` (the column is
+ *    `NOT NULL DEFAULT '[]'::jsonb`), and a brief whose references carry no lines is
+ *    the normal rendering, not a degraded one. There is no data migration.
+ */
+export const RiskBriefRefLine = z.object({
+  /** The reference verbatim, as it appears in `Risk.file_refs` or `ReviewFocusItem.ref`. */
+  ref: z.string(),
+  line: z.number().int(),
+  source: RiskBriefRefLineSource,
+});
+export type RiskBriefRefLine = z.infer<typeof RiskBriefRefLine>;
+
 /** Which counter answered. `heuristic` means ceil(chars/4), not the encoder. */
 export const RiskBriefTokenizer = z.enum(['cl100k_base', 'heuristic']);
 export type RiskBriefTokenizer = z.infer<typeof RiskBriefTokenizer>;
@@ -257,6 +291,11 @@ export const RiskBriefRecord = RiskBrief.extend({
   link_sha: z.string().nullable(),
   index_matches_head: z.boolean(),
   inputs: z.array(RiskBriefInput),
+  /**
+   * Line numbers for the references above, keyed by the ref string. Empty is normal:
+   * see `RiskBriefRefLine`. Only references the blast answer admitted appear here.
+   */
+  ref_lines: z.array(RiskBriefRefLine),
   dropped_refs: z.array(z.string()),
   dropped_risks: z.number().int(),
   budget: z.number().int(),

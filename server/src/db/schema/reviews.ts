@@ -28,6 +28,14 @@ export const reviews = pgTable('reviews', {
   agentId: uuid('agent_id'),
   /** The agent_run that produced this review (links the timeline run ↔ review). */
   runId: uuid('run_id'),
+  /**
+   * WHICH STATE of the PR this review describes. Nullable with no default and no
+   * backfill: a row written before this column exists has an unknown state, and
+   * both `''` and the PR's current head would be a claim the data cannot support.
+   * `pull_requests.last_reviewed_sha` is not the same fact — it says only which
+   * state the newest completed run saw.
+   */
+  headSha: text('head_sha'),
   kind: text('kind', { enum: ['summary', 'review'] }).notNull(),
   verdict: text('verdict'),
   summary: text('summary'),
@@ -106,6 +114,13 @@ export const prBrief = pgTable(
     riskLevel: text('risk_level', { enum: ['high', 'medium', 'low'] }).notNull().default('low'),
     risks: jsonb('risks').$type<unknown[]>().notNull().default(sql`'[]'::jsonb`),
     reviewFocus: jsonb('review_focus').$type<unknown[]>().notNull().default(sql`'[]'::jsonb`),
+    /**
+     * Line numbers for the refs in `risks` / `review_focus`, one entry per reference
+     * that the blast answer admitted. `NOT NULL DEFAULT '[]'` is what makes every
+     * row written before this column read back as "no numbers" rather than as a
+     * missing key the parse would reject — there is no data migration.
+     */
+    refLines: jsonb('ref_lines').$type<unknown[]>().notNull().default(sql`'[]'::jsonb`),
     /** One entry per candidate input with what became of it — the provenance block. */
     inputs: jsonb('inputs').$type<unknown[]>().notNull().default(sql`'[]'::jsonb`),
     droppedRefs: jsonb('dropped_refs').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
