@@ -109,6 +109,23 @@ export interface BriefBlock {
   refs: string[];
   /** What it was, in one line — echoed into `RiskBriefInput.detail`. */
   detail: string | null;
+  /**
+   * Re-render this block from the first `keep` of its own references — present
+   * ONLY on a block the drop order may not remove.
+   *
+   * `diff_stats` is exempt from `DROP_ORDER`, so without this it is whatever the
+   * repository made it: `MAX_FILE_PATHS` x `MAX_FILE_PATH_CHARS` counted in CODE
+   * POINTS, and a code point is not a token. 40 paths of 400 astral code points
+   * measured 8.1x the declared budget against the real encoder, with every other
+   * block already dropped. Exempt from dropping therefore means ELASTIC, not
+   * unbounded.
+   *
+   * It returns a whole block, not just text, because `refs` has to be rebuilt
+   * from exactly the paths that survived: shortening the text while leaving the
+   * reference list alone would license the model to name a path the prompt no
+   * longer prints, which is the one invariant `buildAllowedRefs` exists to hold.
+   */
+  shrink?: (keep: number) => BriefBlock;
 }
 
 /** What `fitToBudget` decided: the user message, the provenance rows, and the blocks that survived. */
@@ -176,7 +193,17 @@ export interface BriefReads {
   ): Promise<PrBriefRow>;
 }
 
-/** The one thing the service logs. Injected so `test/brief-service.test.ts` can assert on it. */
+/**
+ * The one thing the service logs. Injected so `test/brief-service.test.ts` can
+ * assert on it.
+ *
+ * PER CALL, not per instance, and required rather than optional. The service is
+ * built once by the composition root, which has no logger of its own; the caller
+ * that has one is the request, and `req.log` carries the request id that makes
+ * the warning traceable. `ReviewService` already passes its `Logger` this way.
+ * Required because an optional port nobody remembers to pass is a silence, not a
+ * default (`client/INSIGHTS.md:163-249`, quoted in `adapters/tokenizer`).
+ */
 export interface BriefLogger {
   warn(obj: unknown, msg?: string): void;
 }
@@ -192,3 +219,25 @@ export interface BriefLogger {
 export type BriefComputation =
   | { ok: true; record: RiskBriefRecord }
   | { ok: false; reason: string };
+
+/**
+ * The port `platform/container.ts` exposes for this slice — the shape
+ * `modules/blast/types.ts` declares as `BlastReader`, for the same reason.
+ *
+ * A route is Infrastructure, and naming two concrete Application classes and
+ * reaching `container.db` from one is composition-root work done outside the
+ * composition root. The argument is stronger here than it was for blast, because
+ * `BriefService` carries INSTANCE STATE: the single-flight map is only a lock
+ * while exactly one instance exists. Any second construction — a second
+ * `app.register`, or the first non-HTTP caller, an MCP tool or a review executor
+ * — gets a fresh empty Map, and AC-45 (two tabs on one PR state must not pay
+ * twice) silently stops holding. Memoising the instance here makes that a
+ * property of the graph rather than of how many times a module is registered.
+ *
+ * `no-db-from-routes` could not have caught it: that rule matches imports of
+ * `src/db/(schema|client)`, and `container.db` needs no such import.
+ */
+export interface BriefReader {
+  get(workspaceId: string, prId: string): Promise<RiskBriefRecord | null | undefined>;
+  compute(workspaceId: string, prId: string, log: BriefLogger): Promise<BriefComputation>;
+}

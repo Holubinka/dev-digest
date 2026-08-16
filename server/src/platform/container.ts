@@ -35,6 +35,9 @@ import type { IntentDeriver } from '../modules/intent/types.js';
 import type { BlastReader } from '../modules/blast/types.js';
 import { BlastService } from '../modules/blast/service.js';
 import { BlastRepository } from '../modules/blast/repository.js';
+import type { BriefReader } from '../modules/brief/types.js';
+import { BriefService } from '../modules/brief/service.js';
+import { BriefRepository } from '../modules/brief/repository.js';
 import { IntentService } from '../modules/intent/service.js';
 import { IntentRepository } from '../modules/intent/repository.js';
 import type { ProjectContextResolver } from '../modules/context/types.js';
@@ -87,6 +90,8 @@ export interface ContainerOverrides {
   intent?: IntentDeriver;
   /** Blast radius (07) — the brief's tests inject a canned view instead of an index. */
   blast?: BlastReader;
+  /** Risk Brief (10) — injectable for the same reason every other service here is. */
+  brief?: BriefReader;
   /**
    * Project Context (08) — a review test injects a canned resolver and reaches
    * no clone and no `repo_docs` row at all.
@@ -125,6 +130,7 @@ export class Container {
   private _repoIntel?: RepoIntel;
   private _intentService?: IntentDeriver;
   private _blastService?: BlastReader;
+  private _briefService?: BriefReader;
   private _projectContext?: ProjectContextResolver;
   private _depgraph?: DepGraph;
   private _tokenizer?: Tokenizer;
@@ -234,6 +240,24 @@ export class Container {
   get blastService(): BlastReader {
     if (this.overrides.blast) return this.overrides.blast;
     return (this._blastService ??= new BlastService(this, new BlastRepository(this.db)));
+  }
+
+  /**
+   * Risk Brief (10). MEMOISED, and that is the point rather than a convenience:
+   * `BriefService` carries the single-flight map that makes AC-45 true — two
+   * tabs on one PR state pay for one model call — and a map on a second instance
+   * is not the same lock. Constructing it in `brief/routes.ts` made that
+   * correctness depend on module registration running exactly once; the first
+   * non-HTTP caller (MCP, a review executor) would have had a fresh empty Map
+   * and no way to know.
+   *
+   * The repository is built HERE, like `intentService`'s and `blastService`'s:
+   * naming a concrete type is the composition root's job, and it is what keeps
+   * `Db` off `BriefContainer`, the port `BriefService` codes against.
+   */
+  get briefService(): BriefReader {
+    if (this.overrides.brief) return this.overrides.brief;
+    return (this._briefService ??= new BriefService(this, new BriefRepository(this.db)));
   }
 
   /**

@@ -700,6 +700,48 @@ deletes what the call just persisted and returns `undefined`. Staged in
 `test/brief.it.test.ts` — "never evicts the row it just wrote"; a mutation removing the exclusion
 reds four cases in that file.
 
+### A block exempt from the drop order is elastic, not exempt from the budget
+
+`fitToBudget`'s `DROP_ORDER` deliberately omits `diff_stats` — a brief that does not know which
+files changed is a different answer, not a degraded one. Until 2026-08-16 that also made it
+**unbounded**: once every other block was dropped the function returned whatever `diffStatsBlock`
+rendered, `run()` sent it, and `input_tokens_counted` recorded the overflow without refusing it.
+The only cap on that block is `MAX_FILE_PATHS` (40) × `MAX_FILE_PATH_CHARS` (400) counted in CODE
+POINTS, and **a code-point cap is not a token bound**: measured with `TiktokenTokenizer` and the
+real 914-token system prompt, 40 × 400 ASCII is 3199 tokens, 40 × 400 `U+1F600` is 32939 and
+40 × 400 `U+2A6B2` is 64719 — 8.1× a budget the feature states it holds. It is reachable, not
+theoretical: `pr_files.path` is GitHub's `filename` inserted verbatim (`modules/pulls/routes.ts`)
+and git permits any non-NUL byte in a name.
+
+The fix is a `shrink(keep)` closure on `BriefBlock`, re-rendering the block from fewer paths after
+the drop loop, binary-searched on the ITEM COUNT rather than on code points — half a path is a
+reference to a file that does not exist. **Whatever shortens such a block must rebuild its `refs`
+from exactly what survived**, which is why `shrink` returns a whole block and not a string; see the
+allowed-refs entry above. The pattern generalises: if a block cannot be dropped, it needs an
+elastic axis, or the budget is an intention rather than a bound.
+
+### A service holding instance state is memoised by the container, never constructed by a route
+
+`BriefService` carries the single-flight `inFlight` map that makes AC-45 true — two tabs on one PR
+state pay for one model call. Until 2026-08-16 `brief/routes.ts` did `new BriefService(container,
+new BriefRepository(container.db), app.log)`, so the lock held **by registration count** rather
+than by construction: a second `app.register`, or the first non-HTTP caller (an MCP tool, a review
+executor), would have got a fresh empty `Map` and nothing would have said so. The remedy is the
+`blastService` shape — a memoised getter on `platform/container.ts`, the port declared
+structurally in the slice's own `types.ts` (`BriefReader`, beside `BlastReader`), and the route
+reduced to `const service = container.briefService;`.
+
+Two things this does NOT get caught by. `no-db-from-routes` matches imports of
+`src/db/(schema|client)`, and `container.db` needs no such import, so `pnpm arch` was green
+throughout. And a memoisation bug is invisible to any test that builds the service itself —
+`test/brief-routes.test.ts` asserts `container.briefService === container.briefService` and that an
+`overrides.brief` actually answers the route, because those are the two halves the finding was
+about.
+
+The logger moved from the constructor to `compute(workspaceId, prId, log)` in the same change: the
+composition root has no logger of its own, and `req.log` is a better one than `app.log` anyway.
+`ReviewService`'s `logger?: Logger` method parameter is the existing precedent.
+
 ## Tool & Library Notes
 
 ### `break` out of a `for await` destroys the stream, so teardown errors land inside the `try`
@@ -1118,6 +1160,33 @@ than the shell was willing to wait.
 reports `Test timed out in 5000ms` against the one case, which is the evidence wanted, in seconds
 instead of minutes.
 
+### A bisect that lands on `platform/container.ts` needs the module set checked before it is believed
+
+**Symptom.** `test/reviews-diff.it.test.ts` reported `Error: Hook timed out in 120000ms`, all 8
+tests skipped, the file running 903 s (2026-08-16, fix round 4 of plan 10). A one-run-per-state
+bisect blamed `platform/container.ts` — the `briefService` getter and its new imports — because
+restoring only that file made the run pass in 4.58 s.
+
+**Cause.** That edit cannot reach `startPg()`. The getter is lazy and no test in that file calls
+it, and `modules/brief/routes.ts` **lost** `import { BriefService }` / `import { BriefRepository }`
+in the same change that `platform/container.ts` gained them — so the set of modules the app loads
+is unchanged. Proved by walking the static value-import graph from `src/app.ts` over both trees:
+138 modules, 0 cycles, identical file lists. The real cause is the load the entry two above
+describes — `startPg()` waiting on a `pgvector/pgvector:pg16` container the daemon did not deliver
+inside 120 s. Vitest reports a suite whose `beforeAll` failed as **skipped**, so a skip here means
+"the hook never came up", not "the condition was false".
+
+**Fix.** Two checks, both cheaper than the bisect. First, count the skips against the file: a suite
+whose hook died contributes all of its tests, so a full run reading `158 passed | 4 skipped`
+accuses a 4-test file (`reviews-skills`, `agents-skill-count`, `pulls-comments`), never an 8-test
+one — that arithmetic alone contradicted the single-file evidence. Second, diff the module set
+instead of re-running: copy `src/` to a scratch dir, restore the suspect files with
+`git show HEAD:server/src/<path>`, and walk both graphs from `app.ts`. Moving a `new X()` from a
+route into a memoised container getter adds no module and no cycle; when the two lists match, the
+file is not the cause. Verified 2026-08-16 with round 4 fully in place: 3x
+`pnpm exec vitest run .it.test --fileParallelism=false` → 20 files / 162 tests / 0 skips, and 5x
+the single file at ~4.5 s.
+
 ## Session Notes
 
 ### 2026-08-03 (conventions extractor)
@@ -1308,6 +1377,30 @@ instead of minutes.
   afterwards left `computed_at` and `cost_usd` byte-identical, and an earlier POST returned
   `502 Operation timed out after 45000ms` — the named 45 s clock of R43 firing against a real
   provider, not a test double.
+
+### 2026-08-16 (risk brief — fix round 4)
+
+- Two majors from the third `/pr-self-review`, both in code the first three rounds had walked
+  past: the 8000-token budget was not a bound (`diff_stats` exempt from `DROP_ORDER` and
+  therefore unbounded), and the route was building the object graph for a service with instance
+  state. Both entries are under Codebase Patterns above.
+- **The grounding invariant was the trap, not the finding.** Round 3 turned
+  `[...buildAllowedRefs(fit.included)].filter(r => !fit.user.includes(r))` into
+  `test/brief-allowed-refs.test.ts`; the naive shape of the budget fix — shorten the text, leave
+  `refs` alone — breaks it, and the existing cases did NOT catch that, because none of them cut
+  the diff-stats list. The missing case was added ("holds when the budget shortens the diff-stats
+  path list") rather than assumed present. A fourth break of that invariant in four rounds.
+- Every new case was proved able to fail before being left green, by disabling the shrink loop
+  and by reverting the container getter to the old route-side semantics: 32685 vs 8000 with
+  `count = s => s.length`, `'included'` vs `'truncated'`, `404` vs `200`, and two distinct
+  `BriefService` objects where one was expected.
+- `pnpm typecheck` covers `src/**/*.ts` only, so the ~30 rewritten call sites in
+  `test/brief-service.test.ts` were checked by running them, not by `tsc` (already recorded under
+  Recurring Errors as "Correction (2026-07-27)").
+- Proven live again on the new code: `POST /pulls/:id/brief` for `Holubinka/dev-digest` PR #20,
+  HTTP 200 in 10.2 s, `input_tokens_counted: 5463` of 8000, `tokens_in: 5718`, `attempts: 1`,
+  `cost_usd: 0.0011`, `diff_stats: included (40 path(s) of 170)` — an ordinary PR is untouched by
+  the shrink, which is what a ceiling should look like.
 
 ## Open Questions
 

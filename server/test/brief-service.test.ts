@@ -1,8 +1,9 @@
 /**
  * P2 step 6 — `BriefService`, against fakes. No Postgres, no LLM, no Docker.
  *
- * `BriefService` takes its container, its repository and its logger as
- * parameters, so the whole path runs on three object literals. The ports are
+ * `BriefService` takes its container and its repository as constructor
+ * parameters and its logger per call, so the whole path runs on three object
+ * literals and no composition root at all. The ports are
  * declared structurally in `types.ts` NAMING ONLY THE READ HALF — there is no
  * `derive` on the intent port and no `summarize` on the blast one — so "exactly
  * one model call" is partly enforced by the type system and asserted here on top
@@ -236,7 +237,7 @@ describe('BriefService.get — the pure read (R28, R31)', () => {
     const llm = fakeLlm();
     const { container } = fakeContainer({ llm: llm.provider });
     const { repo } = fakeRepo({ pull: undefined });
-    const service = new BriefService(container, repo, fakeLog().log);
+    const service = new BriefService(container, repo);
 
     expect(await service.get(WS, PR)).toBeUndefined();
     expect(llm.calls).toHaveLength(0);
@@ -245,7 +246,7 @@ describe('BriefService.get — the pure read (R28, R31)', () => {
   it('returns null when nothing has been computed for the current head', async () => {
     const { container } = fakeContainer();
     const { repo } = fakeRepo({ stored: undefined });
-    expect(await new BriefService(container, repo, fakeLog().log).get(WS, PR)).toBeNull();
+    expect(await new BriefService(container, repo).get(WS, PR)).toBeNull();
   });
 
   it('serves a stored record with ZERO model calls, however many times it is read (R28)', async () => {
@@ -257,14 +258,13 @@ describe('BriefService.get — the pure read (R28, R31)', () => {
         const svc = new BriefService(
           fakeContainer({ llm: fakeLlm().provider }).container,
           first.repo,
-          fakeLog().log,
         );
-        await svc.compute(WS, PR);
+        await svc.compute(WS, PR, fakeLog().log);
         return first.writes[0]!.values;
       })()
     );
     const { repo } = fakeRepo({ stored: rowFrom(PR, HEAD, values) });
-    const service = new BriefService(container, repo, fakeLog().log);
+    const service = new BriefService(container, repo);
 
     for (let i = 0; i < 5; i += 1) {
       const record = await service.get(WS, PR);
@@ -280,7 +280,7 @@ describe('BriefService.compute — exactly one call, and what it records', () =>
     const llm = fakeLlm();
     const { container, derive, summarize } = fakeContainer({ llm: llm.provider, intent: INTENT });
     const { repo } = fakeRepo();
-    const out = await new BriefService(container, repo, fakeLog().log).compute(WS, PR);
+    const out = await new BriefService(container, repo).compute(WS, PR, fakeLog().log);
 
     expect(out.ok).toBe(true);
     expect(llm.calls).toHaveLength(1);
@@ -299,7 +299,7 @@ describe('BriefService.compute — exactly one call, and what it records', () =>
     const llm = fakeLlm({ attempts: 2, tokensIn: 4321, costUsd: 0.0099 });
     const { container } = fakeContainer({ llm: llm.provider });
     const { repo, writes } = fakeRepo();
-    const out = await new BriefService(container, repo, fakeLog().log).compute(WS, PR);
+    const out = await new BriefService(container, repo).compute(WS, PR, fakeLog().log);
     if (!out.ok) throw new Error(out.reason);
 
     expect(out.record.budget).toBe(BRIEF_TOKEN_BUDGET);
@@ -319,7 +319,7 @@ describe('BriefService.compute — exactly one call, and what it records', () =>
     const llm = fakeLlm();
     const { container, derive } = fakeContainer({ llm: llm.provider, intent: null });
     const { repo } = fakeRepo();
-    const out = await new BriefService(container, repo, fakeLog().log).compute(WS, PR);
+    const out = await new BriefService(container, repo).compute(WS, PR, fakeLog().log);
     if (!out.ok) throw new Error(out.reason);
 
     expect(byId(out.record.inputs).intent?.status).toBe('missing');
@@ -343,7 +343,7 @@ describe('BriefService.compute — exactly one call, and what it records', () =>
       }),
     });
     const { repo } = fakeRepo();
-    const out = await new BriefService(container, repo, fakeLog().log).compute(WS, PR);
+    const out = await new BriefService(container, repo).compute(WS, PR, fakeLog().log);
     if (!out.ok) throw new Error(out.reason);
 
     expect(out.record.blast_status).toBe('degraded');
@@ -357,7 +357,7 @@ describe('BriefService.compute — exactly one call, and what it records', () =>
     const llm = fakeLlm();
     const { container, summarize } = fakeContainer({ llm: llm.provider, blastView: undefined });
     const { repo } = fakeRepo();
-    const out = await new BriefService(container, repo, fakeLog().log).compute(WS, PR);
+    const out = await new BriefService(container, repo).compute(WS, PR, fakeLog().log);
     if (!out.ok) throw new Error(out.reason);
 
     expect(byId(out.record.inputs).blast?.status).toBe('missing');
@@ -370,7 +370,7 @@ describe('BriefService.compute — exactly one call, and what it records', () =>
     const { container } = fakeContainer({ llm: llm.provider, tokenizerId: 'heuristic' });
     const { repo } = fakeRepo();
     const { log, warn } = fakeLog();
-    const out = await new BriefService(container, repo, log).compute(WS, PR);
+    const out = await new BriefService(container, repo).compute(WS, PR, log);
     if (!out.ok) throw new Error(out.reason);
 
     expect(out.record.tokenizer).toBe('heuristic');
@@ -383,7 +383,7 @@ describe('BriefService.compute — exactly one call, and what it records', () =>
     const { container } = fakeContainer({ llm: fakeLlm().provider, tokenizerId: 'cl100k_base' });
     const { repo } = fakeRepo();
     const { log, warn } = fakeLog();
-    await new BriefService(container, repo, log).compute(WS, PR);
+    await new BriefService(container, repo).compute(WS, PR, log);
     expect(warn).not.toHaveBeenCalled();
   });
 
@@ -396,9 +396,12 @@ describe('BriefService.compute — exactly one call, and what it records', () =>
     const llm = fakeLlm();
     const { container } = fakeContainer({ llm: llm.provider });
     const { repo, writes } = fakeRepo();
-    const service = new BriefService(container, repo, fakeLog().log);
+    const service = new BriefService(container, repo);
 
-    const [a, b] = await Promise.all([service.compute(WS, PR), service.compute(WS, PR)]);
+    const [a, b] = await Promise.all([
+      service.compute(WS, PR, fakeLog().log),
+      service.compute(WS, PR, fakeLog().log),
+    ]);
     expect(llm.calls).toHaveLength(1);
     expect(writes).toHaveLength(1);
     expect(a).toEqual(b);
@@ -408,10 +411,10 @@ describe('BriefService.compute — exactly one call, and what it records', () =>
     const llm = fakeLlm();
     const { container } = fakeContainer({ llm: llm.provider });
     const { repo } = fakeRepo();
-    const service = new BriefService(container, repo, fakeLog().log);
+    const service = new BriefService(container, repo);
 
-    await service.compute(WS, PR);
-    await service.compute(WS, PR);
+    await service.compute(WS, PR, fakeLog().log);
+    await service.compute(WS, PR, fakeLog().log);
     expect(llm.calls).toHaveLength(2);
   });
 
@@ -431,7 +434,7 @@ describe('BriefService.compute — exactly one call, and what it records', () =>
     });
     const { container } = fakeContainer({ llm: llm.provider });
     const { repo } = fakeRepo();
-    const out = await new BriefService(container, repo, fakeLog().log).compute(WS, PR);
+    const out = await new BriefService(container, repo).compute(WS, PR, fakeLog().log);
     if (!out.ok) throw new Error(out.reason);
 
     expect(out.record.risks.map((r) => r.title)).toEqual(['A new paid route']);
@@ -482,7 +485,7 @@ describe('BriefService.compute — exactly one call, and what it records', () =>
       }),
     });
     const { repo } = fakeRepo({ filePaths, diff: { files: 40, additions: 1, deletions: 1 } });
-    const out = await new BriefService(container, repo, fakeLog().log).compute(WS, PR);
+    const out = await new BriefService(container, repo).compute(WS, PR, fakeLog().log);
     if (!out.ok) throw new Error(out.reason);
 
     expect(byId(out.record.inputs).blast?.status).toBe('dropped');
@@ -499,7 +502,7 @@ describe('BriefService.compute — exactly one call, and what it records', () =>
       specs: { 'plans/10.md': 'The plan body.' },
     });
     const { repo } = fakeRepo();
-    const out = await new BriefService(container, repo, fakeLog().log).compute(WS, PR);
+    const out = await new BriefService(container, repo).compute(WS, PR, fakeLog().log);
     if (!out.ok) throw new Error(out.reason);
 
     expect(byId(out.record.inputs).specs?.status).toBe('included');
@@ -510,7 +513,7 @@ describe('BriefService.compute — exactly one call, and what it records', () =>
     const llm = fakeLlm();
     const { container } = fakeContainer({ llm: llm.provider, specs: {} });
     const { repo } = fakeRepo();
-    const out = await new BriefService(container, repo, fakeLog().log).compute(WS, PR);
+    const out = await new BriefService(container, repo).compute(WS, PR, fakeLog().log);
     if (!out.ok) throw new Error(out.reason);
 
     expect(byId(out.record.inputs).specs?.status).toBe('missing');
@@ -520,7 +523,7 @@ describe('BriefService.compute — exactly one call, and what it records', () =>
   it('reports every one of the six inputs, in the contract order (R33)', async () => {
     const { container } = fakeContainer({ llm: fakeLlm().provider, intent: INTENT });
     const { repo } = fakeRepo();
-    const out = await new BriefService(container, repo, fakeLog().log).compute(WS, PR);
+    const out = await new BriefService(container, repo).compute(WS, PR, fakeLog().log);
     if (!out.ok) throw new Error(out.reason);
 
     expect(out.record.inputs.map((row) => row.id)).toEqual([
@@ -536,7 +539,7 @@ describe('BriefService.compute — exactly one call, and what it records', () =>
   it('derives intent freshness from the head commit date, not from a guess (R25)', async () => {
     const { container } = fakeContainer({ llm: fakeLlm().provider, intent: INTENT });
     const { repo } = fakeRepo({ headCommittedAt: new Date('2026-08-16T10:00:00.000Z') });
-    const out = await new BriefService(container, repo, fakeLog().log).compute(WS, PR);
+    const out = await new BriefService(container, repo).compute(WS, PR, fakeLog().log);
     if (!out.ok) throw new Error(out.reason);
 
     expect(out.record.intent_computed_at).toBe(INTENT.computed_at);
@@ -546,7 +549,7 @@ describe('BriefService.compute — exactly one call, and what it records', () =>
   it('an intent with no pr_commits row for the head is unknown, never fresh (R25)', async () => {
     const { container } = fakeContainer({ llm: fakeLlm().provider, intent: INTENT });
     const { repo } = fakeRepo({ headCommittedAt: null });
-    const out = await new BriefService(container, repo, fakeLog().log).compute(WS, PR);
+    const out = await new BriefService(container, repo).compute(WS, PR, fakeLog().log);
     if (!out.ok) throw new Error(out.reason);
     expect(out.record.intent_freshness).toBe('unknown');
   });
@@ -557,7 +560,7 @@ describe('BriefService.compute — failure (R31, R42, R43)', () => {
     const llm = fakeLlm();
     const { container } = fakeContainer({ llm: llm.provider });
     const { repo, writes } = fakeRepo({ pull: undefined });
-    const out = await new BriefService(container, repo, fakeLog().log).compute(WS, PR);
+    const out = await new BriefService(container, repo).compute(WS, PR, fakeLog().log);
 
     expect(out).toEqual({ ok: false, reason: 'Pull request not found' });
     expect(llm.calls).toHaveLength(0);
@@ -568,7 +571,7 @@ describe('BriefService.compute — failure (R31, R42, R43)', () => {
     const llm = fakeLlm({ throws: new Error('fixture failed schema') });
     const { container } = fakeContainer({ llm: llm.provider });
     const { repo, writes } = fakeRepo();
-    const out = await new BriefService(container, repo, fakeLog().log).compute(WS, PR);
+    const out = await new BriefService(container, repo).compute(WS, PR, fakeLog().log);
 
     expect(out.ok).toBe(false);
     expect(out.ok === false && out.reason).toMatch(/fixture failed schema/);
@@ -586,9 +589,9 @@ describe('BriefService.compute — failure (R31, R42, R43)', () => {
       llmThrows: new ConfigError('OPENAI_API_KEY is not configured'),
     });
     const { repo, writes } = fakeRepo();
-    const service = new BriefService(container, repo, fakeLog().log);
+    const service = new BriefService(container, repo);
 
-    await expect(service.compute(WS, PR)).rejects.toBeInstanceOf(ConfigError);
+    await expect(service.compute(WS, PR, fakeLog().log)).rejects.toBeInstanceOf(ConfigError);
     expect(writes).toHaveLength(0);
   });
 
@@ -598,7 +601,7 @@ describe('BriefService.compute — failure (R31, R42, R43)', () => {
       const llm = fakeLlm({ hang: true });
       const { container } = fakeContainer({ llm: llm.provider });
       const { repo, writes } = fakeRepo();
-      const pending = new BriefService(container, repo, fakeLog().log).compute(WS, PR);
+      const pending = new BriefService(container, repo).compute(WS, PR, fakeLog().log);
 
       // Let the gather and the assembly settle, then run the clock past the
       // named timeout. `timeoutMs` on the request bounds one HTTP call and
@@ -619,10 +622,10 @@ describe('BriefService.compute — failure (R31, R42, R43)', () => {
     const failing = fakeLlm({ throws: new Error('transient') });
     const { container } = fakeContainer({ llm: failing.provider });
     const { repo } = fakeRepo();
-    const service = new BriefService(container, repo, fakeLog().log);
+    const service = new BriefService(container, repo);
 
-    expect((await service.compute(WS, PR)).ok).toBe(false);
-    expect((await service.compute(WS, PR)).ok).toBe(false);
+    expect((await service.compute(WS, PR, fakeLog().log)).ok).toBe(false);
+    expect((await service.compute(WS, PR, fakeLog().log)).ok).toBe(false);
     expect(failing.calls).toHaveLength(2);
   });
 });

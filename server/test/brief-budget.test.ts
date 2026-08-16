@@ -10,10 +10,12 @@ import type { BlastRadiusView, RiskBriefInput, RiskBriefInputId } from '@devdige
 import { buildBlocks, fitToBudget } from '../src/modules/brief/helpers.js';
 import type { BriefSources } from '../src/modules/brief/types.js';
 import {
+  BRIEF_TOKEN_BUDGET,
   MAX_BLAST_CALLERS,
   MAX_BLAST_ENDPOINTS,
   MAX_BLAST_SYMBOLS,
   MAX_FILE_PATHS,
+  MAX_FILE_PATH_CHARS,
   MAX_PR_BODY_CHARS,
 } from '../src/modules/brief/constants.js';
 
@@ -306,5 +308,98 @@ describe('fitToBudget — what fits, what is cut, what is dropped (R18, R20)', (
     expect(byId(fit.inputs).specs?.status).toBe('dropped');
     expect(fit.included.some((b) => b.id === 'specs')).toBe(false);
     expect(fit.user).not.toContain('plan-spec');
+  });
+});
+
+/* -------------------------------------------- the budget as a BOUND (AC-18) */
+
+/**
+ * `diff_stats` is exempt from `DROP_ORDER`, and until 2026-08-16 exempt meant
+ * UNBOUNDED: once every other block was dropped, `fitToBudget` returned whatever
+ * that block rendered and `run()` sent it — `input_tokens_counted` recorded the
+ * overflow and nothing refused it.
+ *
+ * The only cap on it is `MAX_FILE_PATHS` (40) x `MAX_FILE_PATH_CHARS` (400)
+ * counted in CODE POINTS, and code points are not tokens. Reachable rather than
+ * theoretical: `pr_files.path` is GitHub's `filename` inserted verbatim with no
+ * length or charset bound (`modules/pulls/routes.ts:238`) and git permits any
+ * non-NUL byte in a name. Measured against the real encoder and the real system
+ * prompt on 2026-08-16 — 40 x 400 ASCII = 3167 tokens, 40 x 400 U+1F600 = 32949,
+ * 40 x 400 U+2A6B2 = 64949, i.e. 8.1x the declared 8000.
+ *
+ * `count` here is `s => s.length`, UTF-16 units, which UNDERSTATES astral text
+ * against the encoder by roughly four — and the budget is still blown by 4x, so
+ * the case needs no tokenizer to be real.
+ */
+describe('fitToBudget — the block that is never dropped is still bounded', () => {
+  /** A plausible system prompt's share of the ceiling. */
+  const SYSTEM = 500;
+
+  /** 40 paths, each over `MAX_FILE_PATH_CHARS` astral code points, all distinct. */
+  const ASTRAL_PATHS = Array.from(
+    { length: MAX_FILE_PATHS },
+    (_, i) => `${i}/${'\u{1F600}'.repeat(MAX_FILE_PATH_CHARS)}`,
+  );
+
+  function astralFit(budget = BRIEF_TOKEN_BUDGET, systemTokens = SYSTEM) {
+    const blocks = buildBlocks(
+      sources({ filePaths: ASTRAL_PATHS, diff: { files: 400, additions: 900, deletions: 12 } }),
+    );
+    return fitToBudget(blocks, systemTokens, budget, count);
+  }
+
+  function diffBlock(fit: ReturnType<typeof astralFit>) {
+    return fit.included.find((b) => b.id === 'diff_stats')!;
+  }
+
+  it('system + user stays within BRIEF_TOKEN_BUDGET on 40 astral paths (AC-18, AC-20)', () => {
+    const fit = astralFit();
+    expect(SYSTEM + count(fit.user)).toBeLessThanOrEqual(BRIEF_TOKEN_BUDGET);
+    // Non-vacuous: the block is still sent, and it still names files.
+    expect(diffBlock(fit).refs.length).toBeGreaterThan(0);
+    expect(diffBlock(fit).refs.length).toBeLessThan(MAX_FILE_PATHS);
+  });
+
+  /** What the model reads and what `refs` licenses are one list, not two. */
+  it('prints exactly the paths it kept, and counts the rest accurately', () => {
+    const diff = diffBlock(astralFit());
+    const printed = diff.text.split('\n').filter((line) => line.startsWith('* '));
+
+    expect(printed.map((line) => line.slice(2))).toEqual(diff.refs);
+    expect(diff.text).toContain(`(${400 - diff.refs.length} further changed file(s) not listed.)`);
+  });
+
+  /** A cut input says so on the card: four statuses exist and this is what `truncated` is for. */
+  it('records the shortened block as truncated, with the surviving count', () => {
+    const fit = astralFit();
+    const row = byId(fit.inputs).diff_stats!;
+    expect(row.status).toBe('truncated');
+    expect(row.detail).toBe(`${diffBlock(fit).refs.length} path(s) of 400`);
+  });
+
+  /**
+   * The floor. Below the width of one astral path line the list empties rather
+   * than the budget breaking: the block still says 400 files changed and that it
+   * listed none of them, and it licenses nothing.
+   */
+  it('empties the list rather than exceeding the budget', () => {
+    const fit = astralFit(400, 0);
+    expect(count(fit.user)).toBeLessThanOrEqual(400);
+    expect(diffBlock(fit).refs).toEqual([]);
+    expect(fit.user).toContain('(400 further changed file(s) not listed.)');
+  });
+
+  /** And an ordinary PR is untouched — the shrink is a ceiling, not a policy. */
+  it('leaves an ASCII path list whole and still reports included', () => {
+    const paths = Array.from({ length: MAX_FILE_PATHS }, (_, i) => `server/src/f${i}.ts`);
+    const fit = fitToBudget(
+      buildBlocks(sources({ filePaths: paths, diff: { files: 400, additions: 9, deletions: 1 } })),
+      SYSTEM,
+      BRIEF_TOKEN_BUDGET,
+      count,
+    );
+    const row = byId(fit.inputs).diff_stats!;
+    expect(row.status).toBe('included');
+    expect(fit.included.find((b) => b.id === 'diff_stats')!.refs).toHaveLength(MAX_FILE_PATHS);
   });
 });

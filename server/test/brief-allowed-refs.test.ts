@@ -323,6 +323,28 @@ describe('buildAllowedRefs — the allowed set is a SUBSET of what the prompt pr
     expect(neverPrinted(fit)).toEqual([]);
   });
 
+  /**
+   * The case the round-4 budget fix could have broken. `diff_stats` is exempt
+   * from `DROP_ORDER`, so holding the 8000-token ceiling means re-rendering it
+   * from fewer paths — and the naive shape of that fix shortens the TEXT while
+   * leaving `refs` at the full list, which licenses every path the cut removed.
+   * The invariant below is the only thing that says so.
+   */
+  it('holds when the budget shortens the diff-stats path list', () => {
+    const astral = Array.from(
+      { length: MAX_FILE_PATHS },
+      (_, i) => `${i}/${'\u{1F600}'.repeat(MAX_FILE_PATH_CHARS)}`,
+    );
+    const fit = fitFor(hostile({ filePaths: astral }), 4000);
+    const diff = fit.included.find((b) => b.id === 'diff_stats')!;
+
+    expect(fit.inputs.find((row) => row.id === 'diff_stats')?.status).toBe('truncated');
+    // Non-vacuous in both directions: some paths survived, and some did not.
+    expect(diff.refs.length).toBeGreaterThan(0);
+    expect(diff.refs.length).toBeLessThan(MAX_FILE_PATHS);
+    expect(neverPrinted(fit)).toEqual([]);
+  });
+
   it('holds when the budget walk drops one spec and truncates another', () => {
     const src = hostile({
       specs: [

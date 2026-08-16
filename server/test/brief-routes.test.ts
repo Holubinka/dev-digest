@@ -1,7 +1,7 @@
 /**
  * P2 step 8 — the two routes, through the real Fastify stack with `app.inject`.
  *
- * WHAT THE STUB DB IS AND IS NOT. `briefRoutes` builds its own
+ * WHAT THE STUB DB IS AND IS NOT. `container.briefService` builds a
  * `BriefRepository(container.db)`, so a route test with no Postgres needs a `Db`
  * that answers a `select … from … where` with canned rows. The stub below does
  * exactly that and nothing else: it proves NOTHING about the SQL — which is what
@@ -178,6 +178,46 @@ describe('brief routes — the read (R28)', () => {
       expect(res.json()).toMatchObject({ what: BRIEF_ROW.what, head_sha: HEAD, budget: 8000 });
     }
     expect(llm.calls).toHaveLength(0);
+    await server.close();
+  });
+});
+
+/**
+ * AC-45 — two tabs on one PR state must not pay twice — is enforced by the
+ * single-flight map on the service INSTANCE. Until 2026-08-16 `briefRoutes`
+ * constructed that instance itself, so the lock held by REGISTRATION COUNT
+ * rather than by construction: a second `app.register`, or the first non-HTTP
+ * caller (MCP, a review executor), would have got a fresh empty Map and nothing
+ * would have said so. The two assertions below are the two halves of closing
+ * that — the route takes the port, and the port hands out one instance.
+ */
+describe('brief routes — the service comes from the composition root', () => {
+  it('the route consults container.briefService, reaching no repository of its own', async () => {
+    const server = await buildApp({
+      config,
+      // No rows at all: the real service resolves no pull and the route answers
+      // 404. A 200 here can only have come from the override.
+      db: stubDb(new Map()),
+      overrides: {
+        auth: new MockAuthProvider(),
+        prompts: new MockPromptTemplates(),
+        secrets: new MockSecretsProvider({}),
+        brief: {
+          get: async () => null,
+          compute: async () => ({ ok: false, reason: 'not under test' }),
+        },
+      },
+    });
+    const res = await server.inject({ method: 'GET', url: `/pulls/${PR}/brief` });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toBeNull();
+    await server.close();
+  });
+
+  it('hands out ONE instance per app, which is what makes the single-flight map a lock', async () => {
+    const server = await app(new Map());
+    expect(server.container.briefService).toBe(server.container.briefService);
     await server.close();
   });
 });

@@ -4,8 +4,6 @@ import type { RiskBriefRecord } from '@devdigest/shared';
 import { getContext } from '../_shared/context.js';
 import { IdParams } from '../_shared/schemas.js';
 import { ExternalServiceError, NotFoundError } from '../../platform/errors.js';
-import { BriefRepository } from './repository.js';
-import { BriefService } from './service.js';
 
 /**
  * brief module.
@@ -13,15 +11,16 @@ import { BriefService } from './service.js';
  *                           head, or null. Zero model calls, always.
  *   POST /pulls/:id/brief → compute it. One model call, rate-limited.
  *
- * The service is constructed HERE, once, and both routes close over it — which
- * is what makes the single-flight map inside it a real lock: module
- * registration runs once per app instance, so two concurrent POSTs for one
- * `(prId, head_sha)` meet the same `Map`.
+ * The service is reached through the composition root, not constructed here: a
+ * route is Infrastructure, and naming `BriefService` and `BriefRepository` and
+ * reaching `container.db` is the composition root's job. It also carries the
+ * single-flight map that makes AC-45 true, and one memoised instance is what
+ * makes that a lock — see `platform/container.ts`.
  */
 export default async function briefRoutes(appBase: FastifyInstance) {
   const app = appBase.withTypeProvider<ZodTypeProvider>();
   const { container } = app;
-  const service = new BriefService(container, new BriefRepository(container.db), app.log);
+  const service = container.briefService;
 
   // `null` is the card's empty state, not an error: nothing has been computed
   // for this state of this PR yet. A PR in another workspace answers 404 —
@@ -91,7 +90,10 @@ export default async function briefRoutes(appBase: FastifyInstance) {
       // `config_error` / 500 through the app error handler, which is what tells
       // the card "the model for this feature is not configured" instead of a
       // generic failure (R42).
-      const out = await service.compute(workspaceId, req.params.id);
+      // `req.log`, not `app.log`: the one line this computation writes — the
+      // token count came from the degradation heuristic, not the encoder — is
+      // only actionable next to the request that paid for it.
+      const out = await service.compute(workspaceId, req.params.id, req.log);
       if (!out.ok) throw new ExternalServiceError(out.reason);
       return out.record;
     },

@@ -119,9 +119,21 @@ export function buildBlocks(sources: BriefSources): BriefBlock[] {
  * `refs` is the list of paths this block PRINTS, which on a 400-file PR is the
  * first 40 and not the other 360. `pr_files.patch` is not read on this path at
  * all — the repository never selects it.
+ *
+ * `keep` is what makes this the ONE ELASTIC FIXED BLOCK. It is exempt from
+ * `DROP_ORDER` — a brief with no idea what changed is a different answer, not a
+ * degraded one — and until 2026-08-16 exempt also meant unbounded: the caps are
+ * `MAX_FILE_PATHS` paths of `MAX_FILE_PATH_CHARS` CODE POINTS, and code points
+ * are not tokens. 40 x 400 ASCII is 3167 tokens on the real encoder, 40 x 400
+ * U+2A6B2 is 64949 — 8.1x a budget this feature states it holds, with every
+ * other block already dropped and nothing left to refuse it. `fitToBudget`
+ * therefore re-renders this block from fewer paths instead, and the `(N further
+ * …)` line and `refs` follow the shorter list because both are computed from it.
  */
-function diffStatsBlock(sources: BriefSources): BriefBlock {
-  const paths = sources.filePaths.map((p) => truncateCodePoints(p, MAX_FILE_PATH_CHARS));
+function diffStatsBlock(sources: BriefSources, keep = sources.filePaths.length): BriefBlock {
+  const paths = sources.filePaths
+    .slice(0, Math.max(keep, 0))
+    .map((p) => truncateCodePoints(p, MAX_FILE_PATH_CHARS));
   const lines = [
     `${sources.diff.files} file(s) changed, ${sources.diff.additions} insertion(s), ${sources.diff.deletions} deletion(s).`,
   ];
@@ -136,6 +148,7 @@ function diffStatsBlock(sources: BriefSources): BriefBlock {
     text: `## Changed files\n${wrapUntrusted('diff-stats', lines.join('\n'))}`,
     refs: paths,
     detail: `${paths.length} path(s) of ${sources.diff.files}`,
+    shrink: (n: number) => diffStatsBlock(sources, n),
   };
 }
 
@@ -271,19 +284,27 @@ function renderSpecsSection(inner: string): string {
 /**
  * Reverse priority. Diff stats are absent on purpose: they are never dropped,
  * because a brief with no idea what changed is not a degraded brief, it is a
- * different answer.
+ * different answer. Exempt from DROPPING is not exempt from the budget — see
+ * `shrinkToBudget`.
  */
 const DROP_ORDER = ['linked_issue', 'pr_text', 'blast', 'intent'] as const;
 
 /**
  * Fit the blocks to `budget`, and say what happened to each (R18, R20).
  *
- * Two mechanisms, because AC-20 asks for both. The five fixed-ceiling blocks are
- * dropped whole in reverse priority until the total fits — a block that is half
- * present is a block whose references cannot be trusted. The specs are the only
- * ELASTIC input, and they get the one cut point: `selectWithinBudget` takes them
- * in order, stops at the first that does not fit, and truncates the first one
- * only when it alone exceeds the remainder.
+ * THREE mechanisms, because AC-18 says the assembled input never exceeds the
+ * budget and AC-20 says an over-budget input is cut before the call:
+ *
+ *   1. the four droppable fixed blocks go whole, in reverse priority — a block
+ *      that is half present is a block whose references cannot be trusted;
+ *   2. `diff_stats`, which the drop order may not touch, is re-rendered from a
+ *      shorter path list. This is the step that makes the number a BOUND rather
+ *      than an intention: without it the walk could drop every other block and
+ *      still hand `run()` a diff-stats block of any size, and `run()` records
+ *      the overflow without refusing it;
+ *   3. the specs get the one cut point inside a document: `selectWithinBudget`
+ *      takes them in order, stops at the first that does not fit, and truncates
+ *      the first one only when it alone exceeds the remainder.
  *
  * `systemTokens` is subtracted first because AC-18 counts the whole first
  * assembled input — system and user together — not just the part this function
@@ -297,8 +318,13 @@ export function fitToBudget(
 ): BriefFit {
   const fixed = blocks.filter((b) => b.id !== 'specs');
   const specs = blocks.filter((b) => b.id === 'specs');
-  const tokens = new Map<BriefBlock, number>(fixed.map((b) => [b, count(b.text)]));
   const joinCost = count('\n\n');
+
+  // Each candidate mapped to the version that is actually SENT. Identity for
+  // every block but an elastic one, which step 2 replaces with a shorter render
+  // — text and `refs` together, never one without the other.
+  const rendered = new Map<BriefBlock, BriefBlock>(fixed.map((b) => [b, b]));
+  const tokens = new Map<BriefBlock, number>(fixed.map((b) => [b, count(b.text)]));
 
   const kept = new Set(fixed);
   const total = () =>
@@ -314,14 +340,40 @@ export function fitToBudget(
     }
   }
 
-  const included: BriefBlock[] = fixed.filter((b) => kept.has(b));
-  const sections = included.map((b) => b.text);
-  const inputs: RiskBriefInput[] = included.map((b) => ({
-    id: b.id,
-    status: 'included',
-    tokens: tokens.get(b) ?? 0,
-    detail: b.detail,
-  }));
+  // The drop order is exhausted and the total may still be over: what is left is
+  // inside the one block it may not remove. `headroom` is the budget minus
+  // everything else still standing, so the block that comes back plus the rest
+  // is <= budget by construction.
+  const shrunk = new Set<BriefBlock>();
+  for (const block of fixed) {
+    if (!kept.has(block) || !block.shrink || total() <= budget) continue;
+    const cut = shrinkToBudget(block, budget - (total() - (tokens.get(block) ?? 0)), count);
+    if (cut === block) continue;
+    rendered.set(block, cut);
+    tokens.set(block, count(cut.text));
+    shrunk.add(block);
+  }
+
+  const included: BriefBlock[] = [];
+  const sections: string[] = [];
+  const inputs: RiskBriefInput[] = [];
+  for (const block of fixed) {
+    if (!kept.has(block)) continue;
+    // The SENT version, not the candidate: `included` is what `buildAllowedRefs`
+    // reads, so a shrunk block must contribute its shortened `refs` there and
+    // its shortened text here, or the allowed set outlives the prompt.
+    const sent = rendered.get(block) ?? block;
+    included.push(sent);
+    sections.push(sent.text);
+    inputs.push({
+      id: block.id,
+      // `truncated`, not `included`: some of this input did not reach the model,
+      // and the card's four statuses already have the word for that.
+      status: shrunk.has(block) ? 'truncated' : 'included',
+      tokens: tokens.get(block) ?? 0,
+      detail: sent.detail,
+    });
+  }
   for (const block of fixed) {
     if (!dropped.has(block)) continue;
     inputs.push({
@@ -360,6 +412,47 @@ export function fitToBudget(
   }
 
   return { user: sections.join('\n\n'), inputs, included };
+}
+
+/**
+ * The longest prefix of an elastic block's OWN references that `count` puts
+ * within `headroom`, re-rendered as a whole block.
+ *
+ * Binary search over the item count, not over code points, and that is the
+ * difference that matters: `truncateToBudget` would cut mid-path, and half a
+ * path is a reference to a file that does not exist — printed inside the block
+ * whose printed names are the allowed set. The search cuts whole entries, and
+ * the re-render rebuilds `refs` from what is left, so the text and the set stay
+ * the same list. At most ~6 probes for `MAX_FILE_PATHS`, and `lo` is only ever
+ * moved to a count already proven to fit.
+ *
+ * ZERO IS A LEGITIMATE ANSWER, and it is the floor rather than a failure: the
+ * block still reports how many files changed and how many it did not list, and
+ * what it stops doing is licensing paths. If even that does not fit, there is
+ * nothing left in this block to cut and the caller has already dropped
+ * everything else — the remaining overrun is the system prompt's, which is a
+ * repository file and not attacker-controlled.
+ */
+function shrinkToBudget(
+  block: BriefBlock,
+  headroom: number,
+  count: (text: string) => number,
+): BriefBlock {
+  const render = block.shrink;
+  if (!render || block.refs.length === 0 || count(block.text) <= headroom) return block;
+
+  let best: BriefBlock | null = null;
+  let lo = 0;
+  let hi = block.refs.length;
+  while (hi - lo > 1) {
+    const mid = Math.floor((lo + hi) / 2);
+    const candidate = render(mid);
+    if (count(candidate.text) <= headroom) {
+      lo = mid;
+      best = candidate;
+    } else hi = mid;
+  }
+  return best ?? render(0);
 }
 
 /**

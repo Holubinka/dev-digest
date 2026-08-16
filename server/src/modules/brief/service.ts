@@ -51,18 +51,17 @@ export class BriefService {
   /**
    * The single-flight map (R45), keyed `${prId}:${headSha}`.
    *
-   * Per INSTANCE, and that is only a real lock because module registration runs
-   * once per app instance: `brief/routes.ts` constructs one service and both
-   * routes close over it. Two tabs opening the same fresh state within a second
-   * of each other is the ordinary case, not the corner one — the card computes
-   * on an empty read, so nobody has to click twice for it to happen.
+   * Per INSTANCE, so it is a lock exactly as long as there is one instance —
+   * which is why `platform/container.ts` memoises this service and nobody
+   * `new`s it. Two tabs opening the same fresh state within a second of each
+   * other is the ordinary case, not the corner one: the card computes on an
+   * empty read, so nobody has to click twice for it to happen.
    */
   private inFlight = new Map<string, Promise<RiskBriefRecord>>();
 
   constructor(
     private container: BriefContainer,
     private repo: BriefReads,
-    private log: BriefLogger,
   ) {}
 
   /**
@@ -89,8 +88,13 @@ export class BriefService {
    * written. A `ConfigError` is the one exception and propagates as itself, so
    * the route can answer `config_error` and the card can say WHICH thing is not
    * configured instead of showing a generic 502 (R42).
+   *
+   * `log` belongs to the CALLER, not to the instance: the service is built once
+   * by the composition root, which has none, while a request has `req.log`. A
+   * caller that joins an in-flight computation contributes no line of its own —
+   * the run that is already going writes with the logger it was started with.
    */
-  async compute(workspaceId: string, prId: string): Promise<BriefComputation> {
+  async compute(workspaceId: string, prId: string, log: BriefLogger): Promise<BriefComputation> {
     const pull = await this.repo.getPull(workspaceId, prId);
     if (!pull) return { ok: false, reason: 'Pull request not found' };
 
@@ -104,7 +108,7 @@ export class BriefService {
       }
     }
 
-    const attempt = this.run(workspaceId, pull);
+    const attempt = this.run(workspaceId, pull, log);
     this.inFlight.set(key, attempt);
     try {
       return { ok: true, record: await attempt };
@@ -121,7 +125,11 @@ export class BriefService {
   }
 
   /** The whole computation. Throws; `compute` is what turns that into a result. */
-  private async run(workspaceId: string, pull: BriefPull): Promise<RiskBriefRecord> {
+  private async run(
+    workspaceId: string,
+    pull: BriefPull,
+    log: BriefLogger,
+  ): Promise<RiskBriefRecord> {
     const repo = await this.repo.getRepo(pull.repoId);
     if (!repo) throw new Error('Repo not found');
 
@@ -137,7 +145,7 @@ export class BriefService {
     // AFTER counting: `TiktokenTokenizer` only learns it is broken by failing one.
     const tokenizer = this.container.tokenizer.id;
     if (tokenizer === 'heuristic') {
-      this.log.warn(
+      log.warn(
         { prId: pull.id, headSha: pull.headSha },
         'risk brief: token count came from the degradation heuristic, not the encoder',
       );
