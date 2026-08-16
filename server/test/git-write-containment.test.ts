@@ -136,6 +136,21 @@ describe('SimpleGitClient.writeFile — creates only inside the clone', () => {
     await expect(readFile(join(root, '.git', 'config'), 'utf8')).resolves.toContain(TOKEN_URL);
   });
 
+  /**
+   * A nested repository's `.git` is not the clone's first segment, so until
+   * 2026-08-16 it was refused by nothing here: no symlink, no traversal, just a
+   * relative path. `pre-commit` is the payload that makes a write worse than the
+   * read — git executes it.
+   */
+  it("refuses a path into a NESTED repository's .git", async () => {
+    await expect(
+      client.writeFile(REPO, 'docs/nested/.git/hooks/pre-commit', '#!/bin/sh\n', CREATE),
+    ).rejects.toMatchObject({ reason: 'git_dir' });
+    await expect(client.makeDir(REPO, 'docs/nested/.git/hooks')).rejects.toMatchObject({
+      reason: 'git_dir',
+    });
+  });
+
   it('refuses an over-cap body and creates NO file — not even an empty one', async () => {
     const err = await client
       .writeFile(REPO, '.devdigest/big.md', 'x'.repeat(CAP + 1), CREATE)

@@ -57,13 +57,16 @@ export function sanitizeRelativePath(raw: string, maxLength: number): string | n
   if (segments.length === 0) return null;
   if (segments.includes('..')) return null;
 
-  const normalised = segments.join('/');
   // `.git/config` carries the clone URL with the stored PAT in it. The whole
   // directory is refused rather than that one file: `.git/hooks/pre-commit` is
   // code git executes, which a write path makes a worse outcome than a leak.
-  // The bare segment is refused with it — the stricter of the two rules this
-  // file replaced, and a no-op for a caller that also requires an extension.
-  const lower = normalised.toLowerCase();
-  if (lower === '.git' || lower.startsWith('.git/')) return null;
-  return normalised;
+  //
+  // EVERY segment is tested, not only the first. A clone can contain a nested
+  // repository — a vendored dependency, a fixture, an accidental `git init` — and
+  // `docs/vendor/.git/config` is exactly the directory the sentence above refuses.
+  // Until 2026-08-16 this read `startsWith('.git/')`, so the rule was narrower
+  // than its own comment, which is how it was found. Case-folded because macOS
+  // resolves `.GIT` to the same directory.
+  if (segments.some((segment) => segment.toLowerCase() === '.git')) return null;
+  return segments.join('/');
 }

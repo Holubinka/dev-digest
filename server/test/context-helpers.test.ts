@@ -157,6 +157,27 @@ describe('sanitizeDocPath', () => {
   it('leaves .github alone — the refusal is the git DIRECTORY, exactly', () => {
     expect(sanitizeDocPath('.github/CONTRIBUTING.md')).toBe('.github/CONTRIBUTING.md');
   });
+
+  /**
+   * A clone can hold a second repository — a vendored dependency, a fixture, a
+   * stray `git init` — and its `.git` is a real one carrying a real remote URL.
+   * Until 2026-08-16 only the LEADING segment was tested, so every path here was
+   * accepted while the comment above the rule said the git directory is refused.
+   */
+  it('refuses a nested repository’s git directory, at any depth', () => {
+    expect(sanitizeDocPath('docs/vendor/.git/config.md')).toBeNull();
+    expect(sanitizeDocPath('a/b/c/.git/hooks/pre-commit.md')).toBeNull();
+    expect(sanitizeFolderPath('docs/vendor/.git/hooks')).toBeNull();
+    // macOS resolves `.GIT` to the same directory, so an exact compare would
+    // refuse what a caller typed and admit what it did not.
+    expect(sanitizeDocPath('docs/.GIT/config.md')).toBeNull();
+  });
+
+  it('does not over-reach: a segment merely containing "git" is a normal folder', () => {
+    expect(sanitizeDocPath('docs/.github/notes.md')).toBe('docs/.github/notes.md');
+    expect(sanitizeDocPath('docs/gitignore-notes/a.md')).toBe('docs/gitignore-notes/a.md');
+    expect(sanitizeDocPath('docs/git/a.md')).toBe('docs/git/a.md');
+  });
 });
 
 describe('effectiveSet', () => {

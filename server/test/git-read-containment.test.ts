@@ -64,6 +64,14 @@ beforeEach(async () => {
   // `.github` is not `.git`, and the segment test is exact — this must be readable.
   await mkdir(join(root, '.github'), { recursive: true });
   await writeFile(join(root, '.github', 'notes.md'), 'a workflow note');
+  // A SECOND repository inside the clone. Its `.git` is as real as the root's,
+  // and its config carries a remote URL just the same.
+  await mkdir(join(root, 'docs', 'nested', '.git'), { recursive: true });
+  await writeFile(
+    join(root, 'docs', 'nested', '.git', 'config'),
+    `[remote "origin"]\n\turl = ${TOKEN_URL}\n`,
+  );
+  await writeFile(join(root, 'docs', 'nested', 'readme.md'), 'the nested project');
   // Comfortably past any cap the size tests below pass in.
   await writeFile(join(root, 'docs', 'big.md'), 'x'.repeat(50_000));
 
@@ -120,6 +128,23 @@ describe('SimpleGitClient.readFile — stays out of the git directory', () => {
 
   it('reads under .github, which is a different directory', async () => {
     await expect(client.readFile(REPO, '.github/notes.md', CAP)).resolves.toBe('a workflow note');
+  });
+
+  /**
+   * The clone is not guaranteed to hold exactly one repository. Until 2026-08-16
+   * the refusal tested `segments[0]`, so a nested `.git` was reachable by a plain
+   * relative path — no symlink and no traversal needed.
+   */
+  it("refuses a NESTED repository's .git, which is not the first segment", async () => {
+    await expect(client.readFile(REPO, 'docs/nested/.git/config', CAP)).rejects.toThrow(
+      /refusing to read the clone's git directory/,
+    );
+  });
+
+  it('still reads an ordinary file beside a nested .git', async () => {
+    await expect(client.readFile(REPO, 'docs/nested/readme.md', CAP)).resolves.toBe(
+      'the nested project',
+    );
   });
 });
 
@@ -184,7 +209,9 @@ describe('SimpleGitClient.listFiles — bounded, contained, and out of .git', ()
   it('lists markdown under a configured root, posix-separated and sorted', async () => {
     const out = await client.listFiles(REPO, { ...opts, roots: ['docs'] });
     // `plan.md`, `alias.md` and `creds.md` are symlinks; a walk never follows one.
-    expect(paths(out)).toEqual(['docs/big.md', 'docs/real.md']);
+    // `docs/nested/readme.md` sits beside a nested `.git`: the document is listed,
+    // and nothing from inside that git directory ever is.
+    expect(paths(out)).toEqual(['docs/big.md', 'docs/nested/readme.md', 'docs/real.md']);
     expect(out.bounded).toBe(false);
   });
 
@@ -197,7 +224,7 @@ describe('SimpleGitClient.listFiles — bounded, contained, and out of .git', ()
 
   it('skips a file over maxFileBytes', async () => {
     const out = await client.listFiles(REPO, { ...opts, roots: ['docs'], maxFileBytes: 100 });
-    expect(paths(out)).toEqual(['docs/real.md']); // big.md is 50 000 bytes
+    expect(paths(out)).toEqual(['docs/nested/readme.md', 'docs/real.md']); // big.md is 50 000 bytes
   });
 
   it('caps at maxFiles and says the list is bounded', async () => {
@@ -208,7 +235,7 @@ describe('SimpleGitClient.listFiles — bounded, contained, and out of .git', ()
 
   it('contributes nothing for a root that does not exist — not an error', async () => {
     const out = await client.listFiles(REPO, { ...opts, roots: ['nope', 'docs'] });
-    expect(paths(out)).toEqual(['docs/big.md', 'docs/real.md']);
+    expect(paths(out)).toEqual(['docs/big.md', 'docs/nested/readme.md', 'docs/real.md']);
   });
 
   it('refuses a root that escapes the clone', async () => {

@@ -38,6 +38,25 @@ const EXCLUDED_SET: ReadonlySet<string> = new Set(EXCLUDED_WALK_DIRS);
 const RESYNC_FETCH_DEPTH = 50;
 
 /**
+ * Does a clone-relative path enter a git directory at any depth?
+ *
+ * One function because `readFile` and `writeTarget` must answer it identically,
+ * and until 2026-08-16 they each tested `segments[0]` alone — so `docs/vendor/.git/`
+ * in a nested repository was refused by neither, while both carried a comment
+ * saying the git directory is refused. The string gate in
+ * `modules/_shared/repo-paths.ts` makes the same check on the way in; this is the
+ * one that still holds after `realpath` has resolved a link.
+ *
+ * Case-folded: macOS resolves `.GIT` to the same directory, so an exact compare
+ * refuses the path a caller typed and admits the one it did not.
+ */
+function isGitDirPath(relativePath: string): boolean {
+  return relativePath
+    .split(sep)
+    .some((segment) => segment.toLowerCase() === '.git');
+}
+
+/**
  * GitClient over simple-git. Repos clone to
  * `<cloneDir>/<owner>/<repo>`. We NEVER execute repo code — only git ops.
  */
@@ -211,7 +230,10 @@ export class SimpleGitClient implements GitClient {
     if (target !== root && !target.startsWith(root + sep)) {
       throw new CloneReadError('outside_clone', `refusing to read outside the clone: ${path}`);
     }
-    if (relative(root, target).split(sep)[0] === '.git') {
+    // Any segment, not just the first: a nested repository puts a real `.git`
+    // below the root, and `realpath` has already run, so this also catches a
+    // link that RESOLVED into one.
+    if (isGitDirPath(relative(root, target))) {
       throw new CloneReadError('git_dir', `refusing to read the clone's git directory: ${path}`);
     }
     let handle;
@@ -251,7 +273,8 @@ export class SimpleGitClient implements GitClient {
    * normalised path — `join` is what removes any `..` a caller let through, and
    * `root + sep` is what stops a sibling `…/repo-evil` satisfying a prefix test.
    * Neither is redundant: a path can stay inside the clone and still be
-   * `.git/config`.
+   * `.git/config`. The refusal tests EVERY segment, because a nested repository
+   * puts a second real `.git` somewhere below the root.
    */
   private async writeTarget(repo: RepoRef, path: string): Promise<string> {
     const root = await realpath(this.clonePathFor(repo));
@@ -259,11 +282,12 @@ export class SimpleGitClient implements GitClient {
     if (target !== root && !target.startsWith(root + sep)) {
       throw new CloneWriteError('outside_clone', `refusing to write outside the clone: ${path}`);
     }
-    const segments = relative(root, target).split(sep).filter(Boolean);
+    const relativePath = relative(root, target);
+    const segments = relativePath.split(sep).filter(Boolean);
     if (segments.length === 0) {
       throw new CloneWriteError('outside_clone', `refusing to write the clone root itself`);
     }
-    if (segments[0] === '.git') {
+    if (isGitDirPath(relativePath)) {
       throw new CloneWriteError('git_dir', `refusing to write the clone's git directory: ${path}`);
     }
     let walked = root;

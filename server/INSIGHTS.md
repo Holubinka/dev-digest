@@ -191,6 +191,27 @@ refuses anything over 40 000, so a partial body cannot be written back by any ro
 **Read it as a rule:** before capping a read, ask whether anything writes that string back. If it
 does, the cap has to be a refusal or the write path has to reject what came out of it.
 
+### A path gate that tests `segments[0]` is narrower than the sentence above it
+
+The `.git` refusal existed in **three** places — `modules/_shared/repo-paths.ts`,
+`adapters/git/simple-git.ts` `readFile`, and the same file's `writeTarget` — and all three tested
+only the FIRST segment (`startsWith('.git/')`, `segments[0] === '.git'`). All three carried a
+comment saying the git directory is refused because `config` holds the PAT and `hooks/pre-commit`
+is code git executes. Neither claim was true of `docs/vendor/.git/`, and a clone can hold a nested
+repository — a vendored dependency, a fixture, a stray `git init` — whose `.git` is exactly as real
+as the root's. No symlink and no `..` were needed to reach it. Found by a DevDigest review of
+PR #20 on 2026-08-16; fixed by testing every segment, case-folded (`.GIT` resolves to the same
+directory on macOS). Tests: `test/git-read-containment.test.ts` → *"refuses a NESTED repository's
+.git …"*, `test/git-write-containment.test.ts` → *"refuses a path into a NESTED repository's
+.git"*, `test/context-helpers.test.ts` → *"refuses a nested repository's git directory, at any
+depth"*.
+
+**The part worth carrying:** `repo-paths.ts` was created days earlier *because* this gate was
+duplicated and the copies had drifted — its own header says so. Consolidating the two module
+copies left the two adapter copies untouched, and those were wrong in the same way. When you
+extract a duplicated rule, grep for the rule's *shape* (`'.git'`, `segments[0]`), not for the
+function you are replacing; the copies that matter are the ones that never called it.
+
 ## Codebase Patterns
 
 ### A DTO mapper without a return type is unchecked, even where the caller has one

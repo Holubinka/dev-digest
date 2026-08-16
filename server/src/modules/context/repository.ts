@@ -1,5 +1,4 @@
 import { and, asc, eq, sql } from 'drizzle-orm';
-import type { ContextDocKind } from '@devdigest/shared';
 import type { Db } from '../../db/client.js';
 import * as t from '../../db/schema.js';
 import type {
@@ -544,7 +543,7 @@ function toRecord(
   return {
     path: row.path,
     root: row.root,
-    kind: row.kind as ContextDocKind,
+    kind: row.kind,
     sizeBytes: row.sizeBytes,
     tokens: row.tokens,
     modifiedAt: row.modifiedAt,
