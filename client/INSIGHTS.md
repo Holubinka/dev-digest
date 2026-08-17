@@ -211,6 +211,16 @@ second branch to measure. Spend the one `Runtime.evaluate` on this before implem
 whole justification is a single number carried over from an earlier session — here it turned a
 build into a two-line refutation.
 
+**Decided 2026-08-17: INTENT keeps growing, and that is a choice.** The human was given the
+numbers — a cap would take the worst case from 2 273px to ~1 470px, still twice the 766px
+neighbour — and chose to live with it rather than change the label. The reason is the part worth
+keeping: BLAST's truncation is honest because `408 SYMBOLS` sits above the cut, and INTENT has no
+such number. Adding one means writing `IN SCOPE (15)`, and that label is fixed verbatim by the
+design in `specs/assets/SPEC-02-pr-brief-overview.png`. **A scroll container whose scale is not
+printed anywhere hides how much it hid** — so the choice was between an unbounded card and a
+dishonest cut, and the card won. If a counter ever becomes acceptable there, the cap becomes
+correct in the same moment; until then, re-measuring 2 273px is not grounds to reopen this.
+
 What INTENT does measure, same run, PRs #15/#19/#20/#21: **425 / 2 273 / 1 734 / 1 560px**, against
 BLAST's **278 / 766 / 766 / 766**. So it is the taller card in the row on all four, and its
 `in_scope` / `out_of_scope` lists are the part that grows unbounded (62 → 1 373px across those four;
