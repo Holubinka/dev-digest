@@ -684,6 +684,14 @@ the element is `vendor/ui/primitives/MonoLink.tsx`, a read-only copy whose props
 `<wbr>` here should know it is an accessibility trade-off through a component they may not edit, and
 that the decision is the human's, not the implementer's.
 
+**Decided 2026-08-17: the wrap stays, the name is kept.** Presented with the three options — leave
+it, take `<wbr>` and the degraded name, or lift `MonoLink` out of `vendor/ui` into a component that
+accepts `aria-label` — the human chose to leave it. The trade is not symmetric, and that is the
+reasoning to keep: a detached `:12` is ugly for everyone at some widths, while a name read aloud as
+`src/ middleware/ ratelimit.ts` is wrong for the people who have no other way to hear it. The third
+option is still the right one and is a task of its own, not a line in a fix round — until someone
+takes it, this is settled and re-measuring the 80 widths is not grounds to reopen it.
+
 ## Codebase Patterns
 
 ### A security predicate gets exported, not restated — `hasDotSegment` is the dot-segment rule
