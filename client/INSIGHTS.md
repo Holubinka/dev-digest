@@ -192,6 +192,33 @@ fails on a plain `<div>` and passes once it carries a `tabindex`, with no attrib
 no layout. `BlastRadiusCard.test.tsx` uses it; proven by deleting the attribute and watching the
 test go red.
 
+### A capped scroller still knows its uncapped height — which is how you check whose number a report is quoting
+
+**Symptom.** A round opened on the claim that the INTENT card reaches **24 302px** on PR #19,
+so that after BLAST RADIUS was capped at 766px the neighbour beside it was setting the row height.
+
+**Cause.** The number was real, correctly measured, and belonged to the other card. At 1440×1000 on
+2026-08-17 INTENT on PR #19 measures **2 273.06px** — 10.7× smaller — while
+`blast.getBoundingClientRect().height + (list.scrollHeight − list.clientHeight)` is
+`765.5 + (24 107 − 570)` = **24 302.5**, which floors to the reported figure exactly. That is the
+BLAST card as it would be with `BlastRadiusCard/styles.ts` `symbolList` uncapped: the state the
+previous round's own `maxHeight: 570` had just removed.
+
+**Fix — the technique, not the layout.** `overflow-y: auto` leaves the full content height in
+`scrollHeight`, so a capped element still reports what it would have been without the cap:
+`rect.height + (scrollHeight − clientHeight)` reconstructs it with no revert, no rebuild and no
+second branch to measure. Spend the one `Runtime.evaluate` on this before implementing a fix whose
+whole justification is a single number carried over from an earlier session — here it turned a
+build into a two-line refutation.
+
+What INTENT does measure, same run, PRs #15/#19/#20/#21: **425 / 2 273 / 1 734 / 1 560px**, against
+BLAST's **278 / 766 / 766 / 766**. So it is the taller card in the row on all four, and its
+`in_scope` / `out_of_scope` lists are the part that grows unbounded (62 → 1 373px across those four;
+`Intent` at `vendor/shared/contracts/brief.ts:19` is a bare `z.array(z.string())` and nothing in
+`server/src/modules/intent/` slices the model's answer). But the same cap cannot buy the same
+result here: on PR #19 the card's non-scope content is already 871px, of which RISK AREAS is 653px,
+so `maxHeight: 570` per list lands the card near 1 470px — bounded, and still about 2× its sibling.
+
 ## What Doesn't Work
 
 ### A popover anchored inside a PR-list row gets clipped
@@ -1200,6 +1227,17 @@ jsdom keeps a declaration as it was written — React renders `{ minWidth: 0 }` 
 component that is correct. Assert `minWidth: "0"`. The failure output is no help: jest-dom prints the
 whole expected block with no "received", so a one-property mismatch reads as though every property is
 missing (2026-08-17, `BriefRef.test.tsx`).
+
+### `captureBeyondViewport` photographs the document, and on a PR page the scroller is `main`
+
+`Page.captureScreenshot` with `captureBeyondViewport: true` and a `clip` taller than the window
+returns a correct top and pure black below it on any screen in this app. `AppFrame.tsx:29` gives
+`<main>` `overflow: auto`, so the document itself never scrolls (`document.documentElement
+.scrollHeight` is 913 on a page whose `main.scrollHeight` is 5 793) and there is nothing beyond the
+viewport to capture. Enlarge the viewport instead — `Emulation.setDeviceMetricsOverride` with
+`{ width: 1440, height: 3000 }`, wait ~1s for the relayout, then clip with
+`captureBeyondViewport: false`. That is what got the whole 2 273px INTENT/BLAST row into one image
+on 2026-08-17; `scale: Math.min(1, 1600 / clipHeight)` keeps a tall row legible in the output.
 
 ## Recurring Errors & Fixes
 
