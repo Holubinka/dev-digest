@@ -1,4 +1,4 @@
-import type { PrStatus } from '@devdigest/shared';
+import type { PrStatus, ScoreState } from '@devdigest/shared';
 
 /**
  * PR-list rollup helpers (pure — no DB / `this`, so they unit-test cleanly).
@@ -8,6 +8,8 @@ import type { PrStatus } from '@devdigest/shared';
  * GitHub's merge state (open/merged/closed); the review status
  * (needs_review / reviewed / stale) is DERIVED here for OPEN PRs from the
  * commit a review last ran against (`lastReviewedSha`) vs the PR head, plus age.
+ * So is the SCORE's own state (`deriveScoreState`) — which commit the number
+ * came from, which is a different column and a different question.
  */
 
 /** Open PRs whose current head was reviewed but untouched this long read "stale". */
@@ -141,4 +143,40 @@ export function deriveReviewStatus(args: {
   const staleMs = (args.staleDays ?? STALE_DAYS) * 86_400_000;
   if (updatedAt && now - updatedAt.getTime() > staleMs) return 'stale';
   return 'reviewed';
+}
+
+/**
+ * Which state of the PR the list's SCORE describes.
+ *
+ * Not the same question as `deriveReviewStatus` above, and the two disagree on
+ * purpose. That one reads `pull_requests.last_reviewed_sha` — "which state did
+ * the newest completed RUN see" — and answers with the row's overall freshness.
+ * This one reads the head of the review the score itself came from, because the
+ * score is the number on screen and it is the number that has to be honest. A PR
+ * can read `needs_review` while its score column shows 100 from a commit nobody
+ * is looking at any more; that pair is what this makes visible.
+ *
+ * `reviewHeadSha` is the head of the review the score was taken from, NOT
+ * "some review's head": if a PR has ten reviews and the newest ran on an old
+ * commit, the marker belongs on that number even if an older row happens to
+ * match the current head.
+ *
+ * A null or empty `reviewHeadSha` is `earlier`, never `current` — the column is
+ * nullable only for rows written before it existed, and treating "unknown" as
+ * "the state you are looking at" is precisely the promotion SPEC-02 AC-69
+ * forbids on the PR page. The empty-string guard covers the PR side too, so two
+ * blank shas cannot compare equal into a false `current`.
+ */
+export function deriveScoreState(args: {
+  /** The head of the review the score came from, or undefined when there is none. */
+  reviewHeadSha: string | null | undefined;
+  /** The PR's current head. */
+  headSha: string;
+  /** False when no review supplied a score at all. */
+  hasReview: boolean;
+}): ScoreState {
+  const { reviewHeadSha, headSha, hasReview } = args;
+  if (!hasReview) return 'none';
+  if (!reviewHeadSha || !headSha) return 'earlier';
+  return reviewHeadSha === headSha ? 'current' : 'earlier';
 }

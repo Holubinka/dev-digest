@@ -1,5 +1,10 @@
 import type { PrDetail, PrMeta } from '@devdigest/shared';
-import { deriveReviewStatus, type ListFinding, type SeverityCounts } from './status.js';
+import {
+  deriveReviewStatus,
+  deriveScoreState,
+  type ListFinding,
+  type SeverityCounts,
+} from './status.js';
 
 /**
  * F1 — pulls DTO mapping. Pure: no DB, no `this`, and no clock — `now` arrives
@@ -36,8 +41,15 @@ export interface PrListRow {
 
 /** The rollups the list computes per PR, each already grouped by the caller. */
 export interface PrRollups {
-  /** The PR's latest `kind='review'`, or undefined if it has none. */
-  review: { score: number | null } | undefined;
+  /**
+   * The PR's latest `kind='review'`, or undefined if it has none.
+   *
+   * `headSha` rides along with the score because the two are only meaningful
+   * together: the number answers "how did it score", the head answers "which
+   * state scored that", and shipping the first without the second is what let
+   * the list show a stranger's number as this PR's current one.
+   */
+  review: { score: number | null; headSha: string | null } | undefined;
   /** Every run's cost summed; null when no run ever priced anything. */
   costUsd: number | null;
   /**
@@ -81,6 +93,11 @@ export function toPrMeta(row: PrListRow, rollups: PrRollups, now: number): PrMet
     opened_at: row.openedAt?.toISOString() ?? null,
     updated_at: row.updatedAt?.toISOString() ?? null,
     score: review ? review.score : null,
+    score_state: deriveScoreState({
+      reviewHeadSha: review?.headSha,
+      headSha: row.headSha,
+      hasReview: review !== undefined,
+    }),
     cost_usd: costUsd,
     findings_critical: findings ? findings.counts.critical : null,
     findings_warning: findings ? findings.counts.warning : null,

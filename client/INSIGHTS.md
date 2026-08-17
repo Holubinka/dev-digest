@@ -1877,6 +1877,21 @@ middle of a path is whitespace to it.
 `String.fromCodePoint(9)` rather than a literal — the existing rule at `:365` — so the test
 source stays ASCII and the character is visible in a diff.
 
+### A PR row renders four `—`, so query the SCORE cell by column, not by text
+
+**Symptom.** `screen.getByText("—")` in the first `PRRow.test.tsx` (2026-08-17) failed with
+"multiple elements"; `getAllByText("—")` then returned **4**, not the 2 that looked obvious.
+
+**Cause.** SCORE, FINDINGS, COST (`RunCostBadge` on a null cost) and UPDATED (`relativeTime`
+on a null timestamp) all render the same em dash for a PR nothing has run against. Unlike
+`FindingsCell.test.tsx`, which renders one cell in isolation, a row test has every column in
+the tree.
+
+**Fix.** Scope the query to the cell: `within(container.querySelector("div")!.children[3])`,
+index by the column's position in `COLUMN_KEYS`. It reads worse than `getByText` and is worth
+it — the assertion then fails when the SCORE cell changes, and when the table is reordered,
+rather than when a neighbouring column starts or stops rendering a dash.
+
 ## Open Questions
 
 - **A dismissed critical does not move `agent_runs.blockers`, and the fix belongs on the server**

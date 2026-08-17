@@ -90,7 +90,7 @@ describe('toPrMeta', () => {
     const meta = toPrMeta(
       row(),
       {
-        review: { score: 100 },
+        review: { score: 100, headSha: 'abc123' },
         costUsd: 0.42,
         findings: { counts: { critical: 0, warning: 0, suggestion: 0 }, top: [] },
       },
@@ -119,7 +119,7 @@ describe('toPrMeta', () => {
     const meta = toPrMeta(
       row(),
       {
-        review: { score: 62 },
+        review: { score: 62, headSha: 'abc123' },
         costUsd: 1.5,
         findings: { counts: { critical: 1, warning: 2, suggestion: 3 }, top },
       },
@@ -141,12 +141,97 @@ describe('toPrMeta', () => {
   it('keeps a null score from a real review distinct from having no review', () => {
     expect(toPrMeta(row(), noRollups, now).score).toBeNull();
     expect(
-      toPrMeta(row(), { review: { score: null }, costUsd: null, findings: undefined }, now).score,
+      toPrMeta(
+        row(),
+        { review: { score: null, headSha: 'abc123' }, costUsd: null, findings: undefined },
+        now,
+      ).score,
     ).toBeNull();
   });
 
   it('reports a null cost rather than a misleading zero when nothing was priced', () => {
     expect(toPrMeta(row(), noRollups, now).cost_usd).toBeNull();
+  });
+
+  /**
+   * The list and the PR page used to answer the same question differently: the
+   * page shows a verdict and a PR SCORE only for the current `head_sha`
+   * (SPEC-02 AC-69), while the list took the newest review's score whatever
+   * state it ran on — so PR #21 read `100` in the list and "this state has not
+   * been reviewed" on its own page, off the same rows. `score_state` is what the
+   * list says the number with; these three cases are the three things it draws.
+   */
+  describe('score_state', () => {
+    const rollups = (review: PrRollups['review']): PrRollups => ({
+      review,
+      costUsd: null,
+      findings: undefined,
+    });
+
+    it("says 'none' when no review ever produced a score", () => {
+      expect(toPrMeta(row(), noRollups, now).score_state).toBe('none');
+    });
+
+    it("says 'current' when the score's review ran on the PR's head", () => {
+      const meta = toPrMeta(row({ headSha: 'abc123' }), rollups({ score: 100, headSha: 'abc123' }), now);
+      expect(meta.score_state).toBe('current');
+      expect(meta.score).toBe(100);
+    });
+
+    /**
+     * The case that reproduces the defect. The fixture must differ from the two
+     * around it in exactly one way — the review's head — or it proves nothing:
+     * a fixture whose review sits on the current head cannot fail, whatever the
+     * mapping does.
+     */
+    it("says 'earlier' when the score's review ran on another state, and still ships the score", () => {
+      const meta = toPrMeta(row({ headSha: 'abc123' }), rollups({ score: 100, headSha: 'c757be1' }), now);
+      expect(meta.score_state).toBe('earlier');
+      // Marked, not hidden: the number is real and worth showing (AC-25/26/38
+      // doctrine), it just has to say which state it belongs to.
+      expect(meta.score).toBe(100);
+    });
+
+    /**
+     * `reviews.head_sha` is nullable for rows written before the column existed.
+     * "Unknown state" must not resolve to "the state you are looking at" — that
+     * promotion is the one AC-69 forbids — and it is not hypothetical: every
+     * review on PR #19 and #20 in this workspace predates the column.
+     */
+    it("says 'earlier' for a review row that never recorded which state it read", () => {
+      expect(
+        toPrMeta(row({ headSha: 'abc123' }), rollups({ score: 100, headSha: null }), now).score_state,
+      ).toBe('earlier');
+    });
+
+    /**
+     * Two blank shas are not a match. Nothing writes an empty `head_sha` today,
+     * so this pins the guard rather than a behaviour anyone has seen — string
+     * equality would otherwise read `'' === ''` as "reviewed at this head" and
+     * hand the number the one claim it must never make by accident.
+     */
+    it('does not read two empty shas as the same state', () => {
+      expect(
+        toPrMeta(row({ headSha: '' }), rollups({ score: 100, headSha: '' }), now).score_state,
+      ).toBe('earlier');
+    });
+
+    /**
+     * `status` and `score_state` answer different questions off different
+     * columns — `last_reviewed_sha` vs the score's own review — and a PR can
+     * carry `reviewed` while its number came from somewhere else. Asserting the
+     * pair here stops a later "simplification" from deriving one out of the
+     * other.
+     */
+    it('is independent of the derived review status', () => {
+      const meta = toPrMeta(
+        row({ status: 'open', headSha: 'abc123', lastReviewedSha: 'abc123' }),
+        rollups({ score: 100, headSha: 'c757be1' }),
+        now,
+      );
+      expect(meta.status).toBe('reviewed');
+      expect(meta.score_state).toBe('earlier');
+    });
   });
 });
 

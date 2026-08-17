@@ -187,6 +187,27 @@ export const ListFinding = z.object({
 });
 export type ListFinding = z.infer<typeof ListFinding>;
 
+/**
+ * WHICH STATE of the PR the list's `score` came from.
+ *
+ *  - `none`    — no review to take a score from
+ *  - `current` — the review that produced it ran on the PR's current `head_sha`
+ *  - `earlier` — it ran on some other state, or on one the row never recorded
+ *
+ * Three values, not a boolean, because the list draws three different things:
+ * `—`, a bare score ring, and a score ring carrying a marker. Collapsing the
+ * last two is the defect this exists to prevent — the PR page already refuses to
+ * present another state's number as current (SPEC-02 AC-69), and until this
+ * field existed the list had nothing to say the same with.
+ *
+ * A review whose own `head_sha` is null lands on `earlier`, never on `current`:
+ * that column is nullable only for rows written before it existed, so such a row
+ * is necessarily older than the current state and can never be shown to describe
+ * it. `client/…/PrBriefBanner/helpers.ts:96` reads null the same way.
+ */
+export const ScoreState = z.enum(['none', 'current', 'earlier']);
+export type ScoreState = z.infer<typeof ScoreState>;
+
 export const PrMeta = z.object({
   id: z.string().nullish(),
   number: z.number().int(),
@@ -203,6 +224,10 @@ export const PrMeta = z.object({
   updated_at: z.string().nullish(),
   // Latest-review score (list endpoint only; null/absent until reviewed).
   score: z.number().int().nullish(),
+  // Which state of the PR `score` describes (list endpoint only). Read it before
+  // showing the number: `earlier` means the score is real but belongs to another
+  // commit, and the reader has no way to tell that from the number alone.
+  score_state: ScoreState.nullish(),
   // TOTAL USD spent on this PR — every agent run summed (list endpoint only).
   // Unlike `score`, this is cumulative, not latest-wins: "Review all" fans out
   // to every enabled agent. Null/absent until a run records a cost.

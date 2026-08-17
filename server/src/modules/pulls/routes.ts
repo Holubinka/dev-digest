@@ -115,11 +115,16 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
       }
     }
 
-    // Latest-review SCORE per PR for the list's score ring. Computed on read
-    // from reviews (no FK denorm); the list is small, so one IN-query + JS
-    // grouping is cheap.
+    // Latest-review SCORE per PR for the list's score ring, plus the head that
+    // review ran on. Computed on read from reviews (no FK denorm); the list is
+    // small, so one IN-query + JS grouping is cheap.
+    //
+    // The head travels with the score and is never dropped here: `toPrMeta`
+    // compares it with the PR's own head to say whether the number describes
+    // the state on screen, and a score without its head is exactly the claim
+    // the PR page refuses to make (SPEC-02 AC-69).
     const prIds = rows.map((r) => r.id);
-    const latestReviewByPr = new Map<string, { score: number | null }>();
+    const latestReviewByPr = new Map<string, { score: number | null; headSha: string | null }>();
     // Every PR carrying ANY review, whatever its kind — this is what separates
     // "reviewed and clean" from "never reviewed" for the FINDINGS column below.
     const reviewedPrIds = new Set<string>();
@@ -129,7 +134,7 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
       for (const rv of reviewRows) {
         reviewedPrIds.add(rv.prId);
         if (rv.kind === 'review' && !latestReviewByPr.has(rv.prId)) {
-          latestReviewByPr.set(rv.prId, { score: rv.score });
+          latestReviewByPr.set(rv.prId, { score: rv.score, headSha: rv.headSha });
         }
       }
     }

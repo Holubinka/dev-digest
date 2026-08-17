@@ -1059,6 +1059,31 @@ that fixes it, and why `pnpm build` now belongs in the gate list for any change 
 `client/INSIGHTS.md` → *Recurring Errors & Fixes*. Share the constant — but build the client
 before believing it works.
 
+### Two screens reading the same rows need the freshness rule IN the contract, not one each
+
+The PR list and the PR page both answer "how did this PR score" from `reviews`, and until
+2026-08-17 they answered differently on the same data. The page filters to the current
+`head_sha` and says "this state has not been reviewed" when nothing matches (SPEC-02 AC-69);
+the list took `ORDER BY created_at DESC` with no head predicate at all
+(`server/src/modules/pulls/repository.ts:83`), so PR #21 read **100** in the list and
+**not reviewed** on its own page, off the same eleven rows. #19 did too. Nothing failed: both
+screens were self-consistent, both were tested, and the list's DTO had no field on which the
+disagreement could even be expressed.
+
+The fix that generalises is not "make the list filter too" — the list is answering a slightly
+different and legitimate question ("was this ever reviewed, and how well") — it is that the
+**server decides the freshness verdict once and ships it**: `PrMeta.score_state` is
+`none | current | earlier`, derived in `deriveScoreState` next to the status derivation that
+already existed. Three values, because a boolean cannot separate "never reviewed" from
+"reviewed elsewhere", and those two render differently.
+
+Two things to carry forward. **A derived-freshness field is a contract field.** If a screen
+must decide "is this number about what the reader is looking at", the answer travels with the
+number or the next screen re-derives it differently. And when it is stale, **mark it, do not
+hide it** — the doctrine is already written down in SPEC-02 (AC-25, AC-26, AC-38 all show
+stale data with a marker) and the marker must survive being read without colour (AC-4), which
+in the list is the word `earlier` beside the ring rather than a dimmer ring.
+
 ## Tool & Library Notes
 
 ### GitHub's "Download ZIP" flattens the `CLAUDE.md` symlinks into 9-byte text files

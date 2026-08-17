@@ -564,6 +564,71 @@ d('A2 reviews + agents (Testcontainers pg)', () => {
     }
   });
 
+  /**
+   * `score_state` on the PR LIST PAYLOAD — the same chain `head_sha` broke in
+   * once already (see the reviews-payload case above): the column list in
+   * `pulls/repository.ts`, the grouping in the route, and the mapping in
+   * `helpers.ts` all sit between the reviewed head and the response, and any of
+   * the three can drop it with every hermetic test still green.
+   *
+   * Both states come out of ONE review here, by moving the PR's head between two
+   * reads. That is what makes the second assertion mean something: the row is
+   * identical, the score is identical, only the state the reader is looking at
+   * has changed — which is exactly the situation the list used to report as
+   * `100` with nothing said, while the PR page said "this state has not been
+   * reviewed" off the same rows.
+   *
+   * NEGATIVE CONTROLS, both run 2026-08-17 against a live testcontainer:
+   * `deriveScoreState` returning `'current'` unconditionally → "expected
+   * 'current' to be 'earlier'"; dropping `headSha` from the repository's select
+   * list → "expected 'earlier' to be 'current'" on the first assertion.
+   */
+  it("the PR list marks a score that belongs to an earlier state, and keeps showing it", async () => {
+    const app = await appWith(REVIEW_FIXTURE);
+    const { repo, pr } = await setupRepoAndPr(pg.handle.db, workspaceId);
+
+    const agent = (
+      await app.inject({
+        method: 'POST',
+        url: '/agents',
+        payload: { name: 'State A', provider: 'openai', model: 'gpt-4.1', system_prompt: 'rev' },
+      })
+    ).json();
+    await app.inject({ method: 'POST', url: `/pulls/${pr.id}/review`, payload: { agentId: agent.id } });
+    await waitForPrRuns(pg.handle.db, pr.id, { expected: 1 });
+
+    const listRow = async () => {
+      const list = (await app.inject({ method: 'GET', url: `/repos/${repo.id}/pulls` })).json();
+      return list.find((p: { number: number }) => p.number === pr.number);
+    };
+
+    // Reviewed at the head the PR is on: the number describes what is on screen.
+    //
+    // The score is read, not asserted against `REVIEW_FIXTURE.score`: grounding
+    // drops the hallucinated finding and the run rescores, so what lands in the
+    // row is 65 rather than the fixture's 42. Pinning the literal here would be
+    // pinning the grounding gate's arithmetic in a test about something else.
+    const atHead = await listRow();
+    expect(typeof atHead.score).toBe('number');
+    expect(atHead.score_state).toBe('current');
+
+    // A push. The review row is untouched — only the state the list is
+    // describing moved on.
+    await pg.handle.db
+      .update(t.pullRequests)
+      .set({ headSha: 'f00dcafe' })
+      .where(eq(t.pullRequests.id, pr.id));
+
+    const afterPush = await listRow();
+    expect(afterPush.score_state).toBe('earlier');
+    // Marked, not hidden: the list answers "was this reviewed at all, and how",
+    // and that answer is still worth showing — it just has to name its state.
+    // Same number as before the push, so the marker is the only thing that moved.
+    expect(afterPush.score).toBe(atHead.score);
+
+    await app.close();
+  });
+
   it("the PR list's cost is the SUM of every run, not just the latest review's", async () => {
     const app = await appWith(REVIEW_FIXTURE);
     const { repo, pr } = await setupRepoAndPr(pg.handle.db, workspaceId);

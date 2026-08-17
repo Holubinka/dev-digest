@@ -118,6 +118,8 @@
       "updated": "Updated"
     },
     "costHint": "Total spent by every agent run on this PR",
+    "scoreEarlier": "earlier",
+    "scoreEarlierHint": "This score comes from an earlier state of the pull request, not from its current commit.",
     "findings": {
       "total": "{count} finding(s)"
     },

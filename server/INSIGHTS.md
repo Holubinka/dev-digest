@@ -1398,6 +1398,21 @@ on 2026-08-16 it reported 20 errors, of which 17 were long-standing (heterogeneo
 Grep for the files you touched rather than reading the whole list, and do not "fix" the rest on sight:
 that is a separate pass, and making the run green is not the point of it.
 
+### `REVIEW_FIXTURE.score` is not the score that lands in the row
+
+**Symptom.** A new case in `test/reviews.it.test.ts` asserted a list payload's `score` against
+`REVIEW_FIXTURE.score` and failed with `expected 65 to be 42` (2026-08-17). The mock provider
+returned the fixture unchanged, and the review persisted fine.
+
+**Cause.** The fixture carries two findings, one of them on a line outside the diff. Grounding
+drops it and the run **rescores** what survived, so 42 goes in and 65 comes out. Every assertion
+in that file that reads a persisted score is reading a post-grounding number.
+
+**Fix.** Assert the property, not the literal: read the score once and compare later reads to it
+(`expect(afterPush.score).toBe(atHead.score)`), or assert `typeof … === 'number'`. Pinning 65
+would pin the grounding gate's arithmetic inside a test about something else — and a `.it.test`
+round trip costs ~80s, so the guess is expensive to make twice.
+
 ## Session Notes
 
 ### 2026-08-03 (conventions extractor)

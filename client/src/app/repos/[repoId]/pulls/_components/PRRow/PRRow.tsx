@@ -27,7 +27,13 @@ export function PRRow({
   const [h, setH] = React.useState(false);
   const st = STATUS_META[pr.status] ?? STATUS_META.needs_review!;
   const { size, lines } = sizeOf(pr);
-  const reviewed = pr.score != null; // null score ⇒ PR has never been reviewed
+  const reviewed = pr.score != null; // null score ⇒ no review supplied one
+  /* The score is real but describes another commit. It stays on screen — the
+     list answers "was this reviewed, and how", which is worth an answer — and
+     says so, rather than passing an earlier state's number off as this one's.
+     The PR page draws the same distinction from the same data (SPEC-02 AC-69);
+     before `score_state` the two screens contradicted each other. */
+  const fromEarlierState = pr.score_state === "earlier";
   return (
     <div
       onMouseEnter={() => setH(true)}
@@ -59,7 +65,14 @@ export function PRRow({
       </div>
       <div style={s.scoreCell}>
         {reviewed ? (
-          <CircularScore score={pr.score!} size={34} stroke={3} />
+          <>
+            <CircularScore score={pr.score!} size={34} stroke={3} />
+            {fromEarlierState && (
+              <span style={s.scoreEarlier} title={t("list.scoreEarlierHint")}>
+                {t("list.scoreEarlier")}
+              </span>
+            )}
+          </>
         ) : (
           <span style={s.muted}>—</span>
         )}

@@ -37,10 +37,16 @@ export interface PrListFindingRow {
  * the latest `kind='review'`, while "has this PR ever been reviewed at all" —
  * what separates a reviewed-and-clean `0 · 0 · 0` from a never-reviewed `—` in
  * the FINDINGS column — counts every kind.
+ *
+ * `headSha` is WHICH STATE of the PR the review describes, and it is nullable
+ * because the column is: rows written before it existed carry no head, and no
+ * backfill can invent one (`db/schema/reviews.ts`). Without it the list can
+ * report a score but not whether that score belongs to the commit on screen.
  */
 export interface PrListReviewRow {
   prId: string;
   score: number | null;
+  headSha: string | null;
   kind: 'summary' | 'review';
 }
 
@@ -83,7 +89,12 @@ export class PullsRepository {
   async reviewsForPrs(prIds: string[]): Promise<PrListReviewRow[]> {
     if (prIds.length === 0) return [];
     return this.db
-      .select({ prId: t.reviews.prId, score: t.reviews.score, kind: t.reviews.kind })
+      .select({
+        prId: t.reviews.prId,
+        score: t.reviews.score,
+        headSha: t.reviews.headSha,
+        kind: t.reviews.kind,
+      })
       .from(t.reviews)
       .where(inArray(t.reviews.prId, prIds))
       .orderBy(desc(t.reviews.createdAt));
