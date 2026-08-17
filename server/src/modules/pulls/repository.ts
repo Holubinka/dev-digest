@@ -1,4 +1,4 @@
-import { desc, eq, inArray } from 'drizzle-orm';
+import { asc, desc, eq, inArray } from 'drizzle-orm';
 import type { Db } from '../../db/client.js';
 import * as t from '../../db/schema.js';
 
@@ -48,6 +48,19 @@ export interface PrListReviewRow {
   score: number | null;
   headSha: string | null;
   kind: 'summary' | 'review';
+  /**
+   * WHICH ANSWER the review gave, and the reason the list can no longer take
+   * whichever row is newest: several agents answer the same state differently,
+   * and `pickListReview` ranks a blocking verdict above an approving one the
+   * way the PR page's banner already does.
+   *
+   * `text` with no enum in the schema, so anything can be in here — the rank
+   * lookup treats an unrecognised value as `comment` rather than trusting it.
+   */
+  verdict: string | null;
+  /** The two fields that make the pick total, so it rests on no incoming order. */
+  createdAt: Date;
+  id: string;
 }
 
 /**
@@ -78,10 +91,15 @@ export class PullsRepository {
   /**
    * Reviews for a page of PRs, newest first, across every review kind.
    *
-   * The ordering is load-bearing and belongs with the query: the caller walks
-   * the rows once and takes the FIRST it sees per PR as that PR's latest
-   * review. Dropping the `ORDER BY` would silently hand it whatever order
-   * Postgres felt like returning.
+   * The ordering is NO LONGER what decides the score. It used to be: the caller
+   * walked the rows once and took the first it saw per PR, which is why this
+   * comment called the `ORDER BY` load-bearing. `pickListReview` now ranks a
+   * PR's reviews with a total comparator of its own, so the result is the same
+   * whatever order Postgres returns.
+   *
+   * The clause stays because a repository handing rows back in an unstated
+   * order is a trap for the next caller, and the tie-break is spelled out so
+   * two runs over identical data cannot disagree.
    *
    * No `kind` predicate — filtering happens in the caller, which needs both the
    * narrow set (score) and the wide one (ever-reviewed) out of one query.
@@ -94,10 +112,13 @@ export class PullsRepository {
         score: t.reviews.score,
         headSha: t.reviews.headSha,
         kind: t.reviews.kind,
+        verdict: t.reviews.verdict,
+        createdAt: t.reviews.createdAt,
+        id: t.reviews.id,
       })
       .from(t.reviews)
       .where(inArray(t.reviews.prId, prIds))
-      .orderBy(desc(t.reviews.createdAt));
+      .orderBy(desc(t.reviews.createdAt), asc(t.reviews.id));
   }
 
   /**

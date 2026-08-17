@@ -52,6 +52,9 @@ export function byNewestThenId(a: ReviewRecord, b: ReviewRecord): number {
  * verdict lands on `comment`, which is where `VerdictBanner` already renders it:
  * it is not evidence that the state is blocked, and it is not an approval either.
  */
+/* THE SECOND COPY OF THIS TABLE is `server/src/modules/pulls/helpers.ts`, which
+   the PR LIST ranks its score with. The two agreeing is what stops one PR
+   carrying two numbers on two screens, so a change here is a change there. */
 const BLOCKING_RANK: Record<string, number> = {
   request_changes: 2,
   comment: 1,

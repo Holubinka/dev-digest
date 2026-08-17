@@ -352,6 +352,33 @@ real Postgres. The check that works is one grep per new table that stores model 
 `onConflictDoUpdate.set` object is a second, separate parameter list, and it is the one every
 recomputation of an existing state goes through.
 
+### Grouping by a nullable column collapses every unknown into one group, and a ranking rule then compares things that were never comparable
+
+**Symptom.** `pickListReview` (`src/modules/pulls/helpers.ts`) was written on 2026-08-17 to give
+the PR list the rule the PR page's banner already used: settle which commit the score speaks for,
+then take the most blocking review *of that commit*. Eight unit tests passed, including one
+written specifically to prove that a `request_changes` from an older commit cannot outrank an
+`approve` on the current one. On live data the function still did exactly that.
+
+**Cause.** `reviews.head_sha` was added late and nothing backfilled it, so almost every stored
+review has none — 69 of PR #7's 69 in this workspace, spanning the whole branch. Grouping by
+`head_sha` puts all of those in one group, because `null === null`. That group is not one state;
+it is many unknown ones. Ranking inside it by verdict then surfaces a `request_changes` from three
+weeks ago as the PR's current score. The guard test could not catch it: its fixtures had real
+shas, so it exercised the branch where grouping works.
+
+**Fix.** Rank by verdict only when the group is a KNOWN state, and take the newest when it is not
+(`helpers.ts`, `const ranked = state ? byMostBlockingThenNewest : byNewestThenId`). More generally:
+when a rule partitions rows by a nullable column, write the fixture where that column is null
+before believing the rule, because that is the majority of the table and not the corner of it.
+
+**How it was found, which is the transferable part.** One query, before touching the UI:
+`select p.number, rv.head_sha, count(*) … group by p.number, rv.head_sha` printed the shape of the
+data the rule would meet. The whole defect was visible in its first row. A `psql` count over the
+real table is two minutes and it is not something a fixture can substitute for — the fixtures were
+written from the schema, and the schema says `head_sha` is nullable without saying that it is
+almost always null.
+
 ## Codebase Patterns
 
 ### The allowed-refs invariant is checkable in one line against a real PR
