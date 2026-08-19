@@ -1148,3 +1148,66 @@ describe('an empty section keeps its place', () => {
     expect(result.extra.off_chain).toBe(2);
   });
 });
+
+/**
+ * Four of the six holes closed in `setupCommandIsAuthorised` were one mistake
+ * repeated: a shape bounded on ONE axis and then read as bounded on both. The
+ * `cp` pinned its destination to `targetOfExample(source)` and took its source
+ * from the whole clone. The runner pinned its path to `source_path` and never
+ * asked whether the file was a script. Each fix looked complete, and four review
+ * passes read the axis that was already covered.
+ *
+ * This table names, per shape, the axis that is NOT "the path exists", and holds
+ * one allowed command against it so the test cannot pass by refusing everything.
+ * A new shape belongs in this table before it belongs in the predicate.
+ */
+describe('being in the clone is not being authorised', () => {
+  const base = context();
+  const ctx = context({
+    verified: new Set([
+      ...base.verified,
+      'server/src/index.ts.example',
+      'scripts/dev.sh',
+      'Makefile',
+    ]),
+  });
+
+  const ground = (command: string, source_path: string) =>
+    groundOnboarding(response({ setup_commands: [{ command, why: 'w', source_path }] }), ctx);
+
+  const CASES = [
+    {
+      shape: 'cp',
+      axis: 'the source is a config this run READ, not any example lying in the clone',
+      allowed: ['cp .env.example .env', '.env.example'],
+      refused: [['cp server/src/index.ts.example server/src/index.ts', 'server/src/index.ts.example']],
+    },
+    {
+      shape: 'runner',
+      axis: 'the file IS a script, not any path that happens to exist',
+      allowed: ['bash scripts/dev.sh', 'scripts/dev.sh'],
+      refused: [
+        ['bash README.md', 'README.md'],
+        ['sh docker-compose.yml', 'docker-compose.yml'],
+        ['bash .env.example', '.env.example'],
+        ['./Makefile', 'Makefile'],
+      ],
+    },
+    {
+      shape: 'docker compose up',
+      axis: 'every service is DECLARED by the file, not merely named beside it',
+      allowed: ['docker compose up -d postgres', 'docker-compose.yml'],
+      refused: [['docker compose up -d kafka', 'docker-compose.yml']],
+    },
+  ] as const;
+
+  for (const c of CASES) {
+    it(`${c.shape} — ${c.axis}`, () => {
+      const [okCommand, okSource] = c.allowed;
+      expect(ground(okCommand, okSource).tour.setup_commands, okCommand).toHaveLength(1);
+      for (const [command, source] of c.refused) {
+        expect(ground(command, source).tour.setup_commands, command).toHaveLength(0);
+      }
+    });
+  }
+});
