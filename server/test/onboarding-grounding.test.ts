@@ -713,13 +713,45 @@ describe('a command is checked whole, not at its ends', () => {
     expect(cp('cp .env.example .env.local')).toHaveLength(0);
   });
 
+  it('refuses a cp whose source merely exists, rather than being a config this run read', () => {
+    // The half the destination bound does not cover. `targetOfExample` is happy —
+    // `server/src/index.ts.example` IS an example of `server/src/index.ts` — and the
+    // file is in the clone, so `verified` is happy too. Nothing asked whether this
+    // feature has any business offering a `cp` FROM it. A repository that ships a
+    // `<victim>.example` beside the victim would otherwise put a line that destroys
+    // a file in the reader's own checkout next to a copy button.
+    const ctx = context();
+    const result = groundOnboarding(
+      response({
+        setup_commands: [
+          {
+            command: 'cp server/src/index.ts.example server/src/index.ts',
+            why: 'w',
+            source_path: 'server/src/index.ts.example',
+          },
+        ],
+      }),
+      context({ verified: new Set([...ctx.verified, 'server/src/index.ts.example']) }),
+    );
+
+    expect(result.tour.setup_commands).toHaveLength(0);
+    expect(result.dropped.unknown_path).toBe(1);
+  });
+
   it('accepts .env.sample the same way, since that is a template too', () => {
     const ctx = context();
     const result = groundOnboarding(
       response({
         setup_commands: [{ command: 'cp .env.sample .env', why: 'w', source_path: '.env.sample' }],
       }),
-      context({ verified: new Set([...ctx.verified, '.env.sample']) }),
+      // Both, because a real gather produces both: `envSources` is built by
+      // reading every `PACKAGE_CONFIG_FILES` name beside every package, and
+      // `.env.sample` is one of the two. A fixture carrying only `verified`
+      // described a state the gather never returns.
+      context({
+        verified: new Set([...ctx.verified, '.env.sample']),
+        envSources: [...ctx.envSources, { path: '.env.sample', text: ENV_EXAMPLE }],
+      }),
     );
     expect(result.tour.setup_commands.map((c) => c.command)).toEqual(['cp .env.sample .env']);
   });

@@ -896,6 +896,14 @@ function setupCommandIsAuthorised(
 ): boolean {
   if (parts[0] === 'cp') {
     if (parts.length !== 3) return false;
+    // BOTH ends, not one. Bounding the destination to `targetOfExample(source)`
+    // only says the pair is a template-and-its-target; it says nothing about
+    // which templates this feature may offer to copy. `verified` is every path
+    // in the clone, so a repository shipping `<victim>.example` beside `<victim>`
+    // would satisfy the destination rule exactly — and the reader who follows the
+    // line destroys a file in their own checkout. The source must be a config
+    // this run actually READ, which is what `envSources` holds.
+    if (!ctx.envSources.some((source) => source.path === sourcePath)) return false;
     const from = parts[1] === undefined ? null : sanitizePath(parts[1]);
     const to = parts[2] === undefined ? null : sanitizePath(parts[2]);
     return from === sourcePath && to !== null && to === targetOfExample(sourcePath);
