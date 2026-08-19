@@ -106,8 +106,15 @@ export function selectPackages(
 export function managerFor(lockfileNames: string[]): OnboardingPackageManager | null {
   const managers = new Set<OnboardingPackageManager>();
   for (const name of lockfileNames) {
-    const manager = (LOCKFILES as Record<string, OnboardingPackageManager | undefined>)[name];
-    if (manager) managers.add(manager);
+    // `Object.hasOwn`, never a bare index — the rule `modules/blast/helpers.ts`
+    // writes out. `LOCKFILES` is an object literal, so indexing it with
+    // `constructor`, `toString` or `valueOf` answers with a function and
+    // `__proto__` with an object: all truthy, all added, and all typed as a
+    // manager by the assertion that made the index possible. Beside a real
+    // lockfile that pushes the count to two, and a repository with one manager
+    // is shown no install command at all.
+    if (!Object.hasOwn(LOCKFILES, name)) continue;
+    managers.add(LOCKFILES[name as keyof typeof LOCKFILES]);
   }
   if (managers.size !== 1) return null;
   const [only] = [...managers];

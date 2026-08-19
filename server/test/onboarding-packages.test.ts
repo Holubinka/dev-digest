@@ -129,6 +129,22 @@ describe('managerFor', () => {
     expect(managerFor(['bun.lockb'])).toBe('bun');
   });
 
+  it('ignores an inherited property name instead of taking it for a manager', () => {
+    // `LOCKFILES` is an object literal, so a bare index answers for every
+    // `Object.prototype` member: `constructor`, `toString` and `valueOf` each
+    // return a function and `__proto__` an object — all truthy, all added to the
+    // set, and all typed as a manager by the assertion that made the lookup
+    // possible. The docstring says unknown names are ignored; these were not.
+    for (const name of ['constructor', 'toString', 'valueOf', '__proto__', 'hasOwnProperty']) {
+      expect(managerFor([name]), name).toBeNull();
+    }
+
+    // The consequence with teeth: beside a real lockfile an inherited name
+    // pushes the count to two, and a repository that HAS one manager is then
+    // shown no install command at all.
+    expect(managerFor(['pnpm-lock.yaml', 'constructor'])).toBe('pnpm');
+  });
+
   /** AC-87 — no lock file is no manager, never a default. */
   it('answers null when there is no lock file at all', () => {
     expect(managerFor([])).toBeNull();
