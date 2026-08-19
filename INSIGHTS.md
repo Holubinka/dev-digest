@@ -810,6 +810,52 @@ agent had not considered (`specs/SPEC-03-onboarding-tour.md:1283-1290` already p
 which is the process working — but only because the mis-grade was caught by hand first.
 
 
+### Nine review passes found what one enumeration would have — and one of them reviewed my own half-fix
+
+Measured on `feat/onboarding-tour`, 2026-08-19/20. Nine `--full` `pr-self-review` runs, eighteen
+Track B agents, seven adversarial verifiers. Nine grounding defects closed in
+`server/src/modules/onboarding/helpers.ts`. `CLAUDE.md` says *"Review three times, not eleven"*
+and explains why; this ran nine, and the reasons are worth separating because only one of them is
+the tooling's.
+
+**Most findings were present in run one and surfaced later anyway.** `cp` taking its source from
+the whole clone, a runner accepting any path, the missing NUL strip, `managerFor`'s bare index,
+the probe window not matching the grounding window — every one of those was in the code before the
+first review and each arrived in a different pass. That is the sampling behaviour
+`.claude/skills/pr-self-review/routing.md` already records from another branch: an agent told to
+*search* returns what it happens to reach, one instance per pass. Re-running the same instruction
+does not converge; it re-rolls.
+
+**The exception that was mine.** The diagram guard shipped as a denylist of the two mermaid
+escapes found first. The commit message and the conversation both said, before it landed, that it
+closed the known shapes rather than proving there were no others. Three more were then measured
+against the repo's own mermaid — a `;`-separated `click`, a `%%{init: themeCSS}%%` directive, and
+`<img>` inside a quoted label — and each defeated it without touching either name. A whole review
+round existed only to grade code I had shipped while calling it incomplete. **Saying a fix is
+partial is a reason to finish it, not a disclaimer that licenses committing it.**
+
+**What actually converged.** Two things, both measured here:
+
+- **Enumeration beats search.** The one pass told to *list every input on the attacker-reachable
+  path and name the bound on each* returned a complete bound list plus one finding, and its list
+  is checkable by the next reader. Seven passes told to *look for problems* returned seven
+  disjoint sets. The same move applied to the predicate — name every allowed command shape and the
+  axis each one constrains — is what finally ended the sequence, as a table in
+  `onboarding-grounding.test.ts`, and it caught four holes at once instead of one per round.
+- **Allowlist over denylist, once the second bypass appears.** Four of the nine defects were one
+  mistake: a check bounded on one axis and read as bounded on both. A denylist is that mistake
+  expressed as a policy.
+
+**Two cheap signals worth trusting.** A finding reported independently by both Track B agents in
+the same run (the NUL strip) was real and load-bearing. A run whose briefs steered both agents
+away from already-exhausted ground returned zero from both — which said the exhausted ground
+really was the whole of what that diff had, and cost two agents to learn.
+
+**What to do instead.** Collect findings across one round, fix once, verify once. Do not fix
+between passes: half the later findings were about code that did not exist when the review began.
+And when a defect's shape repeats twice, stop patching instances and change the shape of the
+check — the third instance is already written, it just has not been found yet.
+
 ## Codebase Patterns
 
 ### The two `docker-compose.yml` files are byte-identical duplicates
