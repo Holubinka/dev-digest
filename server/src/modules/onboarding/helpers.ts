@@ -309,30 +309,64 @@ function withinCommandCap(command: string): boolean {
 }
 
 /**
- * The two mermaid constructs that reach OUT of the drawing, and there is no
- * third one measured.
+ * What a tour diagram is ALLOWED to be, stated as a grammar rather than as a list
+ * of things to forbid.
  *
- * `securityLevel: 'strict'` is not the boundary it reads as. Measured against
- * this repo's own mermaid 11.15.0: `A@{ img: "https://host/p.png" }` renders
- * `<image href>` into the SVG and mermaid itself calls `img.decode()` on that
- * URL, so the request leaves on paint with no click; `click A "https://host/x"`
- * renders `<a href>` around the node with no `rel` and no `target`. Strict
- * strips `javascript:` and `call`, and nothing else.
+ * The denylist that stood here named the two shapes found first — `click` at the
+ * start of a line, and an `@{ … }` node. Three more were then measured against
+ * this repo's own mermaid 11.15.0 at `securityLevel: 'strict'`, and each defeated
+ * it without touching either name:
  *
- * The whole diagram goes, not the offending line: repairing a claim is what this
- * file never does. It is checked on the RAW text rather than the truncated one,
- * so a construct sitting past `MAX_DIAGRAM_CHARS` still condemns it — the
- * conservative order, since a cut can only hide the evidence.
+ *   - `A --> B; click A "https://host/x"` — `;` separates statements, so a rule
+ *     anchored to the line start never sees the second one. `classDiagram` with
+ *     `link Alpha "…"` reaches the same anchor with no `click` token at all.
+ *   - `%%{init: {"themeCSS": "…url(https://host/p.png)…"}}%%` — mermaid's `secure`
+ *     list is six keys and `themeCSS` is not among them, so strict does not cover
+ *     it; the CSS lands in the SVG's own `<style>`.
+ *   - `A["<img src='https://host/p.png'>"]` — DOMPurify at strict keeps `img`, `a`
+ *     and `style`, and mermaid AWAITS the image's load event, so the request goes
+ *     out on paint.
  *
- * Counted `unknown_path` for the reason that counter's own docstring gives: both
- * constructs name a resource that is not in the clone, which is what "the claim
- * points at something that is not there" has always meant here. AC-40 fixes the
- * vocabulary at five, so a sixth counter is not available to name this better.
+ * A fourth would have followed. So the question changed from "what must not
+ * appear" to "what may": one header, and statements that draw a node or an edge.
+ * Everything else is dropped whole, because repairing a claim is what this file
+ * never does.
+ *
+ * The cost is real and preferred: a diagram using any mermaid feature outside
+ * this grammar is dropped even when harmless. `onboarding.system.md` asks for
+ * exactly this subset, and a dropped diagram costs a picture, while a wrong
+ * allowance costs a request to a host the repository chose.
+ *
+ * Counted `unknown_path` for the reason that counter's docstring gives: the claim
+ * names something that is not in the clone. AC-40 fixes the vocabulary at five.
  */
-const DIAGRAM_ESCAPE = /^\s*click\s|@\s*\{/m;
+const LABEL_TEXT = String.raw`(?:"[^"<>{}\\]*"|[A-Za-z0-9 _.:/+-]*)`;
+const NODE = String.raw`[A-Za-z0-9_-]+(?:\[${LABEL_TEXT}\]|\(${LABEL_TEXT}\)|\{${LABEL_TEXT}\})?`;
+const ARROW = String.raw`(?:-\.->|-\.-|-->|---|==>|===)(?:\|${LABEL_TEXT}\|)?`;
+
+/** `flowchart TD` / `graph LR`, and no other grammar — `classDiagram` carries `link`. */
+const DIAGRAM_HEADER = /^(?:flowchart|graph)\s+(?:TB|TD|BT|RL|LR)$/;
+const DIAGRAM_STATEMENT = new RegExp(String.raw`^${NODE}(?:\s*${ARROW}\s*${NODE})*$`);
+const DIAGRAM_SUBGRAPH = new RegExp(String.raw`^subgraph\s+${LABEL_TEXT}$`);
 
 function safeDiagram(raw: string, dropped: OnboardingDropped): string | undefined {
-  if (DIAGRAM_ESCAPE.test(raw)) {
+  // Split on the newline AND the semicolon, because mermaid treats both as
+  // statement separators, and checked on the RAW text so a construct sitting past
+  // `MAX_DIAGRAM_CHARS` still condemns the diagram — a cut can only hide it.
+  const statements = raw
+    .split(/[\n;]/)
+    .map((part) => part.trim())
+    .filter((part) => part !== '');
+
+  const [header, ...rest] = statements;
+  const drawn =
+    header !== undefined &&
+    DIAGRAM_HEADER.test(header) &&
+    rest.every(
+      (part) => part === 'end' || DIAGRAM_SUBGRAPH.test(part) || DIAGRAM_STATEMENT.test(part),
+    );
+
+  if (!drawn) {
     dropped.unknown_path += 1;
     return undefined;
   }

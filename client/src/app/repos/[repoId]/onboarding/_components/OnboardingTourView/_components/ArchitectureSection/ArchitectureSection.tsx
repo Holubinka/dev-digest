@@ -30,9 +30,12 @@
    the claim did. Measured against mermaid 11.15.0: strict strips `javascript:`
    and `call`, but `click A "https://host/x"` still renders `<a href>` around the
    node with no `rel` and no `target`, and `A@{ img: … }` renders `<image href>`
-   that mermaid fetches on paint. What keeps this surface safe is the SERVER —
-   `groundSections` drops a diagram carrying either construct and counts it — not
-   anything the renderer does. */
+   that mermaid fetches on paint. Five such escapes were measured, and naming them
+   one by one is what failed: three of the five defeated a denylist built from the
+   first two. What keeps this surface safe is the SERVER, and it is an ALLOWLIST —
+   `groundSections` accepts a `flowchart`/`graph` header and statements that draw a
+   node or an edge, and drops everything else whole. Nothing the renderer does is
+   load-bearing here. */
 "use client";
 
 import React from "react";

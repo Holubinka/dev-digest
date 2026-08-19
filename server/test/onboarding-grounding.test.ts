@@ -1221,7 +1221,32 @@ describe('the diagram is a drawing, not a way out of one', () => {
     links: [],
   });
 
-  it('drops a diagram that reaches outside itself, and counts it', () => {
+  // Every one of these was MEASURED against the repo's own mermaid 11.15.0 at
+  // `securityLevel: 'strict'`, and every one defeated a denylist that named the
+  // two shapes found first. That is why the guard is an allowlist now.
+  const ESCAPES: ReadonlyArray<readonly [string, string]> = [
+    ['node shape', 'flowchart TD\n  A@{ img: "https://evil.example.com/p.png" }'],
+    ['click on its own line', 'flowchart TD\n  A --> B\n  click A "https://evil.example.com/x"'],
+    // `;` separates statements, so a guard anchored to the line start never sees it.
+    ['click after a semicolon', 'flowchart TD\n  A[Alpha] --> B[Beta]; click A "https://evil.example.com/x"'],
+    // No `click` token at all.
+    ['classDiagram link', 'classDiagram\n  class Alpha\n  link Alpha "https://evil.example.com/x"'],
+    // Renders `<style>` into the SVG; `strict` does not cover `themeCSS`.
+    ['init directive', 'flowchart TD\n%%{init: {"themeCSS": ".node { background-image: url(https://evil.example.com/p.png); }"}}%%\n  A --> B'],
+    // DOMPurify at `strict` keeps `img`, `a` and `style`; mermaid awaits the load.
+    ['html in a label', 'flowchart TD\n  A["<img src=\'https://evil.example.com/p.png\'>"] --> B'],
+    ['anchor in a label', 'flowchart TD\n  A["<a href=\'https://evil.example.com/x\'>go</a>"] --> B'],
+    ['styled span in a label', 'flowchart TD\n  A["<span style=\'background:url(https://evil.example.com/b.png)\'>x</span>"] --> B'],
+  ];
+
+  it.each(ESCAPES)('drops a diagram that reaches outside itself: %s', (_name, diagram) => {
+    const result = groundOnboarding(response({ sections: [arch(diagram)] }), context());
+
+    expect(result.tour.sections[0]?.diagram).toBeUndefined();
+    expect(result.dropped.unknown_path).toBe(1);
+  });
+
+  it('legacy: the first two shapes found, kept as named cases', () => {
     // Measured against the repo's own mermaid 11.15.0 at `securityLevel: "strict"`:
     // `@{ img: … }` renders `<image href>` into the SVG and mermaid calls
     // `img.decode()` on it, so the request leaves on paint with no click; a `click`
@@ -1235,6 +1260,34 @@ describe('the diagram is a drawing, not a way out of one', () => {
       const result = groundOnboarding(response({ sections: [arch(diagram)] }), context());
       expect(result.tour.sections[0]?.diagram, diagram).toBeUndefined();
       expect(result.dropped.unknown_path, diagram).toBe(1);
+    }
+  });
+
+  it('keeps the diagram the model actually produces', () => {
+    // Copied from a live generation on this repository, 2026-08-19.
+    const real = [
+      'flowchart LR',
+      '  CLIENT["client: Next.js 15 App"] -->|"HTTP :3001"| API["server: Fastify 5 API"]',
+      '  MCP["mcp: MCP stdio server"] -->|"HTTP :3001"| API',
+      '  API -->|"Drizzle ORM"| DB["Postgres 16 + pgvector"]',
+      '  API -->|"tsconfig alias"| RC["reviewer-core: review engine"]',
+      '  E2E["e2e: agent-browser"] -->|"HTTP :3100"| CLIENT',
+    ].join('\n');
+    const result = groundOnboarding(response({ sections: [arch(real)] }), context());
+
+    expect(result.tour.sections[0]?.diagram).toBe(real);
+    expect(result.dropped.unknown_path).toBe(0);
+  });
+
+  it('keeps the plain shapes too: bare ids, unquoted labels, subgraphs', () => {
+    for (const drawing of [
+      'flowchart TD\n  A --> B',
+      'graph LR\n  A[Alpha] --> B[Beta]',
+      'flowchart TD\n  A["x"] --- B\n  B ==> C',
+      'flowchart TD\n  subgraph "server"\n  A --> B\n  end',
+    ]) {
+      const result = groundOnboarding(response({ sections: [arch(drawing)] }), context());
+      expect(result.tour.sections[0]?.diagram, drawing).toBe(drawing);
     }
   });
 
