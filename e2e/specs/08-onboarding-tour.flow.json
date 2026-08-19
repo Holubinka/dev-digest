@@ -1,0 +1,33 @@
+{
+  "name": "Repo-scoped Onboarding Tour refuses to generate on an unindexed repo",
+  "description": "Reaches /repos/<id>/onboarding through the sidebar row (the repo id comes from the home redirect, never hardcoded) and confirms the state a newcomer actually hits first: the seeded demo repo has no repo_index_state row, so the server answers generate_blocked=index_missing and the page must name that reason and offer nothing to press (SPEC-03 AC-63, AC-83). The refusal sentence is asserted whole rather than by keyword: AC-84 forbids copy that claims indexing is under way or that waiting helps, and a rewrite that reintroduced one could not leave this string intact. Zero model calls — the read is cached and its container has no llm port, and nothing here presses Generate. Distinct from 06-onboarding.flow.json, which guards the unrelated /onboarding add-repository screen (AC-8); the pathname is pinned with startsWith('/repos/') rather than a bare substring, so the two flows can never satisfy each other's assertions.",
+  "steps": [
+    { "cmd": ["open", "{BASE}/"], "label": "load the app root" },
+    { "cmd": ["wait", "--url", "/pulls"], "label": "root redirects to the seeded repo (this is where the repo id comes from)" },
+    { "cmd": ["wait", "--text", "Onboarding Tour"], "label": "the sidebar row exists before it is clicked (the URL settling does not imply the repo list has)" },
+    { "cmd": ["find", "text", "Onboarding Tour", "click"], "label": "follow the sidebar row to the tour" },
+    {
+      "cmd": [
+        "wait",
+        "--fn",
+        "location.pathname.startsWith('/repos/') && location.pathname.endsWith('/onboarding')"
+      ],
+      "label": "the repo-scoped tour route is reached, not the bare /onboarding screen"
+    },
+    { "cmd": ["wait", "--load", "networkidle"], "label": "the cached tour read settles" },
+    { "cmd": ["wait", "--text", "Onboarding for payments-api"], "label": "the heading names the seeded repository" },
+    { "cmd": ["wait", "--text", "No ready index for this repository"], "label": "the index gate's reason renders (AC-63, AC-83)" },
+    {
+      "cmd": [
+        "wait",
+        "--text",
+        "A tour is written from an index of the repository, and there is no finished one here. Index the repository, then generate the tour."
+      ],
+      "label": "the whole refusal sentence, which promises nothing about waiting (AC-84)"
+    },
+    {
+      "cmd": ["wait", "--fn", "!document.body.innerText.includes('Generate onboarding tour')"],
+      "label": "no Generate control in a state that would refuse it"
+    }
+  ]
+}
