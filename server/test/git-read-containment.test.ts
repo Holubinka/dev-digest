@@ -206,12 +206,13 @@ describe('SimpleGitClient.listFiles — bounded, contained, and out of .git', ()
   const opts = { extensions: ['.md'], maxFiles: 100, maxFileBytes: 1_000_000 };
   const paths = (r: { files: { path: string }[] }) => r.files.map((f) => f.path);
 
-  it('lists markdown under a configured root, posix-separated and sorted', async () => {
+  it('lists markdown under a configured root, posix-separated and ordered', async () => {
     const out = await client.listFiles(REPO, { ...opts, roots: ['docs'] });
     // `plan.md`, `alias.md` and `creds.md` are symlinks; a walk never follows one.
     // `docs/nested/readme.md` sits beside a nested `.git`: the document is listed,
-    // and nothing from inside that git directory ever is.
-    expect(paths(out)).toEqual(['docs/big.md', 'docs/nested/readme.md', 'docs/real.md']);
+    // and nothing from inside that git directory ever is. It sorts LAST despite
+    // its name, because the order is depth first and only then path.
+    expect(paths(out)).toEqual(['docs/big.md', 'docs/real.md', 'docs/nested/readme.md']);
     expect(out.bounded).toBe(false);
   });
 
@@ -224,7 +225,7 @@ describe('SimpleGitClient.listFiles — bounded, contained, and out of .git', ()
 
   it('skips a file over maxFileBytes', async () => {
     const out = await client.listFiles(REPO, { ...opts, roots: ['docs'], maxFileBytes: 100 });
-    expect(paths(out)).toEqual(['docs/nested/readme.md', 'docs/real.md']); // big.md is 50 000 bytes
+    expect(paths(out)).toEqual(['docs/real.md', 'docs/nested/readme.md']); // big.md is 50 000 bytes
   });
 
   it('caps at maxFiles and says the list is bounded', async () => {
@@ -235,7 +236,7 @@ describe('SimpleGitClient.listFiles — bounded, contained, and out of .git', ()
 
   it('contributes nothing for a root that does not exist — not an error', async () => {
     const out = await client.listFiles(REPO, { ...opts, roots: ['nope', 'docs'] });
-    expect(paths(out)).toEqual(['docs/big.md', 'docs/nested/readme.md', 'docs/real.md']);
+    expect(paths(out)).toEqual(['docs/big.md', 'docs/real.md', 'docs/nested/readme.md']);
   });
 
   it('refuses a root that escapes the clone', async () => {

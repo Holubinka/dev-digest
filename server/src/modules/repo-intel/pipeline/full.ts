@@ -64,9 +64,14 @@ const PARSE_DEGRADED_CAP = 50;
 
 /**
  * Full index of one repo. Returns the final IndexResult so the caller can
- * report it (job ack, HTTP response). Errors that abort the whole run still
- * stamp a `status='failed'` row before re-throwing — the handler is
- * idempotent on retry.
+ * report it (job ack, HTTP response).
+ *
+ * An error that aborts the run stamps `status='failed'` on `repo_index_state`
+ * and re-throws, so the caller still fails and a reader can tell "the index
+ * crashed" from "the index never ran". The stamp costs the STATUS only: the
+ * previous pass's `last_indexed_sha` and counters are carried forward, because
+ * that sha is what blast renders every line number against
+ * (`modules/blast/service.ts`). The handler is idempotent on retry.
  */
 export async function runFullIndex(
   container: Container,
@@ -93,196 +98,222 @@ export async function runFullIndex(
     return degradedResult(startedAt, 'no_clone');
   }
 
-  const ref: RepoRef = { owner: repo.owner, name: repo.name };
-  const currentSha = await safeCurrentHead(container, ref);
+  try {
+    const ref: RepoRef = { owner: repo.owner, name: repo.name };
+    const currentSha = await safeCurrentHead(container, ref);
 
-  // Walk + filter -------------------------------------------------------
-  const walk = await walkClone(repo.clonePath);
-  if (walk.files.length === 0) {
-    await safePersist(repository, repoId, currentSha, 'partial', 0, walk.stats.skippedTooLarge, {
-      ...walk.stats,
-      reason: 'no_files',
-      durationMs: Date.now() - startedAt,
-    });
-    return {
-      status: 'partial',
-      filesIndexed: 0,
-      filesSkipped: walk.stats.skippedTooLarge,
-      durationMs: Date.now() - startedAt,
-      reason: 'no_files',
-    };
-  }
-
-  // Parse phase ---------------------------------------------------------
-  const symbolsBuf: IndexerSymbolRow[] = [];
-  const refsBuf: IndexerReferenceRow[] = [];
-  const factsBuf: IndexerFileFactsRow[] = [];
-  const parseDegraded: ParseDegradedEntry[] = [];
-  let filesIndexed = 0;
-  let filesSkipped = walk.stats.skippedTooLarge;
-  let softBudgetReached = false;
-
-  const concurrency = Math.max(1, cpus().length - 1);
-  const parseQ = new PQueue({ concurrency });
-
-  for (const relPath of walk.files) {
-    // Soft-budget gate: before enqueuing each file, bail out if we've burned
-    // the budget. Anything still in flight is awaited via `onIdle()` below.
-    if (Date.now() - startedAt > INDEX_SOFT_BUDGET_MS) {
-      softBudgetReached = true;
-      break;
+    // Walk + filter -------------------------------------------------------
+    const walk = await walkClone(repo.clonePath);
+    if (walk.files.length === 0) {
+      await safePersist(repository, repoId, currentSha, 'partial', 0, walk.stats.skippedTooLarge, {
+        ...walk.stats,
+        reason: 'no_files',
+        durationMs: Date.now() - startedAt,
+      });
+      return {
+        status: 'partial',
+        filesIndexed: 0,
+        filesSkipped: walk.stats.skippedTooLarge,
+        durationMs: Date.now() - startedAt,
+        reason: 'no_files',
+      };
     }
 
-    void parseQ.add(async () => {
-      const lang = langForFile(relPath);
-      if (!lang) {
-        filesSkipped += 1;
-        return;
+    // Parse phase ---------------------------------------------------------
+    const symbolsBuf: IndexerSymbolRow[] = [];
+    const refsBuf: IndexerReferenceRow[] = [];
+    const factsBuf: IndexerFileFactsRow[] = [];
+    const parseDegraded: ParseDegradedEntry[] = [];
+    let filesIndexed = 0;
+    let filesSkipped = walk.stats.skippedTooLarge;
+    let softBudgetReached = false;
+
+    const concurrency = Math.max(1, cpus().length - 1);
+    const parseQ = new PQueue({ concurrency });
+
+    for (const relPath of walk.files) {
+      // Soft-budget gate: before enqueuing each file, bail out if we've burned
+      // the budget. Anything still in flight is awaited via `onIdle()` below.
+      if (Date.now() - startedAt > INDEX_SOFT_BUDGET_MS) {
+        softBudgetReached = true;
+        break;
       }
-      let source: string;
+
+      void parseQ.add(async () => {
+        const lang = langForFile(relPath);
+        if (!lang) {
+          filesSkipped += 1;
+          return;
+        }
+        let source: string;
+        try {
+          source = await readFile(join(repo.clonePath!, relPath), 'utf8');
+        } catch (err) {
+          filesSkipped += 1;
+          recordParseDegraded(parseDegraded, relPath, asMessage(err));
+          return;
+        }
+        const contentHash = sha1(source);
+        // Per-file watchdog — a single pathological file shouldn't burn the
+        // whole budget. parseSymbols/References are synchronous, so we wrap
+        // them in Promise.resolve and race the timeout.
+        try {
+          const parsed = await withTimeout(
+            Promise.resolve().then(() => ({
+              symbols: parseSymbols(relPath, source),
+              references: parseReferences(relPath, source),
+            })),
+            MAX_PARSE_MS_PER_FILE,
+          );
+          for (const s of parsed.symbols) {
+            symbolsBuf.push({
+              repoId,
+              path: relPath,
+              name: s.name,
+              kind: s.kind,
+              line: s.line,
+              endLine: s.endLine,
+              exported: s.exported,
+              signature: s.signature,
+              contentHash,
+            });
+          }
+          for (const r of parsed.references) {
+            refsBuf.push({
+              repoId,
+              fromPath: relPath,
+              toSymbol: r.toSymbol,
+              line: r.line,
+              contentHash,
+            });
+          }
+          // Per-file facts (endpoints/crons) so blast reads from file_facts
+          // instead of re-parsing the clone (T3 blast migration).
+          const endpoints = extractEndpoints(source);
+          const crons = extractCrons(source);
+          if (endpoints.length > 0 || crons.length > 0) {
+            factsBuf.push({ filePath: relPath, endpoints, crons });
+          }
+          filesIndexed += 1;
+        } catch (err) {
+          filesSkipped += 1;
+          recordParseDegraded(parseDegraded, relPath, asMessage(err));
+        }
+      });
+    }
+
+    await parseQ.onIdle();
+
+    // Persist phase -------------------------------------------------------
+    // Delete-then-insert is the idempotent shape blast already uses. Keeps
+    // the new UNIQUE index (symbols_repo_path_name_kind_line_uq) happy.
+    await repository.deleteAllForRepo(repoId);
+    await repository.insertSymbols(symbolsBuf);
+    await repository.insertReferences(refsBuf);
+
+    // --- T3: graph → resolve → rank → repo-map → facts -------------------
+    // Skipped when the soft budget tripped: we're already over time, and the
+    // graph build would blow past the hard cap. status then stays 'partial'.
+    let graphFailed: string | undefined;
+    let edgeRows: IndexerEdgeRow[] = [];
+    let rankCount = 0;
+    if (!softBudgetReached) {
       try {
-        source = await readFile(join(repo.clonePath!, relPath), 'utf8');
+        const edges = await container.depgraph.buildEdges(repo.clonePath, walk.files);
+        edgeRows = edges.map((e) => ({ fromFile: e.from, toFile: e.to }));
       } catch (err) {
-        filesSkipped += 1;
-        recordParseDegraded(parseDegraded, relPath, asMessage(err));
-        return;
+        graphFailed = asMessage(err);
       }
-      const contentHash = sha1(source);
-      // Per-file watchdog — a single pathological file shouldn't burn the
-      // whole budget. parseSymbols/References are synchronous, so we wrap
-      // them in Promise.resolve and race the timeout.
-      try {
-        const parsed = await withTimeout(
-          Promise.resolve().then(() => ({
-            symbols: parseSymbols(relPath, source),
-            references: parseReferences(relPath, source),
-          })),
-          MAX_PARSE_MS_PER_FILE,
+      await repository.replaceEdges(repoId, edgeRows);
+
+      // Resolve references.decl_file via the fresh graph. Full index inserts
+      // rows with NULL decl_file, so no reset is needed (step 5).
+      await repository.resolveReferences(repoId, { reset: false });
+
+      // Rank (PageRank only; hotness=0 — Option B).
+      const rankRows = computeFileRank(walk.files, edgeRows);
+      rankCount = rankRows.length;
+      await repository.replaceFileRank(repoId, rankRows);
+
+      // Repo-map render → cache. Drop stale entries (prior SHAs) first.
+      const candidates = await repository.getRepoMapCandidates(repoId);
+      const map = renderRepoMap(candidates, container.tokenizer, DEFAULT_REPO_MAP_TOKEN_BUDGET);
+      await repository.deleteRepoMapCache(repoId);
+      if (currentSha) {
+        await repository.putRepoMapCache(
+          repoId,
+          currentSha,
+          DEFAULT_REPO_MAP_TOKEN_BUDGET,
+          map.text,
+          map.tokens,
         );
-        for (const s of parsed.symbols) {
-          symbolsBuf.push({
-            repoId,
-            path: relPath,
-            name: s.name,
-            kind: s.kind,
-            line: s.line,
-            endLine: s.endLine,
-            exported: s.exported,
-            signature: s.signature,
-            contentHash,
-          });
-        }
-        for (const r of parsed.references) {
-          refsBuf.push({
-            repoId,
-            fromPath: relPath,
-            toSymbol: r.toSymbol,
-            line: r.line,
-            contentHash,
-          });
-        }
-        // Per-file facts (endpoints/crons) so blast reads from file_facts
-        // instead of re-parsing the clone (T3 blast migration).
-        const endpoints = extractEndpoints(source);
-        const crons = extractCrons(source);
-        if (endpoints.length > 0 || crons.length > 0) {
-          factsBuf.push({ filePath: relPath, endpoints, crons });
-        }
-        filesIndexed += 1;
-      } catch (err) {
-        filesSkipped += 1;
-        recordParseDegraded(parseDegraded, relPath, asMessage(err));
       }
+
+      // Per-file facts (endpoints/crons) for the blast facade.
+      await repository.replaceFileFacts(repoId, factsBuf);
+    }
+
+    // Clean pass → 'full'. Any degradation (soft budget, graph failure, or a
+    // parse error) keeps it honestly 'partial'.
+    const clean = !softBudgetReached && !graphFailed && parseDegraded.length === 0;
+    const status: IndexStatus = clean ? 'full' : 'partial';
+    const stats: Record<string, unknown> = {
+      ...walk.stats,
+      filesSeen: walk.files.length,
+      symbolsWritten: symbolsBuf.length,
+      referencesWritten: refsBuf.length,
+      edgesWritten: edgeRows.length,
+      ranked: rankCount,
+      factsWritten: factsBuf.length,
+      hotnessAvailable: false, // Option B — rank = pagerank only
+      ...(graphFailed ? { graphFailed } : {}),
+      softBudgetReached,
+      parseDegraded,
+      durationMs: Date.now() - startedAt,
+    };
+
+    await repository.upsertIndexState({
+      repoId,
+      lastIndexedSha: currentSha,
+      indexerVersion: INDEXER_VERSION,
+      status,
+      filesIndexed,
+      filesSkipped,
+      stats,
     });
+
+    return {
+      status,
+      filesIndexed,
+      filesSkipped,
+      durationMs: Date.now() - startedAt,
+      reason: softBudgetReached ? 'soft_budget' : graphFailed ? 'graph_failed' : undefined,
+    };
+  } catch (err) {
+    // Stamp the failure so a crashed index stops looking like one that never
+    // ran, then re-throw so JobRunner still records the job as failed.
+    //
+    // The previous row's facts are carried forward on purpose: upsertIndexState
+    // writes every column, so zeroing here would erase `lastIndexedSha` — the
+    // sha blast resolves every rendered line number against. A failed re-index
+    // costs the status, never the record of what the last good pass saw.
+    const prev = await repository.tryGetIndexState(repoId);
+    await safePersist(
+      repository,
+      repoId,
+      prev?.lastIndexedSha ?? '',
+      'failed',
+      prev?.filesIndexed ?? 0,
+      prev?.filesSkipped ?? 0,
+      {
+        reason: 'index_failed',
+        degradedReason: 'index_failed',
+        error: asMessage(err),
+        durationMs: Date.now() - startedAt,
+      },
+    );
+    throw err;
   }
-
-  await parseQ.onIdle();
-
-  // Persist phase -------------------------------------------------------
-  // Delete-then-insert is the idempotent shape blast already uses. Keeps
-  // the new UNIQUE index (symbols_repo_path_name_kind_line_uq) happy.
-  await repository.deleteAllForRepo(repoId);
-  await repository.insertSymbols(symbolsBuf);
-  await repository.insertReferences(refsBuf);
-
-  // --- T3: graph → resolve → rank → repo-map → facts -------------------
-  // Skipped when the soft budget tripped: we're already over time, and the
-  // graph build would blow past the hard cap. status then stays 'partial'.
-  let graphFailed: string | undefined;
-  let edgeRows: IndexerEdgeRow[] = [];
-  let rankCount = 0;
-  if (!softBudgetReached) {
-    try {
-      const edges = await container.depgraph.buildEdges(repo.clonePath, walk.files);
-      edgeRows = edges.map((e) => ({ fromFile: e.from, toFile: e.to }));
-    } catch (err) {
-      graphFailed = asMessage(err);
-    }
-    await repository.replaceEdges(repoId, edgeRows);
-
-    // Resolve references.decl_file via the fresh graph. Full index inserts
-    // rows with NULL decl_file, so no reset is needed (step 5).
-    await repository.resolveReferences(repoId, { reset: false });
-
-    // Rank (PageRank only; hotness=0 — Option B).
-    const rankRows = computeFileRank(walk.files, edgeRows);
-    rankCount = rankRows.length;
-    await repository.replaceFileRank(repoId, rankRows);
-
-    // Repo-map render → cache. Drop stale entries (prior SHAs) first.
-    const candidates = await repository.getRepoMapCandidates(repoId);
-    const map = renderRepoMap(candidates, container.tokenizer, DEFAULT_REPO_MAP_TOKEN_BUDGET);
-    await repository.deleteRepoMapCache(repoId);
-    if (currentSha) {
-      await repository.putRepoMapCache(
-        repoId,
-        currentSha,
-        DEFAULT_REPO_MAP_TOKEN_BUDGET,
-        map.text,
-        map.tokens,
-      );
-    }
-
-    // Per-file facts (endpoints/crons) for the blast facade.
-    await repository.replaceFileFacts(repoId, factsBuf);
-  }
-
-  // Clean pass → 'full'. Any degradation (soft budget, graph failure, or a
-  // parse error) keeps it honestly 'partial'.
-  const clean = !softBudgetReached && !graphFailed && parseDegraded.length === 0;
-  const status: IndexStatus = clean ? 'full' : 'partial';
-  const stats: Record<string, unknown> = {
-    ...walk.stats,
-    filesSeen: walk.files.length,
-    symbolsWritten: symbolsBuf.length,
-    referencesWritten: refsBuf.length,
-    edgesWritten: edgeRows.length,
-    ranked: rankCount,
-    factsWritten: factsBuf.length,
-    hotnessAvailable: false, // Option B — rank = pagerank only
-    ...(graphFailed ? { graphFailed } : {}),
-    softBudgetReached,
-    parseDegraded,
-    durationMs: Date.now() - startedAt,
-  };
-
-  await repository.upsertIndexState({
-    repoId,
-    lastIndexedSha: currentSha,
-    indexerVersion: INDEXER_VERSION,
-    status,
-    filesIndexed,
-    filesSkipped,
-    stats,
-  });
-
-  return {
-    status,
-    filesIndexed,
-    filesSkipped,
-    durationMs: Date.now() - startedAt,
-    reason: softBudgetReached ? 'soft_budget' : graphFailed ? 'graph_failed' : undefined,
-  };
 }
 
 function recordParseDegraded(buf: ParseDegradedEntry[], file: string, reason: string): void {
@@ -310,7 +341,7 @@ async function safePersist(
   repository: RepoIntelRepository,
   repoId: string,
   sha: string,
-  status: 'partial' | 'degraded',
+  status: 'partial' | 'degraded' | 'failed',
   filesIndexed: number,
   filesSkipped: number,
   stats: Record<string, unknown>,
@@ -326,8 +357,9 @@ async function safePersist(
       stats,
     });
   } catch {
-    // Persistence failure during early-exit path — never throw out of the
-    // top-level handler; the next run will re-stamp the row.
+    // Persistence failure on an early-exit or failure-stamp path — never throw
+    // out of the top-level handler; the next run will re-stamp the row. On the
+    // failure path this is what keeps the original error the one that escapes.
   }
 }
 

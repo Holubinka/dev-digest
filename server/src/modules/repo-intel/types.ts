@@ -179,6 +179,12 @@ export interface RepoIntel {
   refreshIndex(repoId: string): Promise<IndexResult>;
   /** Current index state — ALWAYS works, even degraded. */
   getIndexState(repoId: string): Promise<IndexState>;
+  /**
+   * How many files the index holds, as opposed to `IndexState.filesIndexed`,
+   * which accumulates across incremental passes. Callers sizing work to the
+   * repository want this one.
+   */
+  countIndexedFiles(repoId: string): Promise<number>;
 
   // --- Reads --------------------------------------------------------------
   getBlastRadius(repoId: string, changedFiles: string[]): Promise<BlastResult>;

@@ -9,6 +9,8 @@ import {
   SmartDiff,
   Conformance,
   Onboarding,
+  OnboardingDraft,
+  OnboardingSectionKind,
   EvalRun,
   MemoryItem,
   RunTrace,
@@ -20,6 +22,7 @@ import {
   RiskBriefTimeline,
   ReviewRecord,
 } from '@devdigest/shared';
+import { MAX_ENV_VARS } from '../src/modules/onboarding/constants.js';
 
 /**
  * Contract tests — parse/round-trip the fixtures from data.jsx/data2.jsx
@@ -127,18 +130,14 @@ describe('AI contracts parse fixtures', () => {
     expect(d.groups[0]!.role).toBe('core');
   });
 
-  it('Conformance / Onboarding / EvalRun / MemoryItem', () => {
+  // Onboarding moved to its own block below: it is no longer a one-line fixture.
+  it('Conformance / EvalRun / MemoryItem', () => {
     expect(() =>
       Conformance.parse({
         spec_id: 's1',
         spec_title: 'Spec',
         items: [{ requirement: 'r', status: 'implemented' }],
         completeness_pct: 80,
-      }),
-    ).not.toThrow();
-    expect(() =>
-      Onboarding.parse({
-        sections: [{ kind: 'architecture', title: 'T', body: 'b', links: [] }],
       }),
     ).not.toThrow();
     expect(() =>
@@ -198,6 +197,530 @@ describe('AI contracts parse fixtures', () => {
     });
     expect(legacy.stats.cost_usd).toBeNull();
     expect(legacy.project_context).toEqual([]);
+  });
+});
+
+/**
+ * Onboarding Tour (12) — what one generation produces, before anything persists it.
+ *
+ * The enums are what stop the model's free string from reaching the page as a
+ * section the layout has no branch for, or as a complexity badge that is
+ * `Medium` on one generation and `medium` on the next. The closed lists are
+ * REJECTED against, never normalised, so each negative case below is a claim
+ * about one item being dropped rather than about the shape being repaired.
+ */
+describe('Onboarding tour contracts', () => {
+  const draft = {
+    sections: [
+      {
+        kind: 'architecture',
+        title: 'Архітектура',
+        body: 'Сервер на Fastify у `server/src`, клієнт у `client/src`.',
+        diagram: 'graph TD;\n  client --> server;',
+        links: [{ label: 'Композиційний корінь', path: 'server/src/platform/container.ts' }],
+        verified_paths: ['server/src/platform/container.ts'],
+        state: 'ready',
+        empty_reason: null,
+      },
+      {
+        kind: 'critical_paths',
+        title: 'Критичні шляхи',
+        body: 'Імпорт PR починається в `server/src/modules/pulls/routes.ts`.',
+        links: [],
+        verified_paths: ['server/src/modules/pulls/routes.ts'],
+        state: 'ready',
+        empty_reason: null,
+      },
+      {
+        kind: 'how_to_run',
+        title: 'Як запустити',
+        body: 'Кожен пакет має власний менеджер.',
+        links: [],
+        verified_paths: [],
+        state: 'ready',
+        empty_reason: null,
+      },
+      {
+        kind: 'reading_path',
+        title: 'Порядок читання',
+        body: 'Почни з композиційного кореня.',
+        links: [],
+        verified_paths: [],
+        state: 'ready',
+        empty_reason: null,
+      },
+      {
+        kind: 'first_tasks',
+        title: 'Перші задачі',
+        body: '',
+        links: [],
+        verified_paths: [],
+        state: 'empty',
+        empty_reason: 'no_tasks',
+      },
+    ],
+    flows: [
+      {
+        title: 'Імпорт pull request',
+        steps: [
+          { path: 'server/src/modules/pulls/routes.ts', note: 'Приймає номер PR.' },
+          { path: 'server/src/modules/pulls/service.ts', note: 'Тягне метадані.' },
+        ],
+      },
+    ],
+    reading_path: [
+      { path: 'server/src/platform/container.ts', reason: 'Тут будується весь граф.' },
+    ],
+    tasks: [
+      {
+        title: 'Додати лічильник до аудиту',
+        path: 'server/src/modules/onboarding/constants.ts',
+        why: 'Стелі стартові й переглядаються з чисел.',
+        complexity: 'medium',
+        steps: [
+          {
+            text: 'Додай константу поруч із рештою стель.',
+            path: 'server/src/modules/onboarding/constants.ts',
+            command: null,
+          },
+          // A step that names neither: `null` twice, and the step is still a
+          // step. This is the shape a grounded answer most often has.
+          { text: 'Перевір, що лічильник видно в аудиті.', path: null, command: null },
+          {
+            text: 'Прожени юніт-тести пакета.',
+            path: null,
+            command: 'pnpm db:migrate',
+          },
+        ],
+        impact: 'Аудит генерації та тест, що читає ті самі ключі.',
+        verification: 'Новий ключ видно у відповіді GET /repos/:id/onboarding.',
+      },
+    ],
+    // Repo-level preconditions, each authorised by a file of this repository:
+    // `cp` by the `.env.example` it reads from, `docker compose` by the file that
+    // declares the service it starts. Neither is expressible as a package script,
+    // which is why they are not in a package block.
+    setup_commands: [
+      {
+        command: 'cp server/.env.example server/.env',
+        why: 'Сервер читає конфіг із власного .env.',
+        source_path: 'server/.env.example',
+      },
+      {
+        command: 'docker compose up -d postgres',
+        why: 'У Docker живе лише Postgres; API і веб — на хості.',
+        source_path: 'docker-compose.yml',
+      },
+    ],
+    packages: [
+      {
+        name: '@devdigest/api',
+        path: 'server',
+        manager: 'pnpm',
+        install_command: 'pnpm install',
+        commands: [
+          { script: 'db:migrate', command: 'pnpm db:migrate', why: 'Міграції не йдуть на старті.' },
+        ],
+      },
+      // A package whose lock files name no single manager: the block stays, the
+      // commands do not. `null` is the answer, not a default to `npm`.
+      { name: 'legacy', path: 'legacy', manager: null, install_command: null, commands: [] },
+    ],
+    env_vars: [{ name: 'DATABASE_URL', source_path: 'server/.env.example' }],
+    env_vars_truncated: false,
+    package_scan: {
+      depth: 2,
+      excluded_dirs: ['node_modules', 'dist', 'vendor'],
+      found: 6,
+      shown: 6,
+      bounded: false,
+    },
+    inputs: [
+      { id: 'repo_map', status: 'included', tokens: 5_200, detail: null, omitted: [], shortened: [] },
+      {
+        id: 'file_samples',
+        status: 'truncated',
+        tokens: 12_400,
+        detail: '20 files',
+        // `detail` counts what arrived; this names what did not.
+        omitted: ['client/src/lib/api.ts'],
+        shortened: [],
+      },
+      // Nothing of a dropped input shipped, so neither array can name anything:
+      // `omitted` is about the items of an input that partly arrived.
+      { id: 'project_docs', status: 'dropped', tokens: 0, detail: 'over budget', omitted: [], shortened: [] },
+    ],
+    dropped: {
+      unknown_path: 2,
+      unknown_script: 1,
+      manager_mismatch: 1,
+      unknown_complexity: 1,
+      unknown_section: 1,
+    },
+    sample_files: 20,
+    sample_truncated: true,
+    chains_supplied: 20,
+    longest_chain_files: 5,
+    budget: 32_528,
+    input_tokens_counted: 21_840,
+    system_tokens: 1_180,
+    tokenizer: 'cl100k_base',
+    attempts: 2,
+    tokens_in: 22_110,
+    duration_ms: 104_216,
+    provider: 'openrouter',
+    model: 'deepseek/deepseek-v4-flash',
+    cost_usd: 0.004,
+  };
+
+  it('OnboardingDraft round-trips one generation', () => {
+    const parsed = OnboardingDraft.parse(draft);
+    expect(parsed.sections.map((s) => s.kind)).toEqual(OnboardingSectionKind.options);
+    expect(parsed.dropped.unknown_section).toBe(1);
+    expect(parsed.package_scan.found).toBe(6);
+    expect(parsed.packages[1]!.manager).toBeNull();
+    expect(parsed.setup_commands.map((c) => c.source_path)).toEqual([
+      'server/.env.example',
+      'docker-compose.yml',
+    ]);
+    expect(parsed.tokenizer).toBe('cl100k_base');
+    expect(parsed.attempts).toBe(2);
+    expect(parsed.cost_usd).toBe(0.004);
+    // SPEC-04's four: what was supplied, what the prompt cost on its own, and
+    // how long the one call took. `budget` is now computed per index rather
+    // than constant, which is why it is no longer 24 000 here.
+    expect(parsed.chains_supplied).toBe(20);
+    expect(parsed.longest_chain_files).toBe(5);
+    expect(parsed.system_tokens).toBe(1_180);
+    expect(parsed.duration_ms).toBe(104_216);
+    expect(parsed.budget).toBe(32_528);
+  });
+
+  /**
+   * A task is what the window draws, and R5 says it draws nothing that is not in
+   * this contract. So the shape is asserted rather than assumed: three steps,
+   * each with both keys present, and `null` — not absence — for the step that
+   * names no file and no command.
+   */
+  it('a task carries its steps, impact and verification, and a step names null rather than nothing', () => {
+    const parsed = OnboardingDraft.parse(draft);
+    const task = parsed.tasks[0]!;
+    expect(task.steps).toHaveLength(3);
+    expect(task.steps[0]!.path).toBe('server/src/modules/onboarding/constants.ts');
+    expect(task.steps[0]!.command).toBeNull();
+    expect(task.steps[1]).toEqual({
+      text: 'Перевір, що лічильник видно в аудиті.',
+      path: null,
+      command: null,
+    });
+    expect(task.steps[2]!.command).toBe('pnpm db:migrate');
+    expect(task.impact).toBe('Аудит генерації та тест, що читає ті самі ключі.');
+    expect(task.verification).toBe('Новий ключ видно у відповіді GET /repos/:id/onboarding.');
+
+    // A step key that is present-and-null is not the same claim as an absent
+    // one, and only the first parses: `.nullable()`, never `.optional()`.
+    const { path: _absent, ...noPathKey } = task.steps[1]!;
+    expect(() =>
+      OnboardingDraft.parse({ ...draft, tasks: [{ ...draft.tasks[0]!, steps: [noPathKey] }] }),
+    ).toThrow();
+  });
+
+  /**
+   * `omitted` and `shortened` are the record's answer to "why is this section
+   * thin": one names the items of a per-item input that did not ship, the other
+   * the documents that shipped with their tail cut. A document can be in both —
+   * cut and then dropped is not a state, but cut while another was dropped is.
+   */
+  it('an input row names what did not ship and what arrived shortened', () => {
+    const parsed = OnboardingDraft.parse(draft);
+    expect(parsed.inputs[1]!.omitted).toEqual(['client/src/lib/api.ts']);
+    expect(parsed.inputs[1]!.shortened).toEqual([]);
+
+    const withCutDoc = OnboardingDraft.parse({
+      ...draft,
+      inputs: [
+        {
+          id: 'project_docs',
+          status: 'truncated',
+          tokens: 6_100,
+          detail: '6 of 7 documents',
+          omitted: ['e2e/README.md'],
+          shortened: ['README.md'],
+        },
+      ],
+    });
+    expect(withCutDoc.inputs[0]!.shortened).toEqual(['README.md']);
+    expect(withCutDoc.inputs[0]!.omitted).toEqual(['e2e/README.md']);
+  });
+
+  /**
+   * `.optional()` and `.nullable()` are different claims — absent versus
+   * present-and-null — and R30 turns on the first. A section with no diagram has
+   * the KEY MISSING, so a renderer may ask `'diagram' in section` and get a
+   * truthful answer; `""` would render as a broken frame instead of no frame.
+   */
+  it('diagram is absent on a section without one, never an empty string', () => {
+    const parsed = OnboardingDraft.parse(draft);
+    expect(parsed.sections[0]!.diagram).toBe('graph TD;\n  client --> server;');
+    expect('diagram' in parsed.sections[1]!).toBe(false);
+    expect(parsed.sections[4]!.state).toBe('empty');
+    expect(parsed.sections[4]!.empty_reason).toBe('no_tasks');
+    // `empty_reason` is nullable, not optional: the key is present on a ready
+    // section too, holding null. Omitting it is not the same claim.
+    const { empty_reason: _dropped, ...noReason } = draft.sections[0]!;
+    expect(() =>
+      OnboardingDraft.parse({ ...draft, sections: [noReason, ...draft.sections.slice(1)] }),
+    ).toThrow();
+  });
+
+  /**
+   * Both rejected kinds are LITERALS FROM THIS REPOSITORY, not invented examples:
+   * `routes_and_apis` is named twice in `server/src/prompts/onboarding.system.md`,
+   * and `gotchas` comes from `client/messages/en/onboarding.json:10` ("conventions
+   * & gotchas"). Both are scaffolding written before the feature was ordered, and
+   * both are exactly what a sixth section would arrive wearing.
+   */
+  it('a section kind from the repo scaffolding — routes_and_apis, gotchas — is rejected', () => {
+    for (const kind of ['routes_and_apis', 'gotchas']) {
+      expect(() =>
+        OnboardingDraft.parse({
+          ...draft,
+          sections: [{ ...draft.sections[0]!, kind }, ...draft.sections.slice(1)],
+        }),
+      ).toThrow();
+    }
+  });
+
+  it('a fourth complexity, a fifth manager and a fractional counter are rejected', () => {
+    expect(() =>
+      OnboardingDraft.parse({
+        ...draft,
+        tasks: [{ ...draft.tasks[0]!, complexity: 'trivial' }],
+      }),
+    ).toThrow();
+    expect(() =>
+      OnboardingDraft.parse({
+        ...draft,
+        packages: [{ ...draft.packages[0]!, manager: 'deno' }],
+      }),
+    ).toThrow();
+    expect(() =>
+      OnboardingDraft.parse({
+        ...draft,
+        dropped: { ...draft.dropped, unknown_path: 2.5 },
+      }),
+    ).toThrow();
+    expect(() =>
+      OnboardingDraft.parse({
+        ...draft,
+        inputs: [{ id: 'sample_files', status: 'included', tokens: 1, detail: null }],
+      }),
+    ).toThrow();
+    expect(() => OnboardingDraft.parse({ ...draft, tokenizer: 'o200k_base' })).toThrow();
+  });
+
+  /**
+   * THE SEAM. The slice that persists builds its record as
+   * `OnboardingDraft.extend({ generated_at, index_state })`, and Zod's `.extend()`
+   * OVERWRITES on a key collision. So the extension is safe only while this shape
+   * owns neither key — that is a property of this object, asserted here, not an
+   * agreement between two plans.
+   *
+   * It is asserted on `Object.keys(shape)` rather than by parsing, because Zod
+   * STRIPS an unknown key instead of rejecting it: a stamp added here would fail
+   * no parse, throw no exception and break no type in either package. Nothing
+   * else in this repository would ever say it happened.
+   */
+  it('OnboardingDraft carries no stamp — .extend({ generated_at, index_state }) cannot collide', () => {
+    const keys = Object.keys(OnboardingDraft.shape);
+    expect(keys).toContain('dropped');
+    expect(keys).toContain('package_scan');
+    expect(keys).not.toContain('generated_at');
+    expect(keys).not.toContain('index_state');
+  });
+
+  /**
+   * A setup command is a line a reader copies and runs, so the field that makes
+   * it checkable is not decoration: without `source_path` there is no file to
+   * prove the command against, and `cp .env.example .env` for a repository that
+   * has no `.env.example` is indistinguishable from one that does. Required, not
+   * optional — an optional authorisation is no authorisation.
+   */
+  it('a setup command without its authorising source_path is rejected', () => {
+    const { source_path: _none, ...unauthorised } = draft.setup_commands[0]!;
+    expect(() =>
+      OnboardingDraft.parse({ ...draft, setup_commands: [unauthorised] }),
+    ).toThrow();
+  });
+
+  /**
+   * A cut env list has to say it was cut. This is not hypothetical arithmetic:
+   * `server/.env.example` in THIS repository declares 13 keys against a ceiling of
+   * `MAX_ENV_VARS` = 12, so the repository the feature is demonstrated on is
+   * already one over, and without the flag its tour would show twelve variables
+   * with nothing to distinguish that from all of them.
+   *
+   * Raising the ceiling would not fix it — it would move the cliff to a repository
+   * with 25 variables and keep the silence. The flag is the fix, and it is
+   * `sample_truncated`'s shape rather than a new one. Grounding sets it (P4); what
+   * this asserts is that the shape leaves no way to stay quiet.
+   */
+  it('a cut env list must say so — env_vars_truncated is required, not optional', () => {
+    const atCeiling = Array.from({ length: MAX_ENV_VARS }, (_, i) => ({
+      name: `VAR_${i}`,
+      source_path: 'server/.env.example',
+    }));
+    const cut = OnboardingDraft.parse({
+      ...draft,
+      env_vars: atCeiling,
+      env_vars_truncated: true,
+    });
+    expect(cut.env_vars).toHaveLength(MAX_ENV_VARS);
+    expect(cut.env_vars_truncated).toBe(true);
+
+    const { env_vars_truncated: _silent, ...noFlag } = draft;
+    expect(() => OnboardingDraft.parse(noFlag)).toThrow();
+  });
+
+  /** `Onboarding` is the content half: the draft's audit numbers are not part of it. */
+  it('Onboarding parses the content half and drops the generation numbers', () => {
+    const tour = Onboarding.parse(draft);
+    expect(tour.sections).toHaveLength(5);
+    // Setup commands are content — they are drawn — while the numbers below
+    // describe the generation and stop at the draft.
+    expect(tour.setup_commands).toHaveLength(2);
+    // The truncation flag is content too — it is drawn beside the list it
+    // describes, unlike `sample_truncated`, which only ever reaches a log.
+    expect(tour.env_vars_truncated).toBe(false);
+    expect(tour).not.toHaveProperty('dropped');
+    expect(tour).not.toHaveProperty('tokenizer');
+  });
+
+  /**
+   * THE READ PATH, not the write one. A tour lives in a `jsonb` column and is
+   * parsed on the way back out (`modules/onboarding/repository.ts`), so a count
+   * or an array ADDED to this contract later is one that is ABSENT from every
+   * document already stored. Without a `.default()` those documents stop
+   * parsing, the repository degrades the failure to `null`, and the page says
+   * "nothing generated yet, press Generate" about a tour that is whole in the
+   * database and was paid for once.
+   *
+   * So the assertion is about a version of this contract that does not exist
+   * yet: strip every count and every array, exactly as a document written
+   * before them would lack them, and the parse must still succeed — with zeros
+   * and empty lists, never with a plausible number.
+   */
+  it('a document written before the counts and arrays existed parses to zeros and empty lists', () => {
+    const {
+      sections: _sections,
+      flows: _flows,
+      reading_path: _readingPath,
+      tasks: _tasks,
+      setup_commands: _setupCommands,
+      packages: _packages,
+      env_vars: _envVars,
+      inputs: _inputs,
+      sample_files: _sampleFiles,
+      chains_supplied: _chainsSupplied,
+      longest_chain_files: _longestChainFiles,
+      budget: _budget,
+      input_tokens_counted: _inputTokensCounted,
+      system_tokens: _systemTokens,
+      attempts: _attempts,
+      tokens_in: _tokensIn,
+      duration_ms: _durationMs,
+      cost_usd: _costUsd,
+      ...older
+    } = draft;
+
+    const parsed = OnboardingDraft.parse({
+      ...older,
+      // The two nested shapes, stripped the same way: only the boolean the
+      // package walk cannot default survives.
+      package_scan: { bounded: false },
+      dropped: {},
+    });
+
+    expect(parsed.sections).toEqual([]);
+    expect(parsed.flows).toEqual([]);
+    expect(parsed.reading_path).toEqual([]);
+    expect(parsed.tasks).toEqual([]);
+    expect(parsed.setup_commands).toEqual([]);
+    expect(parsed.packages).toEqual([]);
+    expect(parsed.env_vars).toEqual([]);
+    expect(parsed.inputs).toEqual([]);
+    expect(parsed.package_scan).toEqual({
+      depth: 0,
+      excluded_dirs: [],
+      found: 0,
+      shown: 0,
+      bounded: false,
+    });
+    expect(parsed.dropped).toEqual({
+      unknown_path: 0,
+      unknown_script: 0,
+      manager_mismatch: 0,
+      unknown_complexity: 0,
+      unknown_section: 0,
+    });
+    expect(parsed.sample_files).toBe(0);
+    expect(parsed.chains_supplied).toBe(0);
+    expect(parsed.longest_chain_files).toBe(0);
+    expect(parsed.budget).toBe(0);
+    expect(parsed.input_tokens_counted).toBe(0);
+    expect(parsed.system_tokens).toBe(0);
+    expect(parsed.attempts).toBe(0);
+    expect(parsed.tokens_in).toBe(0);
+    expect(parsed.duration_ms).toBe(0);
+    // `cost_usd` defaults to `null`, not `0`: "the provider quoted no price" and
+    // "the generation was free" are different facts, and this field already has
+    // a member for the first one.
+    expect(parsed.cost_usd).toBeNull();
+  });
+
+  /**
+   * The same obligation one level down. A field is added to `OnboardingSection`
+   * as readily as to the draft, and a section, a flow or a package block that
+   * fails to parse fails the WHOLE document — the array it sits in is not
+   * salvaged item by item on read.
+   */
+  it('a section, a flow and a package block predating their arrays parse the same way', () => {
+    const parsed = OnboardingDraft.parse({
+      ...draft,
+      sections: [
+        {
+          kind: 'architecture',
+          title: 'Архітектура',
+          body: 'Сервер на Fastify у `server/src`.',
+          state: 'ready',
+          empty_reason: null,
+        },
+      ],
+      flows: [{ title: 'Імпорт PR' }],
+      packages: [{ name: 'server', path: 'server', manager: 'pnpm', install_command: null }],
+      // A task and an input row exactly as SPEC-03 wrote them: four keys and
+      // four keys. Both sit inside arrays that are not salvaged item by item,
+      // so either one failing takes the whole stored tour with it.
+      tasks: [
+        {
+          title: 'Додати лічильник',
+          path: 'server/src/modules/onboarding/constants.ts',
+          why: 'Стелі переглядаються з чисел.',
+          complexity: 'low',
+        },
+      ],
+      inputs: [{ id: 'repo_map', status: 'included', tokens: 5_200, detail: null }],
+    });
+
+    expect(parsed.sections[0]!.links).toEqual([]);
+    expect(parsed.sections[0]!.verified_paths).toEqual([]);
+    expect(parsed.flows[0]!.steps).toEqual([]);
+    expect(parsed.packages[0]!.commands).toEqual([]);
+    expect(parsed.tasks[0]!.steps).toEqual([]);
+    expect(parsed.tasks[0]!.impact).toBe('');
+    expect(parsed.tasks[0]!.verification).toBe('');
+    expect(parsed.inputs[0]!.omitted).toEqual([]);
+    expect(parsed.inputs[0]!.shortened).toEqual([]);
   });
 });
 
