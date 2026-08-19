@@ -1,13 +1,99 @@
 {
   "title": "Onboarding Tour",
-  "sections": "Sections",
-  "sectionCount": "{count} sections",
+  "headingPrefix": "Onboarding for ",
+  "provenance": "Generated from index of {count, plural, one {# file} other {# files}} · last refreshed {ago} ago",
+  "provenanceJustNow": "Generated from index of {count, plural, one {# file} other {# files}} · refreshed just now",
+  "onThisPage": "ON THIS PAGE",
   "regenerate": "Regenerate",
   "regenerating": "Regenerating…",
+  "shareLink": "Share link",
+  "shareCopied": "Link copied",
   "unknownError": "Unknown error",
+  "open": "Open",
+  "openAria": "Open {path} on GitHub",
+  "copy": "Copy",
+  "copied": "Copied",
+  "copyCommand": "Copy the command {command}",
+  "diagramNote": "The diagram is how the model described this system. Its boxes are labels, not verified files, and none of them opens anything.",
+  "commandsFromRepo": "Every command here comes from this repository's own manifests and config files. DevDigest shows them; it never runs them.",
+  "setup": {
+    "title": "Set up the clone",
+    "note": "Run these once for the whole repository, before any package's commands below."
+  },
+  "sourceFile": "from {path}",
+  "envVars": {
+    "title": "Environment variables",
+    "note": "Named in the configuration files this run read. Only the names — no value is read, stored or shown.",
+    "truncated": "This list was cut at its ceiling: the repository names more variables than are shown here."
+  },
+  "noPackages": "No package manifests were found. The scan went {count, plural, one {# directory} other {# directories}} deep.",
+  "noPackagesExcluded": "Directories skipped: {excluded}.",
+  "packagesHidden": "{count, plural, one {# more package was found and is not shown here} other {# more packages were found and are not shown here}}",
+  "task": {
+    "why": "Why this task",
+    "steps": "Steps",
+    "impact": "What this change touches",
+    "verification": "How you know it is done",
+    "close": "Close"
+  },
+  "section": {
+    "architecture": "Architecture overview",
+    "criticalPaths": "Critical paths",
+    "howToRun": "How to run locally",
+    "readingPath": "Guided reading path",
+    "firstTasks": "First tasks"
+  },
+  "empty": {
+    "architecture": "No architecture overview came back for this repository. Nothing is shown in its place.",
+    "critical_paths": "No critical paths. The import graph held no chain to walk, and highly-ranked files are not listed instead.",
+    "how_to_run": "Nothing about running this repository came back. No command is guessed for it.",
+    "reading_path": "No guided reading path. There were no ranked files to order, and none are invented to fill the list.",
+    "first_tasks": "No first tasks. Nothing survived the check that every task points at a file that exists."
+  },
+  "complexity": {
+    "low": "Low complexity",
+    "medium": "Medium complexity",
+    "high": "High complexity"
+  },
+  "refusal": {
+    "noIndex": {
+      "title": "No ready index for this repository",
+      "body": "A tour is written from an index of the repository, and there is no finished one here. Index the repository, then generate the tour."
+    },
+    "indexFailed": {
+      "title": "The last indexing pass failed",
+      "body": "The tour is written from the index, and the last pass did not finish. Look at why it failed, index again, then generate the tour."
+    },
+    "unsupportedLanguage": {
+      "title": "No files in a supported language",
+      "body": "Indexing finished but found no files DevDigest can read, so there is no source to describe. No tour is generated for this repository."
+    }
+  },
+  "notConfigured": "No model is configured for the Onboarding Tour, so there is nothing to generate it with.",
+  "notConfiguredLink": "Choose one in Settings → Models",
+  "stale": "This tour was built from index {tourSha}. The repository has been indexed again since, at {indexSha}. Nothing regenerates on its own.",
+  "partial": "{count, plural, one {This index is incomplete: # file was skipped, so the tour may not cover it.} other {This index is incomplete: # files were skipped, so the tour may not cover them.}}",
+  "generateIndexChanged": "The repository was indexed again while this tour was being written, so nothing was saved and the tour that was there is unchanged. Generating again builds it from the index as it is now.",
+  "generateFailed": "Generating a new tour failed. The tour below is the one that was already saved — it has not changed.",
+  "inputs": {
+    "title": "What went into this tour",
+    "status": {
+      "included": "Included",
+      "truncated": "Cut to fit",
+      "dropped": "Dropped",
+      "missing": "Not available"
+    },
+    "id": {
+      "repo_map": "Repository map",
+      "package_configs": "Package manifests",
+      "critical_paths": "Critical paths",
+      "file_samples": "File samples",
+      "project_docs": "Project documents"
+    }
+  },
   "generate": {
     "title": "Generate onboarding tour",
-    "body": "DevDigest indexes the repo and specs, then writes a 5-section guided tour: overview, architecture, key modules, getting started, and conventions & gotchas.",
+    "body": "DevDigest reads this repository's index and writes a five-section tour: an architecture overview, the critical paths through the code, how to run it locally, a guided reading path, and a set of first tasks.",
     "cta": "Generate onboarding tour",
     "generating": "Generating…"
   },

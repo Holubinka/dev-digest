@@ -84,3 +84,39 @@ export function readFailureReason(err: unknown): DocReadFailureReason | null {
       return null;
   }
 }
+
+/**
+ * The href a link in an untrusted document should actually carry, or
+ * `undefined` when it should render as plain text instead.
+ *
+ * `resolvePath` is the seam the Onboarding Tour needs and the Project Context
+ * pages do not: model prose can name a repo-relative path, and only the
+ * caller knows which of those the server proved to exist and what URL such a
+ * path becomes. Passing `null` is the whole of "I have no such notion", and it
+ * keeps the behaviour a document reader has had all along — a relative href is
+ * left exactly as written.
+ *
+ * The parameter is REQUIRED at the call site rather than optional with a
+ * `null` default: a prop that selects between two whole behaviours and carries
+ * a default is invisible to `tsc`, and this repo has shipped that bug twice
+ * (`client/INSIGHTS.md:340-361`, `:400-433`).
+ *
+ * Order matters. `isSafeUrl` runs FIRST and unconditionally, so no caller can
+ * hand a `javascript:` URL back through `resolvePath`; only what has already
+ * passed the protocol gate is offered to it, and only when it names no
+ * protocol at all.
+ */
+export function resolveHref(
+  href: string | undefined,
+  resolvePath: ((path: string) => string | undefined) | null,
+): string | undefined {
+  if (!isSafeUrl(href) || href === undefined) return undefined;
+  if (resolvePath === null) return href;
+  // `isSafeUrl` has already reduced this to two cases: an `http(s)` URL, or a
+  // string naming no scheme at all. The second is the repo-relative one, and
+  // the test runs over the cleaned value for the same reason `isSafeUrl` does
+  // — a scheme spelled with a TAB inside is still a scheme to a browser.
+  const cleaned = href.replace(/\p{Cc}/gu, "").trim();
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(cleaned)) return href;
+  return resolvePath(href);
+}

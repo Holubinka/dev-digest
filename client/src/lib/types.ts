@@ -80,6 +80,49 @@ export type {
   IntentFreshness,
 } from "@devdigest/shared";
 
+/**
+ * Onboarding Tour (SPEC-03) — the page envelope and everything the tour is made
+ * of. Types only, never the schemas: nothing on this screen validates, and
+ * importing the Zod object would put a parser in the client bundle that no call
+ * site runs.
+ *
+ * `OnboardingSectionKind` is the one the rest of the feature keys on — the
+ * section descriptor, the rail and the empty-state copy all index by it — so a
+ * rename in the contract becomes a compile error here rather than a section
+ * that quietly stops rendering.
+ *
+ * `OnboardingDraft`, `OnboardingDropped` and `OnboardingTokenizer` are
+ * deliberately NOT here. They ride inside the record and nothing on the page
+ * draws them; re-exporting a type no screen reads is how a "the client uses
+ * this" claim gets made by accident.
+ */
+export type {
+  OnboardingPage,
+  OnboardingRecord,
+  OnboardingIndexState,
+  OnboardingRefusal,
+  Onboarding,
+  OnboardingSection,
+  OnboardingSectionKind,
+  OnboardingSectionState,
+  OnboardingEmptyReason,
+  OnboardingLink,
+  OnboardingFlow,
+  OnboardingReadingStep,
+  OnboardingTask,
+  OnboardingTaskStep,
+  OnboardingTaskComplexity,
+  OnboardingPackageBlock,
+  OnboardingPackageManager,
+  OnboardingCommand,
+  OnboardingSetupCommand,
+  OnboardingEnvVar,
+  OnboardingPackageScan,
+  OnboardingInput,
+  OnboardingInputId,
+  OnboardingInputStatus,
+} from "@devdigest/shared";
+
 /** UI-only view model for a PR list row (derives display fields from PrMeta). */
 export interface PrRowView {
   number: number;

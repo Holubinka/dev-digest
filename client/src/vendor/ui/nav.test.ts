@@ -32,6 +32,38 @@ describe("nav — every g-shortcut is in both registries", () => {
   });
 });
 
+describe("nav — Onboarding Tour", () => {
+  const workspace = NAV.find((g) => g.section === "WORKSPACE")?.items ?? [];
+  const row = navItems.find((item) => item.key === "onboarding-tour");
+
+  it("sits in WORKSPACE with the key `activeKeyFor` and shell.json already use", () => {
+    // `key: "onboarding-tour"` is load-bearing twice over: `activeKeyFor()`
+    // returns it for a repo-scoped /onboarding path, and
+    // `messages/en/shell.json` holds `nav.onboarding-tour`. A different key
+    // leaves the row unhighlighted and its label untranslated.
+    expect(workspace.map((i) => i.key)).toContain("onboarding-tour");
+    expect(row?.href).toBe("/repos/:repoId/onboarding");
+  });
+
+  it("sits between Pull Requests and Project Context, the order the mockup fixes", () => {
+    // Placement, not presence. The sidebar renders this array in order, so the
+    // only thing that can hold the mockup's order is an index assertion —
+    // "the row exists" passes with it drawn last.
+    const keys = workspace.map((i) => i.key);
+    expect(keys.indexOf("pulls")).toBeLessThan(keys.indexOf("onboarding-tour"));
+    expect(keys.indexOf("onboarding-tour")).toBeLessThan(keys.indexOf("context"));
+  });
+
+  it("is reachable by `g o`, and the `?` modal says so", () => {
+    expect(row?.gKey).toBe("o");
+    expect(SHORTCUTS).toContainEqual({
+      keys: "g o",
+      label: "Go to Onboarding Tour",
+      group: "Navigation",
+    });
+  });
+});
+
 describe("nav — Project Context", () => {
   const row = navItems.find((item) => item.key === "context");
 
