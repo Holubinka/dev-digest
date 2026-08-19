@@ -1211,3 +1211,38 @@ describe('being in the clone is not being authorised', () => {
     });
   }
 });
+
+describe('the diagram is a drawing, not a way out of one', () => {
+  const arch = (diagram: string) => ({
+    kind: 'architecture' as const,
+    title: 'Архітектура',
+    body: 'Вхід у server/src/index.ts.',
+    diagram,
+    links: [],
+  });
+
+  it('drops a diagram that reaches outside itself, and counts it', () => {
+    // Measured against the repo's own mermaid 11.15.0 at `securityLevel: "strict"`:
+    // `@{ img: … }` renders `<image href>` into the SVG and mermaid calls
+    // `img.decode()` on it, so the request leaves on paint with no click; a `click`
+    // directive to an `http(s)` URL renders `<a href>` around the node with no `rel`
+    // and no `target`. Strict strips `javascript:` and `call`, and nothing else.
+    for (const diagram of [
+      'flowchart TD\n  A@{ img: "https://evil.example.com/p.png" }',
+      'flowchart TD\n  A --> B\n  click A "https://evil.example.com/x"',
+      'flowchart TD\n  A@{ icon: "fa:fa-bell" }',
+    ]) {
+      const result = groundOnboarding(response({ sections: [arch(diagram)] }), context());
+      expect(result.tour.sections[0]?.diagram, diagram).toBeUndefined();
+      expect(result.dropped.unknown_path, diagram).toBe(1);
+    }
+  });
+
+  it('keeps a diagram that only draws', () => {
+    const drawing = 'flowchart LR\n  A["api"] --> B["db"]';
+    const result = groundOnboarding(response({ sections: [arch(drawing)] }), context());
+
+    expect(result.tour.sections[0]?.diagram).toBe(drawing);
+    expect(result.dropped.unknown_path).toBe(0);
+  });
+});

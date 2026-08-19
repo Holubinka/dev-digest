@@ -23,8 +23,16 @@
 
    No box is a control. Nothing wraps the diagram in a link and nothing binds an
    `onClick`: the nodes are labels the model wrote, not paths anyone verified
-   (AC-13), and mermaid's own `click` directives are inert under the
-   `securityLevel: "strict"` the component initialises with. */
+   (AC-13).
+
+   This used to add that mermaid's own `click` directives are inert under
+   `securityLevel: "strict"`. They are not, and the correction matters more than
+   the claim did. Measured against mermaid 11.15.0: strict strips `javascript:`
+   and `call`, but `click A "https://host/x"` still renders `<a href>` around the
+   node with no `rel` and no `target`, and `A@{ img: … }` renders `<image href>`
+   that mermaid fetches on paint. What keeps this surface safe is the SERVER —
+   `groundSections` drops a diagram carrying either construct and counts it — not
+   anything the renderer does. */
 "use client";
 
 import React from "react";

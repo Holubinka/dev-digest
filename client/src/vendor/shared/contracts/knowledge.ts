@@ -304,6 +304,11 @@ export const OnboardingDropped = z.object({
    * these five, and the two sibling slices read exactly these five keys. Said
    * here in full rather than left implicit, because a counter that quietly covers
    * more than its name suggests is worse than one that says so.
+   *
+   * And a third statement of the same shape: an architecture diagram carrying a
+   * mermaid `click` directive or an `@{ … }` node shape. Both name a resource
+   * outside the clone — an image the renderer fetches on paint, or a link
+   * destination — so the whole diagram is dropped and counted here.
    */
   unknown_path: z.number().int().default(0),
   /**

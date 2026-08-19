@@ -308,6 +308,37 @@ function withinCommandCap(command: string): boolean {
   return [...command].length <= MAX_LINE_CHARS;
 }
 
+/**
+ * The two mermaid constructs that reach OUT of the drawing, and there is no
+ * third one measured.
+ *
+ * `securityLevel: 'strict'` is not the boundary it reads as. Measured against
+ * this repo's own mermaid 11.15.0: `A@{ img: "https://host/p.png" }` renders
+ * `<image href>` into the SVG and mermaid itself calls `img.decode()` on that
+ * URL, so the request leaves on paint with no click; `click A "https://host/x"`
+ * renders `<a href>` around the node with no `rel` and no `target`. Strict
+ * strips `javascript:` and `call`, and nothing else.
+ *
+ * The whole diagram goes, not the offending line: repairing a claim is what this
+ * file never does. It is checked on the RAW text rather than the truncated one,
+ * so a construct sitting past `MAX_DIAGRAM_CHARS` still condemns it — the
+ * conservative order, since a cut can only hide the evidence.
+ *
+ * Counted `unknown_path` for the reason that counter's own docstring gives: both
+ * constructs name a resource that is not in the clone, which is what "the claim
+ * points at something that is not there" has always meant here. AC-40 fixes the
+ * vocabulary at five, so a sixth counter is not available to name this better.
+ */
+const DIAGRAM_ESCAPE = /^\s*click\s|@\s*\{/m;
+
+function safeDiagram(raw: string, dropped: OnboardingDropped): string | undefined {
+  if (DIAGRAM_ESCAPE.test(raw)) {
+    dropped.unknown_path += 1;
+    return undefined;
+  }
+  return truncateCodePoints(raw.trim(), MAX_DIAGRAM_CHARS);
+}
+
 /* ------------------------------------------------------------------ sections */
 
 interface GroundedSection {
@@ -470,7 +501,7 @@ function groundSections(
     const body = truncateCodePoints(section.body.trim(), MAX_BODY_CHARS);
     const diagram =
       kind.data === 'architecture' && section.diagram !== null && section.diagram.trim() !== ''
-        ? truncateCodePoints(section.diagram.trim(), MAX_DIAGRAM_CHARS)
+        ? safeDiagram(section.diagram, dropped)
         : undefined;
 
     found.set(kind.data, {
