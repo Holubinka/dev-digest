@@ -104,23 +104,16 @@ export type {
   Onboarding,
   OnboardingSection,
   OnboardingSectionKind,
-  OnboardingSectionState,
-  OnboardingEmptyReason,
-  OnboardingLink,
   OnboardingFlow,
   OnboardingReadingStep,
   OnboardingTask,
   OnboardingTaskStep,
   OnboardingTaskComplexity,
   OnboardingPackageBlock,
-  OnboardingPackageManager,
-  OnboardingCommand,
   OnboardingSetupCommand,
   OnboardingEnvVar,
   OnboardingPackageScan,
   OnboardingInput,
-  OnboardingInputId,
-  OnboardingInputStatus,
 } from "@devdigest/shared";
 
 /** UI-only view model for a PR list row (derives display fields from PrMeta). */

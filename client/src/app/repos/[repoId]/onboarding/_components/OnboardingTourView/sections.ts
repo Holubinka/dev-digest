@@ -23,7 +23,6 @@ export interface SectionDescriptor {
   /** `messages/en/onboarding.json` — the heading the reader sees. */
   titleKey: string;
   /** The sentence the card shows instead of a list when it has nothing. */
-  emptyKey: string;
 }
 
 export const SECTION_ORDER = [
@@ -32,35 +31,30 @@ export const SECTION_ORDER = [
     anchor: "architecture",
     icon: "Workflow",
     titleKey: "section.architecture",
-    emptyKey: "empty.architecture",
   },
   {
     kind: "critical_paths",
     anchor: "critical-paths",
     icon: "Activity",
     titleKey: "section.criticalPaths",
-    emptyKey: "empty.critical_paths",
   },
   {
     kind: "how_to_run",
     anchor: "how-to-run",
     icon: "Command",
     titleKey: "section.howToRun",
-    emptyKey: "empty.how_to_run",
   },
   {
     kind: "reading_path",
     anchor: "reading-path",
     icon: "ListChecks",
     titleKey: "section.readingPath",
-    emptyKey: "empty.reading_path",
   },
   {
     kind: "first_tasks",
     anchor: "first-tasks",
     icon: "Target",
     titleKey: "section.firstTasks",
-    emptyKey: "empty.first_tasks",
   },
 ] as const satisfies readonly SectionDescriptor[];
 

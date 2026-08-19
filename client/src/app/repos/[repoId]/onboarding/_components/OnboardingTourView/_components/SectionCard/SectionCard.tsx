@@ -18,7 +18,7 @@ import React from "react";
 import { useTranslations } from "next-intl";
 import { Icon } from "@devdigest/ui";
 import type { OnboardingSectionKind } from "@/lib/types";
-import { SECTION_BY_KIND } from "../sections";
+import { SECTION_BY_KIND } from "../../sections";
 import { s } from "./styles";
 
 export function SectionCard({

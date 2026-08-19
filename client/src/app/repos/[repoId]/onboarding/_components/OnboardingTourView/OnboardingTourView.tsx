@@ -40,7 +40,7 @@ import { ApiError } from "@/lib/api";
 import { useGenerateOnboardingTour, useOnboardingTour } from "@/lib/hooks/onboarding";
 import { useActiveRepo, useRepoNotFound } from "@/lib/repo-context";
 import type { OnboardingRecord, OnboardingSectionKind } from "@/lib/types";
-import { SECTION_ANCHORS, SECTION_ORDER } from "./_components/sections";
+import { SECTION_ANCHORS, SECTION_ORDER } from "./sections";
 import { ArchitectureSection } from "./_components/ArchitectureSection";
 import { CriticalPathsSection } from "./_components/CriticalPathsSection";
 import { RunLocallySection } from "./_components/RunLocallySection";
@@ -49,7 +49,8 @@ import { FirstTasksSection } from "./_components/FirstTasksSection";
 import { TourHeader } from "./_components/TourHeader";
 import { OnThisPageRail } from "./_components/OnThisPageRail";
 import { TourStates } from "./_components/TourStates";
-import { IndexNotes, InputStates } from "./_components/InputStates";
+import { IndexNotes } from "./_components/IndexNotes";
+import { InputStates } from "./_components/InputStates";
 import { useScrollSpy } from "./hooks/useScrollSpy";
 import { SKELETON_ROWS } from "./constants";
 import { activeSectionFrom, anchorFromHash, sectionFor } from "./helpers";
@@ -228,8 +229,10 @@ export function OnboardingTourView({ repoId }: { repoId: string }) {
  * order and that order is written down exactly once, in the same array the rail
  * maps.
  *
- * A `switch` over the contract union, with no default: a sixth kind is a
- * compile error here rather than a card that silently stops being drawn.
+ * A `switch` over the contract union whose `default` assigns `kind` to `never`:
+ * a sixth kind is a compile error here rather than a card that silently stops
+ * being drawn. That branch is unreachable at runtime and is the check itself —
+ * deleting it as dead code removes the guarantee.
  */
 function SectionSlot({
   kind,

@@ -45,12 +45,12 @@ describe("SECTION_ORDER", () => {
   });
 
   it("names a message key that exists, for the heading and for the empty text", () => {
-    // The two families are spelled differently in the namespace —
-    // `section.criticalPaths` beside `empty.critical_paths` — and a key that
-    // does not resolve renders a blank heading with nothing failing.
+    // A key that does not resolve renders a blank heading with nothing failing.
+    // The `empty.*` family is checked in `i18n/onboarding-messages.test.ts`
+    // instead: the five cards write those keys as literals, so a table here
+    // would only prove the table right.
     for (const d of SECTION_ORDER) {
       expect(typeof lookup(d.titleKey), d.titleKey).toBe("string");
-      expect(typeof lookup(d.emptyKey), d.emptyKey).toBe("string");
     }
   });
 });

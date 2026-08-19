@@ -6,7 +6,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { screen, cleanup } from "@testing-library/react";
 import messages from "@/../messages/en/onboarding.json";
 import { renderWithProviders } from "@/test/render";
-import { SECTION_ORDER } from "../sections";
+import { SECTION_ORDER } from "../../sections";
 import { OnThisPageRail } from "./OnThisPageRail";
 
 afterEach(cleanup);

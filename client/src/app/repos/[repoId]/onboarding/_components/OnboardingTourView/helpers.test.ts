@@ -5,7 +5,7 @@
  * lie rather than a fallback.
  */
 import { describe, it, expect } from "vitest";
-import { SECTION_ORDER } from "./_components/sections";
+import { SECTION_ORDER } from "./sections";
 import {
   activeSectionFrom,
   anchorFromHash,

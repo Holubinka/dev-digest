@@ -18,7 +18,7 @@
 
 import React from "react";
 import { useTranslations } from "next-intl";
-import { SECTION_ORDER } from "../sections";
+import { SECTION_ORDER } from "../../sections";
 import { s } from "./styles";
 
 export function OnThisPageRail({ activeAnchor }: { activeAnchor: string }) {

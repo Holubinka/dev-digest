@@ -10,7 +10,7 @@ import type {
   OnboardingSection,
   OnboardingSectionKind,
 } from "@/lib/types";
-import { SECTION_ORDER } from "./_components/sections";
+import { SECTION_ORDER } from "./sections";
 
 /** What the page treats as active when the URL names no section. */
 const FIRST_ANCHOR = SECTION_ORDER[0].anchor;

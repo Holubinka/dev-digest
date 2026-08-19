@@ -105,4 +105,22 @@ describe("messages/en/onboarding.json — the texts a copy change must not softe
       expect(t(`inputs.id.${id}`)).not.toContain("inputs.id");
     }
   });
+
+  // Written as literals by the five cards — ArchitectureSection.tsx,
+  // CriticalPathsSection.tsx, RunLocallySection.tsx, ReadingPathSection.tsx and
+  // FirstTasksSection.tsx — and spelled `empty.critical_paths` where the title
+  // family is `section.criticalPaths`. A key that does not resolve renders an
+  // empty paragraph and fails nothing, so the spelling is checked here.
+  it("resolves the sentence each card shows when it has nothing", () => {
+    for (const key of [
+      "empty.architecture",
+      "empty.critical_paths",
+      "empty.how_to_run",
+      "empty.reading_path",
+      "empty.first_tasks",
+    ]) {
+      expect(typeof t(key), key).toBe("string");
+      expect(t(key), key).not.toBe("");
+    }
+  });
 });
