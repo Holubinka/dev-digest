@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import { OnboardingRecord } from '@devdigest/shared';
 import type { Db } from '../../db/client.js';
 import * as t from '../../db/schema.js';
+import { stripNulDeep } from '../../db/text.js';
 import type { OnboardingLogger, OnboardingReads, OnboardingRepo } from './types.js';
 
 /**
@@ -90,15 +91,27 @@ export class OnboardingRepository implements OnboardingReads {
    * on without opening the document. Deriving the column from the record rather
    * than calling the clock again is what keeps them from disagreeing by the
    * width of the write.
+   *
+   * `stripNulDeep` runs over the RECORD and never over the values object.
+   * `jsonb` refuses U+0000 as `text` does, and this is the fifth write path for
+   * model output — the throw would land after the paid call, so the row is never
+   * written and every retry buys another generation. It needs no help from the
+   * model either: a repository whose root `package.json` carries a NUL in its
+   * name walks one in through `parseManifest`.
+   *
+   * Over the values object it would be a different bug. `stripNulDeep` rebuilds
+   * an object from its own enumerable entries, and a `Date` has none — so
+   * `generatedAt` would arrive as `{}`.
    */
   async upsert(repoId: string, record: OnboardingRecord): Promise<void> {
-    const generatedAt = new Date(record.generated_at);
+    const json = stripNulDeep(record);
+    const generatedAt = new Date(json.generated_at);
     await this.db
       .insert(t.onboarding)
-      .values({ repoId, json: record, generatedAt })
+      .values({ repoId, json, generatedAt })
       .onConflictDoUpdate({
         target: t.onboarding.repoId,
-        set: { json: record, generatedAt },
+        set: { json, generatedAt },
       });
   }
 }

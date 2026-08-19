@@ -26,6 +26,7 @@ import { INDEXER_VERSION } from '../src/modules/repo-intel/constants.js';
 import { TimeoutError } from '../src/platform/resilience.js';
 import type { OnboardingGenerationResult } from '../src/modules/onboarding/generation-types.js';
 import type { OnboardingDraft } from '@devdigest/shared';
+import { OnboardingRepository } from '../src/modules/onboarding/repository.js';
 
 const hasDocker = await dockerAvailable();
 const d = hasDocker ? describe : describe.skip;
@@ -645,5 +646,51 @@ d('11 onboarding tour — routes and the one-row table (Testcontainers pg)', () 
     } finally {
       await app.close();
     }
+  });
+
+  /**
+   * A NUL in the model's prose used to cost the whole generation. `onboarding` is
+   * the fifth write path for model output, and it was the only one not stripping
+   * U+0000 — Postgres refuses it in `jsonb` exactly as it does in `text` (22P05,
+   * `unsupported Unicode escape sequence`). The throw landed AFTER the paid call,
+   * so nothing was stored and every retry bought another generation.
+   *
+   * It needs no help from the model: a repository whose root `package.json`
+   * carries a NUL in its name walks one through `parseManifest` into the record.
+   */
+  it('strips a NUL out of a record instead of losing the generation to it', async () => {
+    const repo = await setupRepo(workspaceId, {
+      sha: INDEXED_SHA,
+      status: 'full',
+      filesIndexed: 412,
+    });
+    const stamp = new Date().toISOString();
+    const record = {
+      ...draft('A tour whose prose carries a \u0000 in it.'),
+      index_state: {
+        last_indexed_sha: INDEXED_SHA,
+        files_indexed: 412,
+        files_skipped: 3,
+        status: 'full' as const,
+      },
+      generated_at: stamp,
+    };
+    const repository = new OnboardingRepository(pg.handle.db);
+    const silent = { info: () => {}, warn: () => {} };
+
+    await repository.upsert(repo.id, record);
+    const back = await repository.get(repo.id, silent);
+
+    expect(JSON.stringify(back)).not.toContain('\u0000');
+    expect(back?.sections[0].body).toBe('A tour whose prose carries a  in it.');
+    // The stamp survives the strip. Passing the whole values object through
+    // `stripNulDeep` would have rebuilt the `Date` as `{}` — it has no own
+    // enumerable properties — and the column would disagree with the document.
+    expect(back?.generated_at).toBe(stamp);
+    const [row] = await pg.handle.db
+      .select({ generatedAt: t.onboarding.generatedAt })
+      .from(t.onboarding)
+      .where(eq(t.onboarding.repoId, repo.id));
+    expect(row.generatedAt).toEqual(new Date(stamp));
   });
 });
