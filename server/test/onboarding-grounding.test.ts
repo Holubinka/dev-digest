@@ -545,6 +545,24 @@ describe('setup commands: a script the repository committed', () => {
     expect(kept('source scripts/dev.sh')).toHaveLength(0);
   });
 
+  it('refuses a runner pointed at a file that is not a script', () => {
+    // The half the runner shape never constrained. Every path below is in
+    // `verified` — documents, configs and manifests enter it with NO probe at
+    // all — so the old rule's whole test, "the token equals `source_path` and
+    // that path exists", was satisfied by each of them. What came out was a
+    // line beside a copy button that hands a markdown file to `bash`.
+    for (const [command, source] of [
+      ['bash README.md', 'README.md'],
+      ['sh docker-compose.yml', 'docker-compose.yml'],
+      ['bash .env.example', '.env.example'],
+      ['./server/src/index.ts', 'server/src/index.ts'],
+    ] as const) {
+      const result = withScript(command, source);
+      expect(result.tour.setup_commands, command).toHaveLength(0);
+      expect(result.dropped.unknown_path, command).toBe(1);
+    }
+  });
+
   it('refuses every argument after the path, including a flag', () => {
     // Three tokens is a refusal whatever the third one is: `--prod` may switch
     // the script into a mode nobody read, and `-c` turns `sh` into a shell that

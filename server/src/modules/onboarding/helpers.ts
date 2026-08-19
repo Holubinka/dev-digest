@@ -222,15 +222,35 @@ const SCRIPT_RUNNERS = new Set(['bash', 'sh']);
  * everywhere else (AC-41). The caller then requires the result to be the file
  * `source_path` names, and that file to exist in the clone.
  */
+/**
+ * The suffix that makes a committed file a script this feature will run.
+ *
+ * Existing in the clone is not being a script. Documents, configs, manifests and
+ * the ranked samples all reach `verified` with NO probe, so without this the
+ * runner shape's whole test — "the token equals `source_path`, and that path
+ * exists" — was satisfied by `bash README.md`, and a markdown file arrived beside
+ * a copy button with a model-written reason to run it.
+ *
+ * The cost is a genuine script that carries no suffix: it is dropped and counted
+ * like any other claim this code cannot confirm, which is the rule everywhere
+ * else here — never repaired, never guessed.
+ */
+const SCRIPT_SUFFIX = '.sh';
+
+function asScript(path: string | null): string | null {
+  if (path === null) return null;
+  return path.toLowerCase().endsWith(SCRIPT_SUFFIX) ? path : null;
+}
+
 function scriptPathOf(parts: string[]): string | null {
   const first = parts[0];
   if (first === undefined) return null;
-  if (parts.length === 1) return first.startsWith('./') ? sanitizePath(first) : null;
+  if (parts.length === 1) return first.startsWith('./') ? asScript(sanitizePath(first)) : null;
   const path = parts[1];
   if (parts.length !== 2 || !SCRIPT_RUNNERS.has(first) || path === undefined) return null;
   // A leading `-` is a flag to every runner in the set, never a path, and the
   // equality the caller applies is not a safe place to find that out.
-  return path.startsWith('-') ? null : sanitizePath(path);
+  return path.startsWith('-') ? null : asScript(sanitizePath(path));
 }
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
