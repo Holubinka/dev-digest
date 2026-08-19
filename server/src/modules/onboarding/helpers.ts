@@ -602,7 +602,9 @@ function groundTaskSteps(
   grounded: Set<string>,
 ): OnboardingTaskStep[] {
   const kept: OnboardingTaskStep[] = [];
-  for (const step of steps) {
+  // Sliced HERE and not on the way out, so the set grounded is exactly the set
+  // `collectClaimedPaths` probed. See `groundTasks` for what the other order cost.
+  for (const step of steps.slice(0, MAX_TASK_STEPS)) {
     kept.push({
       text: line(step.text),
       path:
@@ -612,7 +614,7 @@ function groundTaskSteps(
       command: stepCommand(step.command, grounded, dropped),
     });
   }
-  return kept.slice(0, MAX_TASK_STEPS);
+  return kept;
 }
 
 /**
@@ -652,7 +654,17 @@ function groundTasks(
   grounded: Set<string>,
 ): OnboardingTask[] {
   const kept: OnboardingTask[] = [];
-  for (const task of tasks) {
+  // Sliced HERE, not on the way out. `collectClaimedPaths` probes this same
+  // window, and its docstring promises the two are one bound: no claim it
+  // refuses to probe may be counted `unknown_path`. Slicing on the way out broke
+  // that — when early tasks failed the complexity gate the walk ran past the
+  // sixth into tasks nobody had read, so a REAL file was counted missing and the
+  // task dropped for want of a probe.
+  //
+  // The trade is deliberate and worth stating: an answer whose first tasks are
+  // all rejected now yields fewer than `MAX_TASKS`, because the later ones were
+  // never verified and this code does not guess.
+  for (const task of tasks.slice(0, MAX_TASKS)) {
     const complexity = OnboardingTaskComplexity.safeParse(task.complexity);
     if (!complexity.success) {
       dropped.unknown_complexity += 1;
@@ -673,7 +685,7 @@ function groundTasks(
       verification: line(task.verification),
     });
   }
-  return kept.slice(0, MAX_TASKS);
+  return kept;
 }
 
 /* ------------------------------------------------------------- how to run it */

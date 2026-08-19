@@ -454,6 +454,43 @@ describe('what the answer is allowed to claim', () => {
     expect(draft.setup_commands).toHaveLength(1);
   });
 
+  it('never counts a real file missing because it fell outside the probe window', async () => {
+    // `collectClaimedPaths` probes `tasks.slice(0, MAX_TASKS)`, and its docstring
+    // states the two bounds are the SAME bound — that no claim it refuses to
+    // probe is ever counted `unknown_path`. Grounding walked every task the model
+    // returned and sliced only on the way out, so when early tasks failed the
+    // complexity gate the walk reached tasks whose paths nobody had read: real
+    // files, reported missing, and dropped for want of a probe.
+    const extra: Record<string, string> = {};
+    for (let i = 0; i < 8; i += 1) extra[`server/src/t${i}.ts`] = FILE;
+
+    const data = answer({
+      tasks: Array.from({ length: 8 }, (_, i) => ({
+        title: `Задача ${i}`,
+        path: `server/src/t${i}.ts`,
+        why: 'справжній файл',
+        // The first two fail the complexity gate, so the walk runs past the
+        // sixth task looking for something to keep.
+        complexity: (i < 2 ? 'epic' : 'low') as 'low',
+        steps: [],
+        impact: '',
+        verification: '',
+      })),
+    });
+    const { run } = harness({ tree: { ...TREE, ...extra }, llm: { data } });
+    const { draft } = await run();
+
+    expect(draft.dropped.unknown_complexity).toBe(2);
+    // Every path the model named exists. None may be counted missing.
+    expect(draft.dropped.unknown_path).toBe(0);
+    expect(draft.tasks.map((t) => t.path)).toEqual([
+      'server/src/t2.ts',
+      'server/src/t3.ts',
+      'server/src/t4.ts',
+      'server/src/t5.ts',
+    ]);
+  });
+
   it('spends no more than MAX_PATH_PROBES reads on one answer', async () => {
     // Flows are not capped on the way in, so they are what can still reach the
     // ceiling now that tasks are sliced before they are probed.
