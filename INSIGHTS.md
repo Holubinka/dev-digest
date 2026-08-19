@@ -164,6 +164,58 @@ Verified with 18 payloads piped straight into the script, not by dispatching the
 allowed paths, refused paths, absolute paths, `e2e/specs/`, nested paths, missing `file_path`,
 read-only Bash, mutating Bash.
 
+### Three plans that split one spec reconcile by script, not by a fourth agent
+
+`SPEC-03` was planned by three parallel `implementation-planner` runs over disjoint slices
+(`plans/12`, `13`, `14`). Each dispatch required the plan to list not only the `AC-N` it owns but
+the numbers it hands to each sibling, **by number** — which makes coverage a set operation rather
+than a judgement:
+
+```sh
+# per plan, the AC numbers cited in its "## Requirements as understood" table
+comm -23 <(seq 1 94 | sort) <(cat a.txt b.txt c.txt | sort -u)   # gaps
+cat a.txt b.txt c.txt | sort -n | uniq -d                        # overlaps
+```
+
+2026-08-17, first run: **0 gaps, 14 overlaps** — twelve of them deliberate two-part criteria that
+the plans had already declared as halves, two of them real double ownership (`AC-52`, `AC-67`), each
+resolved in one message. Sort numerically for `seq`/`uniq` but lexically for `comm`, or `comm`
+reports every number as missing.
+
+A verification subagent would have cost more and returned a paragraph where this returns a list. Use
+an agent for what needs reading; use a script for what needs counting.
+
+### A mermaid diagram in `docs/` can be parsed headlessly before anyone commits it
+
+`client/node_modules` already carries `mermaid` 11.15.0 — the same version the client renders with —
+and `jsdom`. A script placed **inside** `client/node_modules/` resolves both: build a `JSDOM`, assign
+`globalThis.window` and `globalThis.document`, then `await mermaid.parse(src)`. A diagram that would
+have rendered as nothing is caught before a reader sees it, and it costs one command.
+
+One trap on Node 22: `globalThis.navigator = dom.window.navigator` throws
+`TypeError: Cannot set property navigator … which has only a getter`. Use
+`Object.defineProperty(globalThis, 'navigator', { value: dom.window.navigator, configurable: true })`.
+
+Verified 2026-08-19 against the diagram in `docs/onboarding-tour.md`.
+
+
+
+### A control run is what separates "my change broke it" from "the world changed"
+
+On 2026-08-19 a live onboarding generation timed out at exactly its 219 360 ms clock, twice, where
+the same repository had taken 80 702 ms the day before. The one thing that had changed in the
+prompt was the critical-path chains, which a fix had just deduplicated — a clean, believable
+story, and the obvious next move was to loosen the clock or cut `MAX_FLOWS`.
+
+Disabling that single line and running once more cost about $0.008 and ninety seconds. **The
+control timed out too**, at the same 219 360 ms, which flipped the conclusion: the prompt was
+byte-identical to the day before (the clock value itself proves the budget did not move), so the
+provider was the variable and the code was not. Without the control, the session would have
+"fixed" a defect that did not exist, and shipped a looser clock as the record of it.
+
+Run the control whenever a live failure appears right after a change that could plausibly cause
+it. The cost is one more run; the alternative is a permanent change made from a coincidence.
+
 ## What Doesn't Work
 
 ### Committing a documentation layer by path while the files it references stay untracked
@@ -643,6 +695,121 @@ an existing shipped surface, and it belongs to whoever owns the review verdict. 
 scalar a human will act on, check what the neighbouring contracts already promise about numbers of
 that kind — the doctrine may already exist, and may already be broken.
 
+### Parallel planners settle a shared name by themselves, and settle it differently
+
+Three `implementation-planner` runs over disjoint slices of `SPEC-03`, dispatched together on
+2026-08-17 with file ownership stated but **vocabulary left unstated**, independently produced
+`packages` as an array of package blocks inside `Onboarding` (slice A) and `packages` as an object of
+walk facts inside `OnboardingRecord = Onboarding.extend({…})` (slice B). `.extend()` overrides on key
+collision, so B's object would have replaced A's array and the whole "How to run" section would have
+disappeared from the stored record. Nothing fails on the way there: the two packages typecheck
+against their own vendored copies, the client does not validate the response, and the screen renders
+an empty section.
+
+Five more divergences of the same root — `walk_depth`/`depth`, `unknown_section_kind`/`unknown_section`,
+`repo_skeleton`/`repo_map`, `no_index`/`index_missing`, `index`/`index_state`. One floor up, both
+server slices declared `OnboardingRecord`, in two different mirrored contract files. And on the call
+seam, A renamed the method to `run` (following `server/src/modules/context/scan-executor.ts:38`) and
+dropped a parameter while B still called `generate(…, index, …)`.
+
+**Only the third agent found it**, because it was the only one required to read what the other two
+produce — and it escalated instead of picking a winner. Neither server slice could have seen it:
+each was right about its own file, which is exactly the failure mode of splitting work by file
+ownership alone.
+
+**Fix.** Settle the vocabulary *before* dispatch — one table of every name that crosses a slice
+boundary, with an owner per name, in the dispatch itself. Repairing it afterwards cost a fourth round
+across all three plans. Two rules that made the repair stick: the wrapper renames, the wrapped keeps
+its names; and split a contract by **what each side produces** (a draft without stamps, a record with
+them) so `.extend()` cannot collide by construction rather than by agreement.
+
+The quietest channel for a stale name to survive such a repair is i18n: a key named
+`inputs.id.repo_skeleton` instead of `inputs.id.repo_map` renders an empty label and throws nothing.
+
+### A claim about a tool's behaviour is worth exactly what it was measured with
+
+Three times in one session (2026-08-18) the coordinator reasoned from memory about how a tool
+behaves, wrote it into a dispatch as settled fact, and was wrong three times:
+
+- *"`#` is inert in a single-line shell command."* True in sh and bash. **False in interactive
+  zsh**, which is this project's shell: `INTERACTIVE_COMMENTS` is documented as "allow comments
+  *even in interactive shells*" and is off by default. Check with
+  `zsh -ic 'echo $options[interactivecomments]'`.
+- *"`<manager> <script>` is the universal shorthand."* **npm rejects it** — `npm dev` answers
+  `Unknown command: "dev"`.
+- *"So npm always needs `run`."* Also wrong: `test`, `start`, `stop` and `restart` are builtin
+  npm commands that work bare. A brief written on that belief dropped `npm test`, one of the
+  commands a newcomer types most.
+
+**No gate would have caught any of the three.** The suite was green in every state, because the
+tests encoded the same belief the code did — at one point a test was written asserting that a
+Ukrainian comment is *correctly* rejected, freezing the defect as intended behaviour.
+
+What caught them: an `implementer` that **refused its dispatch** and returned a measurement
+instead, and a `/code-review` that ran adversarial inputs through the real predicate rather than
+reading it. Both cost one round. Reproducing a tool claim costs one command:
+
+```sh
+npm test            # in a scratch package.json — does the bare form run?
+zsh -ic 'echo $options[interactivecomments]'
+```
+
+Write the measurement into the docstring, not the belief. A docstring asserting behaviour that
+does not exist reads as verification to everyone downstream — the same failure this repository
+already recorded for `runFullIndex`, where a lying comment hid a dead branch for three features.
+
+### What caught the defects, measured over one feature
+
+SPEC-03 shipped through three plans, five review passes and four fix rounds. Counting what actually
+found each defect, rather than what we assumed would:
+
+- **Live runs through the real entry point found three defects no test saw.** `repo_map` arrived
+  `missing` on *every* generation of *every* repository, because `getRepoMap` is a cache read keyed
+  on an exact `tokenBudget` the module never asked for — invisible to unit tests, because the facade
+  stub returns whatever it is told. A scratch harness against a real 21-package clone proved the
+  `knownPaths` gap. A live `GET` showed `env_vars_truncated: true` on the demo repo itself.
+- **Agents refusing their dispatch caught two coordinator errors.** An `implementer` handed a brief
+  whose safety argument was wrong stopped, measured, and said so instead of writing the code. That
+  is the only thing that caught it: 1087 tests were green in both the wrong state and the right one.
+- **`/code-review` disproved what four agents and the coordinator all believed was closed.** The
+  AC-91 "alphabetical slice" trap was reported fixed, verified fixed, and written up as fixed. It had
+  moved from 12 to 64: the port sorts *then* slices, so counting matches instead of visited files
+  raised the threshold without removing the cut. Reachable on any repo with >64 manifests.
+- **Two vacuous tests were found by the agent that wrote them**, not by review — one because every
+  fixture happened to satisfy the invariant it asserted, the live payload included.
+
+The pattern: **green gates prove the code compiles and the fakes returned their fixtures.** Every
+defect above needed either a real execution or an agent willing to contradict its instruction.
+
+Cheap habits that produced this, worth keeping: exercise through the real entry point even when the
+route belongs to another slice (a `tsx` script against the real adapter is enough); tell an agent
+what is *already known* so its run buys something new; and when an agent says "I did not do this
+because your premise is wrong", read the measurement before overriding it.
+
+### Quoting the severity rule into the brief did not stop the `security` agent grading an OWASP finding `minor`
+
+`.claude/skills/pr-self-review/severity.md` records this skill's most expensive measured defect —
+the `security` agent found a real path traversal, described it correctly, and graded it `minor`,
+which blocks nothing and never reaches the adversarial verifier. It diagnoses the cause (only the
+four severity *names* reached the brief, so the agent fell back on its own skill's impact
+reasoning), states the fix (send the agent to `severity.md` and quote the deciding rule into the
+brief), and says plainly that **whether the fix works is unmeasured**.
+
+Measured on 2026-08-19, `--full` on `feat/onboarding-tour`. The brief carried both halves: the
+instruction to open `severity.md` before grading, and the deciding rule quoted verbatim, ending
+"an OWASP finding … is `critical` here even when its blast radius looks bounded". The agent then
+returned one finding — an unpinned `bash <path>` shape in the onboarding setup-command grounding,
+reproduced by running the real `groundOnboarding`, rendering `bash README.md` beside a copy
+button — and graded it **`minor`**.
+
+So the fix does not work, or does not work alone. Until something better is found, **the
+coordinator must grade every Track B `security` finding itself against `severity.md`'s own table
+before step 4**, and treat the returned level as a suggestion. On this run that regrade is what
+sent the finding to a verifier at all; the verifier then refuted it to `major` on grounds the
+agent had not considered (`specs/SPEC-03-onboarding-tour.md:1283-1290` already prices the risk in),
+which is the process working — but only because the mis-grade was caught by hand first.
+
+
 ## Codebase Patterns
 
 ### The two `docker-compose.yml` files are byte-identical duplicates
@@ -835,6 +1002,15 @@ memory — which is the exact drift `INSIGHTS.md` already warns about for agent 
 
 Prefer a symbol to a range (`listModels` in `agents/service.ts`); when a range is genuinely
 needed, say what it should contain so a reader can tell they landed wrong.
+
+**2026-08-17 — second occurrence, and the target this time was `INSIGHTS.md` itself.**
+`plans/12-onboarding-tour-server-generation.md` cites `server/INSIGHTS.md:1048-1066` three times
+for "Anthropic's structured-output API rejects a Zod schema that states a bound". That range holds
+the three dependency-cruiser traps; the entry meant is at `:1070`. The drift is structural rather
+than accidental: `INSIGHTS.md` is append-only and every module's file grows from the top of its
+sections, so a range cited into one is stale by construction the next time anyone records
+something. Cite these two files by heading — `` server/INSIGHTS.md, "Anthropic's structured-output
+API rejects a Zod schema that states a bound" `` — which is also greppable, unlike a range.
 
 ### `onion-architecture` said two opposite things about the container, and both were quotable
 
@@ -1350,6 +1526,51 @@ same; assume it does.)
 - To *repair* it, do the replacement in `python3` as well. An `Edit` cannot match a line whose
   bytes are not what the screen shows, and a second `Edit` re-introduces the byte it is removing.
 
+### Zod `.extend()` overrides a colliding key, and `.parse()` strips an unknown one
+
+Two Zod behaviours that turn a split-contract mistake into a blank screen instead of an error:
+
+- `A.extend({ k: X })` **replaces** `k` when `A` already declares it. No error, no warning, no type
+  complaint — the result is a valid schema that quietly means something else.
+- `.parse()` **strips** a key the schema does not declare rather than rejecting it, so a field that
+  moves from one half of a contract to the other survives the move as `undefined` on the far side.
+
+Together they mean a key declared in both halves compiles, parses, and renders as a missing section.
+Two mechanical assertions catch what neither `tsc` nor a reviewer will (planned into `SPEC-03`,
+2026-08-17):
+
+```ts
+// the draft carries no stamp — a stamp that creeps back would be stripped, not rejected
+expect(Object.keys(OnboardingDraft.shape)).not.toContain('generated_at');
+
+// every draft key survives into the record as the *same schema object*, not a redeclared one
+for (const k of Object.keys(OnboardingDraft.shape))
+  expect(OnboardingRecord.shape[k]).toBe(OnboardingDraft.shape[k]);
+```
+
+Write these for any contract that one package extends and another mirrors. `pnpm arch` and the
+`shared-sync` gate both pass a collision of this kind.
+
+**2026-08-17, measured while landing the first of these — the shape assertion looks redundant and
+is not.** `OnboardingDraft` was declared in `contracts/knowledge.ts`, and the first assertion above
+was proven non-vacuous by adding `generated_at: z.string()` to it and re-running: **three** tests
+failed, not one — the round-trip fixture and the `diagram` case went first, because a REQUIRED key
+the fixture lacks fails every parse in the block. That is exactly what makes the assertion look
+like duplicate coverage worth deleting in review. It is not: the same key added as
+`z.string().optional()` was re-measured immediately after and failed **exactly one** test — this
+one. An optional, nullish or defaulted stamp fails no parse anywhere, so `Object.keys` is the only
+thing in either package that says so. Prove a new assertion of this kind with the OPTIONAL form;
+the required form proves the fixture test, not this one.
+
+### `awk 'length > 100'` counts bytes, so em-dash prose looks over the column limit
+
+**Symptom.** A column check over `docs/onboarding-tour.md` reported 18 over-long lines; exactly one
+was over-long.
+**Cause.** `—`, `…`, `≈` and `→` are three bytes each, and `awk` in this environment counts bytes,
+not characters. The prose in this repository uses all four heavily.
+**Fix.** Measure width with `python3 -c "print(len(line))"`, never with `awk`, in any file here.
+
+
 ## Recurring Errors & Fixes
 
 ### `pkill -f "tsx src/server.ts"` kills the dev server you were being careful not to touch
@@ -1644,7 +1865,56 @@ over one line, and a package that widens its scope quietly is worse. Here it was
 `ref_lines: RiskBriefRefLine.array().catch([]).parse(row.refLines)`, which P2 · 6 was going to
 write anyway.
 
+**2026-08-18 — the same shape a second time, and `.default()` is the sharper edge.**
+`plans/15-onboarding-tour-depth.md` gives P1 both vendored copies of `contracts/knowledge.ts` and
+two contract tests, and ends four of its six steps with *"Check: `cd server && pnpm typecheck`
+passes"*. It cannot. This repository requires every field added to a stored contract to carry an
+empty `.default()` (the jsonb read path), and a defaulted field is REQUIRED in `z.infer` — the
+output type — so a default is not the soft addition it reads as. Seven of them left `server/` red
+at five sites, all in files P3 owns: `generate-executor.ts:208, 485, 489, 501` and
+`helpers.ts:526`. The gates a contract-only package CAN hold are `pnpm arch`, the unit run — Vitest
+transpiles without type-checking, so 1 172 tests stayed green against stale producers — `pnpm lint`
+and `diff -r server/src/vendor/shared client/src/vendor/shared`.
+
+The client half is the part worth pre-empting. Three fixtures broke there, and only one was owned
+by a package: `OnboardingTourView.test.tsx` and `InputStates/InputStates.test.tsx` were listed in
+no package's **Owns** at all, so nobody was going to write them. P1 took the minimal edit and named
+the deviation, per this entry's own Fix. The grep that would have found all three before the plan
+was written, and which is the cheap step to add to the next one:
+`grep -rn "OnboardingTask\|OnboardingInput\b" --include='*.ts' --include='*.tsx' server/src client/src server/test | grep -v vendor/shared`.
+
+### Splitting a markdown file on `indexOf('## Heading')` cut it at a mention of the heading
+
+**Symptom.** About 700 lines vanished from `specs/SPEC-03-onboarding-tour.md` mid-session on
+2026-08-17. The file had never been committed, so `git checkout` had nothing to restore and the text
+had to be rebuilt from context.
+**Cause.** The script found the section with `text.indexOf('## Open questions')`. The first match was
+a *reference* to that heading inside the prose of a decision paragraph — the document discussed its
+own structure — and everything after that reference was replaced.
+**Fix.** Anchor on a line boundary, `/^## Open questions$/m`, never a bare substring; and on a file
+long enough to hold self-references, prefer `Edit` over a rewriting script. Worth noting that the
+`spec-creator` write-gate refused a `cat >>` append during the same session and forced the agent back
+to `Edit` — the gate was right, and the script was the way around it.
+
 ## Session Notes
+
+### 2026-08-17
+
+- `specs/SPEC-03-onboarding-tour.md` written and approved: 94 EARS criteria, 24 decisions, eight
+  open questions closed (five by the human, three by the coordinator). The design mockup was copied
+  into `specs/assets/SPEC-03-onboarding-tour.png` **before** dispatch, per the lesson in
+  `specs/README.md`; the client planner read it first and it changed the plan.
+- The feature turned out to be half-scaffolded already and no dispatch mentioned it: the
+  `Onboarding`/`OnboardingSection` contract, the `onboarding` table (`server/src/db/schema/context.ts:123`),
+  a full system prompt at `server/src/prompts/onboarding.system.md`, a migration
+  (`0000_init.sql:205`) and the model's price already in the static table. Three of the four design
+  gaps came from `rg -i onboard` at the start, not from the brief. **Search the repo for the
+  feature's own name before writing a spec for it** — a spec written without that step would have
+  agreed with the mockup and contradicted four files on disk.
+- Planned by three parallel `implementation-planner` runs (`plans/12`, `13`, `14`). What that bought
+  and what it cost is in *What Works* and *What Doesn't Work* above; the short version is that three
+  independent readings found a contract collision no single planner could have created, and that not
+  fixing the vocabulary before dispatch cost a fourth round across all three plans.
 
 ### 2026-07-27
 
@@ -1866,6 +2136,25 @@ write anyway.
   interesting cases are an `AC` deliberately deferred and an `R#` that merges two, and both look
   like drift to a diff. Two agents disagreeing is the signal; that is the same shape as the
   vendored `shared/` pair, where the gate exists precisely because typecheck cannot see across.
+
+
+### 2026-08-19
+
+- SPEC-03 (94 criteria) and SPEC-04 (57 active) shipped through plans 12-15 on
+  `feat/onboarding-tour`. Final review round: `plan-verifier` 0 NOT_MET, `architecture-reviewer`
+  0 findings, `/code-review high` 7 findings of which 4 were `major` and all 4 are fixed.
+- The four majors were: 20 chain slots spent on suffix-duplicates of one import line; the path
+  probe budget spent on tasks that grounding would discard, which made the whole "run it once per
+  clone" list disappear; a budget sized on `repo_index_state.files_indexed`, which accumulates per
+  incremental pass rather than counting files; and a scrim click that silently disabled Esc and
+  the Tab trap inside a live `aria-modal` dialog.
+- Two of the four were only visible because a reviewer ran the real code rather than reading it —
+  the chain duplication was reproduced on a hand-built graph, and the probe exhaustion was traced
+  through to the setup list it silenced.
+- Live verification could not complete: three generations in a row hit the 219 360 ms clock,
+  including a control with the suspect change disabled. AC-45 was verified live and hard instead —
+  after three failed generations the stored tour was byte-identical, `generated_at` unchanged.
+  That path had only ever been exercised with fakes.
 
 ## Open Questions
 
