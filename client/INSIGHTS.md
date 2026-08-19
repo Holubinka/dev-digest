@@ -860,6 +860,45 @@ only on its target, and it is not caught by the dependency linter, which sees a 
 dependency either way.
 
 
+### The file-placement rule is applied by eye, and drifts in both directions
+
+`frontend-architecture` § Review checklist says a new file sits at the shallowest level with at
+least one consumer and no shallower, and its step 3 promotes to a shared folder only at **two or
+more consumers in different routes**. Nothing checks it — no gate, no lint rule, no dependency-
+cruiser rule (those cover `server/` layering, not client placement).
+
+Measured on `feat/onboarding-tour`, 2026-08-19. Four violations of that one item on a single
+branch, in **both** directions:
+
+| File | Consumers | Wrong how |
+|---|---|---|
+| `client/src/lib/blockers.ts` | `PrBriefBanner`, `ReviewRunAccordion` — both in `pulls/[number]` | promoted with no cross-route consumer |
+| `client/src/lib/line-numbers.ts` | `pulls/[number]/page.tsx`, `BriefRef/helpers.ts` — same route | promoted with no cross-route consumer |
+| `shortSha` (3 definitions) | `BlastRadiusCard`, `RiskAreas`, `OnboardingTourView` — `pulls/[number]` and `onboarding` | NOT promoted despite two routes |
+| `useCopyToClipboard` + `COPIED_FEEDBACK_MS` (2 definitions of `1500`) | `ConventionCard`, `CopyButton` — `conventions` and `onboarding` | NOT promoted despite two routes |
+
+The rule is understood, not ignored: the same branch promoted `relativeTime` to
+`src/lib/relative-time.ts` and wrote down why, and deliberately kept `CopyButton` colocated with a
+note saying promotion needs a consumer in a different route. `useCopyToClipboard`'s own header
+even cites `ConventionCard.tsx:41-52` as what it copied — the existing consumer was seen and the
+promotion still was not made.
+
+What this costs is concrete rather than tidy: `COPIED_FEEDBACK_MS` is `1500` in two files, so
+retuning the copy feedback in one leaves the two buttons disagreeing.
+
+Two things worth knowing about how it was found. Three of the four came from separate
+`pr-self-review` passes, each surfacing one — a review reaches one instance and stops, so the
+count is only visible across runs. And when the fifth pass was told to skip this item, the
+`conventions` agent returned **nothing** in 71 tool calls: this rule was not merely the most
+common client-side finding on the diff, it was effectively the only one.
+
+**Recommendation, and it is not this file's to make.** `engineering-insights` asks two things
+before an observation becomes a rule: that it recurred, and that obeying it blindly is right every
+time. The first is settled — four instances, one branch. The second is not: "different routes"
+needs a judgement about what counts as a route, so a mechanical check would need that definition
+first. If someone wants it enforced, the place is a lint rule over `client/src/lib/` imports, and
+the decision belongs to whoever owns `frontend-architecture`.
+
 ## Codebase Patterns
 
 ### A security predicate gets exported, not restated — `hasDotSegment` is the dot-segment rule
