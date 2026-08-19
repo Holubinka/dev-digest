@@ -37,6 +37,26 @@ export function riskTone(level: string): RiskTone {
 }
 
 /**
+ * Only two families carry a tint, and the restraint is the whole point: colour
+ * here means "read this one first", and a row where every icon is coloured says
+ * nothing at all. Security and data loss are the irreversible classes — a slow
+ * endpoint is recoverable, a dropped column is not.
+ *
+ * The values are the theme's own severity tokens, the same ones `SEV` uses
+ * (`vendor/ui/primitives/tokens.ts`), not a new palette:
+ * `client/INSIGHTS.md:307-338` records what a second copy of `SEV` cost, and
+ * `frontend-architecture` principle 6 forbids a third. `neutral` restates
+ * `Badge`'s own defaults so a chip never has to be rendered without them.
+ */
+type ChipTone = "danger" | "caution" | "neutral";
+
+const TONE: Record<ChipTone, { color: string; bg: string }> = {
+  danger: { color: "var(--crit)", bg: "var(--crit-bg)" },
+  caution: { color: "var(--warn)", bg: "var(--warn-bg)" },
+  neutral: { color: "var(--text-secondary)", bg: "var(--bg-hover)" },
+};
+
+/**
  * `Risk.kind` is free-form model output — the server's `Risk` schema types it
  * `z.string()` and nothing constrains the vocabulary. Real runs return phrases,
  * not keywords: "public API", "client-server contract", "Conventions extraction
@@ -63,26 +83,6 @@ export function riskTone(level: string): RiskTone {
  * `risk_areas` chip row is gone, and the same "free string → icon with an
  * explicit fallback" shape is what AC-52 and AC-53 ask of `Risk.kind`.
  */
-/**
- * Only two families carry a tint, and the restraint is the whole point: colour
- * here means "read this one first", and a row where every icon is coloured says
- * nothing at all. Security and data loss are the irreversible classes — a slow
- * endpoint is recoverable, a dropped column is not.
- *
- * The values are the theme's own severity tokens, the same ones `SEV` uses
- * (`vendor/ui/primitives/tokens.ts`), not a new palette:
- * `client/INSIGHTS.md:307-338` records what a second copy of `SEV` cost, and
- * `frontend-architecture` principle 6 forbids a third. `neutral` restates
- * `Badge`'s own defaults so a chip never has to be rendered without them.
- */
-type ChipTone = "danger" | "caution" | "neutral";
-
-const TONE: Record<ChipTone, { color: string; bg: string }> = {
-  danger: { color: "var(--crit)", bg: "var(--crit-bg)" },
-  caution: { color: "var(--warn)", bg: "var(--warn-bg)" },
-  neutral: { color: "var(--text-secondary)", bg: "var(--bg-hover)" },
-};
-
 const RISK_RULES: ReadonlyArray<readonly [RegExp, IconName, ChipTone]> = [
   [/\b(secur|vulnerab|inject|traversal|auth|permission|tenant)|\b(xss|csrf|ssrf)\b/, "Shield", "danger"],
   // Before the credential rule, and that order is the whole point: `token` there

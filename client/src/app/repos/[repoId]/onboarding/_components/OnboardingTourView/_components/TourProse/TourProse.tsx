@@ -7,7 +7,7 @@
 
 import React from "react";
 import { DocumentReader } from "@/components/context-doc-view";
-import { fileHref } from "../FileRef";
+import { fileHref } from "../FileRef/helpers";
 import { linkifyVerifiedPaths } from "./helpers";
 
 export function TourProse({

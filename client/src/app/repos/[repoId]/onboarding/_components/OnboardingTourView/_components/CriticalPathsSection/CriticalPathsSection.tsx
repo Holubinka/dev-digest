@@ -30,7 +30,7 @@ import { useTranslations } from "next-intl";
 import { Icon } from "@devdigest/ui";
 import type { OnboardingFlow } from "@/lib/types";
 import { SectionCard } from "../SectionCard";
-import { fileHref } from "../FileRef";
+import { fileHref } from "../FileRef/helpers";
 import { s } from "./styles";
 
 export function CriticalPathsSection({
