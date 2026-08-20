@@ -341,7 +341,28 @@ function withinCommandCap(command: string): boolean {
  * names something that is not in the clone. AC-40 fixes the vocabulary at five.
  */
 const LABEL_TEXT = String.raw`(?:"[^"<>{}\\]*"|[A-Za-z0-9 _.:/+-]*)`;
-const NODE = String.raw`[A-Za-z0-9_-]+(?:\[${LABEL_TEXT}\]|\(${LABEL_TEXT}\)|\{${LABEL_TEXT}\})?`;
+
+/**
+ * The bracket pairs mermaid uses to shape a node, longest first so `((` is not
+ * read as `(`. All nine are pure geometry — none can carry a URL, a handler or
+ * CSS — and leaving them out was measured to cost real diagrams: `[(…)]` is the
+ * idiomatic database node, and this product draws one in every architecture
+ * picture it renders.
+ */
+const NODE_SHAPES: ReadonlyArray<readonly [string, string]> = [
+  ['((', '))'],
+  ['([', '])'],
+  ['[[', ']]'],
+  ['{{', '}}'],
+  ['[(', ')]'],
+  ['[', ']'],
+  ['(', ')'],
+  ['{', '}'],
+  ['>', ']'],
+];
+const esc = (d: string): string => d.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+const SHAPED = NODE_SHAPES.map(([o, c]) => `${esc(o)}${LABEL_TEXT}${esc(c)}`).join('|');
+const NODE = String.raw`[A-Za-z0-9_-]+(?:${SHAPED})?`;
 const ARROW = String.raw`(?:-\.->|-\.-|-->|---|==>|===)(?:\|${LABEL_TEXT}\|)?`;
 
 /** `flowchart TD` / `graph LR`, and no other grammar — `classDiagram` carries `link`. */
@@ -363,7 +384,13 @@ function safeDiagram(raw: string, dropped: OnboardingDropped): string | undefine
     header !== undefined &&
     DIAGRAM_HEADER.test(header) &&
     rest.every(
-      (part) => part === 'end' || DIAGRAM_SUBGRAPH.test(part) || DIAGRAM_STATEMENT.test(part),
+      (part) =>
+        part === 'end' ||
+        // A `%%` comment is prose mermaid ignores. `%%{` is NOT a comment — it
+        // is the directive that carries `themeCSS`, and it stays refused.
+        (part.startsWith('%%') && !part.startsWith('%%{')) ||
+        DIAGRAM_SUBGRAPH.test(part) ||
+        DIAGRAM_STATEMENT.test(part),
     );
 
   if (!drawn) {

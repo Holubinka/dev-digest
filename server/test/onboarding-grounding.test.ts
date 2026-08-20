@@ -1263,6 +1263,46 @@ describe('the diagram is a drawing, not a way out of one', () => {
     }
   });
 
+  // The allowlist's OTHER failure mode, and the one that actually happened: too
+  // narrow. A live generation on 2026-08-20 came back with no diagram at all,
+  // and the cause was this grammar rejecting `A[(Postgres)]` — the idiomatic
+  // database node, in a picture of a system built around Postgres. Six harmless
+  // shapes were being dropped. Every row here is geometry or a comment: none can
+  // carry a URL, a handler or CSS, so accepting them costs nothing the escape
+  // table above is protecting.
+  const DRAWINGS: ReadonlyArray<readonly [string, string]> = [
+    ['quoted labels and an arrow label', 'flowchart LR\n  A["web: Next.js"] -->|"HTTP"| B["api"]'],
+    ['bare ids', 'flowchart TD\n  A --> B'],
+    ['unquoted label', 'flowchart TD\n  A[Alpha] --> B[Beta]'],
+    ['round', 'flowchart TD\n  A(Alpha) --> B'],
+    ['double circle', 'flowchart TD\n  A((DB)) --> B'],
+    ['stadium', 'flowchart TD\n  A([Start]) --> B'],
+    ['subroutine', 'flowchart TD\n  A[[Job]] --> B'],
+    ['hexagon', 'flowchart TD\n  A{{Gate}} --> B'],
+    ['rhombus', 'flowchart TD\n  A{Choice} --> B'],
+    ['cylinder — the database shape', 'flowchart TD\n  A[(Postgres)] --> B'],
+    ['dotted arrow', 'flowchart TD\n  A -.-> B'],
+    ['thick arrow', 'flowchart TD\n  A ==> B'],
+    ['open link', 'flowchart TD\n  A --- B'],
+    ['unlabelled dotted', 'flowchart TD\n  A -.- B'],
+    ['arrow label without quotes', 'flowchart TD\n  A -->|calls| B'],
+    ['multi-hop chain', 'flowchart LR\n  A --> B --> C --> D'],
+    ['subgraph and end', 'flowchart TD\n  subgraph server\n  A --> B\n  end'],
+    ['a %% comment', 'flowchart TD\n  %% how it connects\n  A --> B'],
+    ['a blank line inside', 'flowchart LR\n  A --> B\n\n  B --> C'],
+    ['trailing semicolons', 'flowchart TD\n  A --> B;\n  B --> C;'],
+    ['comma in a label', 'flowchart TD\n  A["api, v2"] --> B'],
+    ['parentheses in a label', 'flowchart TD\n  A["api (v2)"] --> B'],
+    ['graph instead of flowchart', 'graph LR\n  A --> B'],
+  ];
+
+  it.each(DRAWINGS)('keeps a diagram that only draws: %s', (_name, diagram) => {
+    const result = groundOnboarding(response({ sections: [arch(diagram)] }), context());
+
+    expect(result.tour.sections[0]?.diagram).toBe(diagram);
+    expect(result.dropped.unknown_path).toBe(0);
+  });
+
   it('keeps the diagram the model actually produces', () => {
     // Copied from a live generation on this repository, 2026-08-19.
     const real = [
