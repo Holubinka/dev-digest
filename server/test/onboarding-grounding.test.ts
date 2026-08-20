@@ -1233,6 +1233,13 @@ describe('the diagram is a drawing, not a way out of one', () => {
     ['classDiagram link', 'classDiagram\n  class Alpha\n  link Alpha "https://evil.example.com/x"'],
     // Renders `<style>` into the SVG; `strict` does not cover `themeCSS`.
     ['init directive', 'flowchart TD\n%%{init: {"themeCSS": ".node { background-image: url(https://evil.example.com/p.png); }"}}%%\n  A --> B'],
+    // mermaid's directive regex is UNANCHORED and runs before comments are
+    // stripped, so a leading `%%` makes a part a comment to a start-anchored
+    // rule and a directive to mermaid. All three spellings were measured to
+    // reach the SVG's `<style>` while a `startsWith` guard let them past.
+    ['directive behind a comment', 'flowchart TD\n%% theme %%{init: {"themeCSS": ".nodeLabel { background-image: url(https://evil.example.com/p.png) }"}}%%\n  A --> B'],
+    ['directive behind three percents', 'flowchart TD\n%%%{init: {"themeCSS": ".nodeLabel { background-image: url(https://evil.example.com/p.png) }"}}%%\n  A --> B'],
+    ['directive with a trailing word', 'flowchart TD\n%%%%{init: {"themeCSS": ".nodeLabel { content: url(https://evil.example.com/p.png) }"}}%% t\n  A --> B'],
     // DOMPurify at `strict` keeps `img`, `a` and `style`; mermaid awaits the load.
     ['html in a label', 'flowchart TD\n  A["<img src=\'https://evil.example.com/p.png\'>"] --> B'],
     ['anchor in a label', 'flowchart TD\n  A["<a href=\'https://evil.example.com/x\'>go</a>"] --> B'],

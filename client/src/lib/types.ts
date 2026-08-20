@@ -68,15 +68,10 @@ export type {
 
 /** PR Why + Risk Brief (10) — the per-head_sha brief card and its history. */
 export type {
-  RiskBrief,
   RiskBriefRecord,
-  RiskBriefTimeline,
-  RiskBriefTimelineEntry,
   RiskBriefInput,
   RiskBriefRefLine,
-  RiskBriefRefLineSource,
   ReviewFocusItem,
-  RiskBriefTokenizer,
   IntentFreshness,
 } from "@devdigest/shared";
 

@@ -386,9 +386,13 @@ function safeDiagram(raw: string, dropped: OnboardingDropped): string | undefine
     rest.every(
       (part) =>
         part === 'end' ||
-        // A `%%` comment is prose mermaid ignores. `%%{` is NOT a comment — it
-        // is the directive that carries `themeCSS`, and it stays refused.
-        (part.startsWith('%%') && !part.startsWith('%%{')) ||
+        // A `%%` comment is prose mermaid ignores — but ONLY if the whole part
+        // is a comment. `%%{` is the directive that carries `themeCSS`, and
+        // mermaid finds it with an UNANCHORED regex, in a pass that runs before
+        // it strips comments. So `%% theme %%{init: …}%%` is a comment to a rule
+        // that looks at the start and a directive to mermaid; `includes` is what
+        // closes the difference, and `startsWith` was measured not to.
+        (part.startsWith('%%') && !part.includes('%%{')) ||
         DIAGRAM_SUBGRAPH.test(part) ||
         DIAGRAM_STATEMENT.test(part),
     );
