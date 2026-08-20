@@ -18,6 +18,7 @@ import { ReviewFocusSection } from "./ReviewFocusSection";
 afterEach(cleanup);
 
 const INDEX = "1122334455667788990011223344556677889900";
+const HEAD = "9a1c4d70bb2e5f3a6c8d90e1f2a3b4c5d6e7f809";
 
 const ITEMS: ReviewFocusItem[] = [
   {
@@ -64,6 +65,7 @@ function renderSection(props: Partial<React.ComponentProps<typeof ReviewFocusSec
         items={ITEMS}
         refLines={REF_LINES}
         linkSha={INDEX}
+        headSha={HEAD}
         indexMatchesHead
         prFiles={FILES}
         onOpenFile={onOpenFile}

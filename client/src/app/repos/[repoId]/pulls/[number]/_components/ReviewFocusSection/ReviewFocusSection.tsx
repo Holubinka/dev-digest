@@ -14,6 +14,7 @@ interface ReviewFocusSectionProps {
   items: ReviewFocusItem[] | null;
   refLines: RiskBriefRefLine[];
   linkSha: string | null;
+  headSha: string | null;
   indexMatchesHead: boolean;
   /** The PR's changed files — what decides whether a row can be a control. */
   prFiles: PrFile[];
@@ -41,6 +42,7 @@ export function ReviewFocusSection({
   items,
   refLines,
   linkSha,
+  headSha,
   indexMatchesHead,
   prFiles,
   onOpenFile,
@@ -101,6 +103,7 @@ export function ReviewFocusSection({
                 item={item}
                 refLines={refLines}
                 linkSha={linkSha}
+                headSha={headSha}
                 indexMatchesHead={indexMatchesHead}
                 changedPaths={changedPaths}
                 onOpenFile={onOpenFile}
@@ -117,6 +120,7 @@ export function ReviewFocusSection({
                     item={item}
                     refLines={refLines}
                     linkSha={linkSha}
+                    headSha={headSha}
                     indexMatchesHead={indexMatchesHead}
                     changedPaths={changedPaths}
                     onOpenFile={onOpenFile}
@@ -175,6 +179,7 @@ function FocusRow({
   item,
   refLines,
   linkSha,
+  headSha,
   indexMatchesHead,
   changedPaths,
   onOpenFile,
@@ -182,6 +187,7 @@ function FocusRow({
   item: ReviewFocusItem;
   refLines: RiskBriefRefLine[];
   linkSha: string | null;
+  headSha: string | null;
   indexMatchesHead: boolean;
   changedPaths: ReadonlySet<string>;
   onOpenFile: (path: string, line?: number) => void;
@@ -194,6 +200,7 @@ function FocusRow({
         refValue={item.ref}
         refLines={refLines}
         linkSha={linkSha}
+        headSha={headSha}
         indexMatchesHead={indexMatchesHead}
         changedPaths={changedPaths}
         onOpenFile={onOpenFile}

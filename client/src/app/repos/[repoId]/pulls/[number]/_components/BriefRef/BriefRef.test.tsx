@@ -19,6 +19,7 @@ import { BriefRef } from "./BriefRef";
 afterEach(cleanup);
 
 const INDEX = "1122334455667788990011223344556677889900";
+const HEAD = "9a1c4d70bb2e5f3a6c8d90e1f2a3b4c5d6e7f809";
 const PATH = "src/middleware/ratelimit.ts";
 
 const REF_LINES: RiskBriefRefLine[] = [{ ref: PATH, line: 12, source: "blast_symbol" }];
@@ -43,6 +44,7 @@ function renderLink(props: Partial<React.ComponentProps<typeof BriefRef>> = {}) 
         refValue={PATH}
         refLines={REF_LINES}
         linkSha={INDEX}
+        headSha={HEAD}
         indexMatchesHead
         repoFullName="acme/payments-api"
         {...(props as object)}
@@ -60,6 +62,7 @@ function renderOpen(props: Partial<React.ComponentProps<typeof BriefRef>> = {}) 
         refValue={PATH}
         refLines={REF_LINES}
         linkSha={INDEX}
+        headSha={HEAD}
         indexMatchesHead
         changedPaths={new Set([PATH])}
         onOpenFile={onOpenFile}
@@ -71,12 +74,19 @@ function renderOpen(props: Partial<React.ComponentProps<typeof BriefRef>> = {}) 
 }
 
 describe("BriefRef — the two forms of one reference", () => {
-  it("links a risk reference at the index commit, with the same line in text and target", () => {
+  it("links a risk reference at the head, with the same line in text and target", () => {
+    // DIVERGENCE from AC-27, decided 2026-08-20 against a measurement. `link_sha`
+    // is the commit the INDEX sits at; the index tracks the default branch, so
+    // `index_matches_head` is false for every brief of every PR, and a path the
+    // PR ADDS is absent from that tree — every such link was a 404. The old
+    // rule's reason survives where it belongs: the `:line` suffix is still gated
+    // on `indexMatchesHead`, so a head link never carries a line the index
+    // cannot vouch for. `BlastRadiusCard` still links at `link_sha` and must.
     renderLink();
 
     expect(screen.getByRole("link", { name: `${PATH}:12` })).toHaveAttribute(
       "href",
-      `https://github.com/acme/payments-api/blob/${INDEX}/${PATH}#L12`,
+      `https://github.com/acme/payments-api/blob/${HEAD}/${PATH}#L12`,
     );
   });
 

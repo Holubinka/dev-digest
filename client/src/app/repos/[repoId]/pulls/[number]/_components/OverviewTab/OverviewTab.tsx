@@ -172,6 +172,7 @@ export function OverviewTab({
                 riskLevel={record?.risk_level ?? null}
                 refLines={record?.ref_lines ?? []}
                 linkSha={record?.link_sha ?? null}
+                headSha={record?.head_sha ?? null}
                 indexMatchesHead={record?.index_matches_head ?? false}
                 repoFullName={repoFullName}
                 intentFreshness={record?.intent_freshness ?? null}
@@ -187,6 +188,7 @@ export function OverviewTab({
           items={record?.review_focus ?? null}
           refLines={record?.ref_lines ?? []}
           linkSha={record?.link_sha ?? null}
+          headSha={record?.head_sha ?? null}
           indexMatchesHead={record?.index_matches_head ?? false}
           prFiles={prFiles}
           onOpenFile={onOpenFile}

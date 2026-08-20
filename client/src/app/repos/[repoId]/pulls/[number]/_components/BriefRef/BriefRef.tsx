@@ -19,6 +19,7 @@ interface Common {
   refValue: string;
   refLines: RiskBriefRefLine[];
   linkSha: string | null;
+  headSha: string | null;
   indexMatchesHead: boolean;
 }
 
@@ -54,12 +55,19 @@ type BriefRefProps = Common &
  *    `line` is not passed to `githubBlobUrl` and not handed to `onOpenFile`
  *    either: the text and the target say the same thing or the reference is
  *    wrong in one of them.
- *  - **A risk reference becomes a link** only with `linkSha != null` (AC-27),
- *    `repoFullName != null` and `isLinkablePath`. `linkSha` is NOT the same test
- *    as the suffix gate: a null `link_sha` means there is no commit at which this
- *    path is true, so the link is not built at all — never against `head_sha`.
- *    `client/INSIGHTS.md:418-441` is what that mistake looked like: the link
- *    opened, the file existed, the line existed, and it was a comment.
+ *  - **A risk reference becomes a link** at `head_sha` — the commit this brief
+ *    describes — with `repoFullName != null` and `isLinkablePath`. This is a
+ *    DIVERGENCE from AC-27, which gated the link on `link_sha`, and it was made
+ *    on 2026-08-20 against a measurement: `link_sha` is the commit the INDEX sits
+ *    at, the index tracks the default branch, so `index_matches_head` is false
+ *    for every brief of every PR, and a path the PR ADDS cannot exist there. Every
+ *    such link was a 404 — the rule meant to keep a link truthful was pointing at
+ *    a tree without the file in it.
+ *
+ *    The old rule's reason survives where it belongs: the `:<line>` suffix is
+ *    still gated on `indexMatchesHead`, so a head link never carries a line the
+ *    index cannot vouch for. `BlastRadiusCard` still links at `link_sha` and must:
+ *    its facts come from the indexed tree, where its paths do exist.
  *  - **A focus reference becomes a control** only when the path is one of this
  *    PR's changed files AND `isLinkablePath` (AC-6, AC-15). An endpoint label
  *    (`POST /pulls/:id/brief`) fails the changed-file test on its own. Grounding
@@ -71,7 +79,7 @@ type BriefRefProps = Common &
  */
 export function BriefRef(props: BriefRefProps) {
   const t = useTranslations("brief");
-  const { refValue, refLines, linkSha, indexMatchesHead } = props;
+  const { refValue, refLines, linkSha, headSha, indexMatchesHead } = props;
 
   const line = lineFor(refValue, refLines, linkSha, indexMatchesHead);
   const label = line != null ? `${refValue}:${line}` : refValue;
@@ -79,8 +87,8 @@ export function BriefRef(props: BriefRefProps) {
   if (props.as === "link") {
     const { repoFullName } = props;
     const href =
-      linkSha != null && repoFullName != null && isLinkablePath(refValue)
-        ? githubBlobUrl(repoFullName, linkSha, refValue, line ?? undefined)
+      headSha != null && repoFullName != null && isLinkablePath(refValue)
+        ? githubBlobUrl(repoFullName, headSha, refValue, line ?? undefined)
         : undefined;
 
     return href ? (

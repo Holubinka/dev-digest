@@ -16,6 +16,7 @@ interface RiskAreasProps {
   riskLevel: string | null;
   refLines: RiskBriefRefLine[];
   linkSha: string | null;
+  headSha: string | null;
   indexMatchesHead: boolean;
   /** `owner/repo`, or null until the repo loads. No repo, no github.com link. */
   repoFullName: string | null;
@@ -47,6 +48,7 @@ export function RiskAreas({
   riskLevel,
   refLines,
   linkSha,
+  headSha,
   indexMatchesHead,
   repoFullName,
   intentFreshness,
@@ -123,6 +125,7 @@ export function RiskAreas({
                 risk={risk}
                 refLines={refLines}
                 linkSha={linkSha}
+                headSha={headSha}
                 indexMatchesHead={indexMatchesHead}
                 repoFullName={repoFullName}
               />
@@ -140,6 +143,7 @@ export function RiskAreas({
                     risk={risk}
                     refLines={refLines}
                     linkSha={linkSha}
+                    headSha={headSha}
                     indexMatchesHead={indexMatchesHead}
                     repoFullName={repoFullName}
                   />
@@ -178,6 +182,7 @@ function RiskRow({
   risk,
   refLines,
   linkSha,
+  headSha,
   indexMatchesHead,
   repoFullName,
 }: {
@@ -190,6 +195,7 @@ function RiskRow({
    * would open the wrong file rather than no file.
    */
   linkSha: string | null;
+  headSha: string | null;
   indexMatchesHead: boolean;
   repoFullName: string | null;
 }) {
@@ -223,6 +229,7 @@ function RiskRow({
               refValue={ref}
               refLines={refLines}
               linkSha={linkSha}
+              headSha={headSha}
               indexMatchesHead={indexMatchesHead}
               repoFullName={repoFullName}
             />

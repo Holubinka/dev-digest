@@ -899,6 +899,35 @@ needs a judgement about what counts as a route, so a mechanical check would need
 first. If someone wants it enforced, the place is a lint rule over `client/src/lib/` imports, and
 the decision belongs to whoever owns `frontend-architecture`.
 
+### A link pinned to the indexed commit 404s on every file a PR adds
+
+**Symptom.** Clicking a path in Risk Areas opened GitHub's "does not contain the path" page.
+Reported 2026-08-20 against this repo's own PR #22.
+
+**Cause.** `BriefRef` built the href at `link_sha`, per AC-27, on the reasoning that it is "the
+commit at which this path is true". `link_sha` is the commit the INDEX sits at, and the index
+tracks the default branch — so `index_matches_head` is **false for every brief of every PR** here,
+and a path the PR *adds* is absent from that tree. Measured against real GitHub, same path:
+
+    .../blob/2f8b7e19…/…/ArchitectureSection.tsx   404   (link_sha — main's tip)
+    .../blob/208c29e8…/…/ArchitectureSection.tsx   200   (head_sha — the PR)
+
+Regenerating the brief cannot help: the content was never the problem, the commit in the URL was.
+
+**Fix.** Link at `head_sha` — the commit the brief describes and the version under review. The old
+rule's reason survives where it belongs: the `:line` suffix is still gated on `indexMatchesHead`,
+so a head link never carries a line the index cannot vouch for. `BlastRadiusCard` keeps linking at
+`link_sha` and must — its facts come from the indexed tree, where its paths do exist.
+
+Recorded as a **divergence from AC-27**, not a spec rewrite. Two things made it hard to see:
+the rule was stated as doctrine in a docstring, and that docstring cited
+`client/INSIGHTS.md:418-441` for the failure it was avoiding — a citation that no longer resolves,
+because the entry moved. A rule defended by a dead reference is a rule nobody can re-check.
+
+The tests said so too, by name: *"links a risk reference at the index commit, not at the head"*.
+A test that names the alternative it rejects is the best possible warning — and it is only worth
+as much as the reason behind it, which here had rotted.
+
 ## Codebase Patterns
 
 ### A security predicate gets exported, not restated — `hasDotSegment` is the dot-segment rule
