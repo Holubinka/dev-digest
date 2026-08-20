@@ -460,9 +460,15 @@ describe('firstHunkLine', () => {
   });
 
   it('accepts the single-line form, where `,d` is omitted', () => {
-    // `@@ -0,0 +1 @@` is what a one-line new file looks like.
-    expect(firstHunkLine('@@ -0,0 +1 @@\n+only\n')).toBe(1);
     expect(firstHunkLine('@@ -3 +7 @@\n-a\n+b\n')).toBe(7);
+  });
+
+  it('refuses an ADDED file, whose first hunk always starts at 1', () => {
+    // `-0,0` is what marks it. The `1` is a property of new files, not of this
+    // change, and a number that looks measured and says nothing is worse than
+    // no number: before this source existed, the reference simply had none.
+    expect(firstHunkLine('@@ -0,0 +1,25 @@\n+first\n')).toBeNull();
+    expect(firstHunkLine('@@ -0,0 +1 @@\n+only\n')).toBeNull();
   });
 
   it('finds the header when a file header precedes it', () => {

@@ -650,9 +650,18 @@ export function mergeInputs(
  * may word it as the second.
  */
 export function firstHunkLine(patchHead: string): number | null {
-  const hit = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/m.exec(patchHead);
-  if (hit?.[1] === undefined) return null;
-  const line = Number(hit[1]);
+  const hit = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,\d+)? @@/m.exec(patchHead);
+  if (hit?.[3] === undefined) return null;
+  // An ADDED file opens `@@ -0,0 +1,N @@`, and `1` there is not a fact about
+  // this change — every new file starts at line 1. Printing it puts a number
+  // that looks measured beside a path where it means nothing, which is worse
+  // than the blank this used to leave. The old side is what identifies the case:
+  // no lines removed, from line zero.
+  const oldStart = Number(hit[1]);
+  const oldCount = hit[2] === undefined ? 1 : Number(hit[2]);
+  if (oldStart === 0 && oldCount === 0) return null;
+
+  const line = Number(hit[3]);
   return Number.isInteger(line) && line >= 1 ? line : null;
 }
 
