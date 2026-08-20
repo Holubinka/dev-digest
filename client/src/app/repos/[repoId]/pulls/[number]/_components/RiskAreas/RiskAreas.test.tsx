@@ -1,5 +1,5 @@
-import { describe, it, expect, afterEach } from "vitest";
-import { render, screen, cleanup, within } from "@testing-library/react";
+import { describe, it, expect, afterEach, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import type { RiskBriefRefLine } from "@/lib/types";
 import type { Risk } from "@devdigest/shared";
@@ -54,6 +54,8 @@ const REF_LINES: RiskBriefRefLine[] = [
   { ref: "src/middleware/ratelimit.ts", line: 12, source: "blast_symbol" },
 ];
 
+const onRecompute = vi.fn();
+
 function renderSection(props: Partial<React.ComponentProps<typeof RiskAreas>> = {}) {
   return render(
     <NextIntlClientProvider locale="en" messages={{ brief: messages }}>
@@ -68,6 +70,8 @@ function renderSection(props: Partial<React.ComponentProps<typeof RiskAreas>> = 
         intentFreshness="fresh"
         intentComputedAt="2026-08-15T10:00:00.000Z"
         isLoading={false}
+        onRecompute={onRecompute}
+        recomputing={false}
         {...props}
       />
     </NextIntlClientProvider>,
@@ -468,4 +472,17 @@ describe("RiskAreas — the icon dictionary", () => {
       });
     },
   );
+
+  it("recomputes the BRIEF, not the intent, from its own control", () => {
+    // The card this section is slotted into has a Recompute of its own, bound to
+    // the intent. Pressing that one never changed a risk — which under a shared
+    // heading is indistinguishable from a dead button. This control is the
+    // section's, and both labels now name their subject.
+    onRecompute.mockClear();
+    renderSection();
+
+    fireEvent.click(screen.getByRole("button", { name: /recompute brief/i }));
+
+    expect(onRecompute).toHaveBeenCalledTimes(1);
+  });
 });

@@ -178,6 +178,8 @@ export function OverviewTab({
                 intentFreshness={record?.intent_freshness ?? null}
                 intentComputedAt={record?.intent_computed_at ?? null}
                 isLoading={briefBusy}
+                onRecompute={() => compute.mutate()}
+                recomputing={compute.isPending}
               />
             }
           />
