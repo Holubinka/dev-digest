@@ -202,6 +202,15 @@ export interface BriefReads {
   getRepo(repoId: string): Promise<BriefRepoRef | undefined>;
   getFilePaths(prId: string, limit: number): Promise<string[]>;
   getDiffStats(prId: string): Promise<BriefDiffStats>;
+  /**
+   * The head of each named file's patch, for reading its first hunk header.
+   *
+   * `paths` is the GROUNDED set, so the read is bounded by what survived the
+   * filter rather than by the size of the diff, and the repository returns only
+   * the start of each patch: a unified patch opens with its first `@@` header,
+   * and a file whose header is past that cut simply contributes no line.
+   */
+  getFilePatchHeads(prId: string, paths: string[]): Promise<Array<{ path: string; head: string }>>;
   getBriefFor(prId: string, headSha: string): Promise<PrBriefRow | undefined>;
   /** `null` when this sha has no `pr_commits` row — which is `unknown`, not `fresh` (R25). */
   getHeadCommittedAt(prId: string, headSha: string): Promise<Date | null>;

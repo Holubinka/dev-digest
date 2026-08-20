@@ -496,6 +496,9 @@ function serviceFor(
     getRepo: async () => ({ owner: 'acme', name: 'payments-api' }),
     getFilePaths: async () => ['src/changed.ts'],
     getDiffStats: async () => ({ files: 1, additions: 1, deletions: 0 }),
+    // No patches by default: these cases pin the BLAST source, and a hunk line
+    // would mask the gate they are about.
+    getFilePatchHeads: async () => [],
     getBriefFor: async () => undefined,
     getHeadCommittedAt: async () => null,
     upsertBrief: async (prId, headSha, values): Promise<PrBriefRow> => {
@@ -637,5 +640,51 @@ describe('BriefService.run — a number outlives the commit it was measured at, 
     });
 
     expect(stored).toEqual([{ ref: 'src/api.ts', line: 12, source: 'blast_symbol' }]);
+  });
+});
+
+/**
+ * The source a stale index cannot silence. Every brief of every PR in this
+ * product runs with `index_matches_head` false — the index tracks the default
+ * branch — so before this the stored `ref_lines` were always `[]`.
+ */
+describe("BriefService.run — a line read out of the PR's own patch", () => {
+  const withPatch = async (blast: BlastRadiusView, head: string) => {
+    const { service, writes } = serviceFor(blast, ANSWER, {
+      getFilePatchHeads: async () => [{ path: 'src/api.ts', head }],
+    });
+    const out = await service.compute(WS, PR, { warn: () => {} });
+    if (!out.ok) throw new Error(out.reason);
+    return writes[0]!.refLines;
+  };
+
+  it('persists a hunk line with the index behind the head', async () => {
+    const stale = gateBlast({ index_matches_head: false });
+
+    expect(await withPatch(stale, '@@ -1,2 +40,3 @@\n+x\n')).toEqual([
+      { ref: 'src/api.ts', line: 40, source: 'diff_hunk' },
+    ]);
+  });
+
+  it('prefers the hunk line over an index one for the same path', async () => {
+    // Both describe `src/api.ts`; only one is true at the commit a reference
+    // links to, and that is the head.
+    const lines = await withPatch(gateBlast(), '@@ -1,2 +99,3 @@\n+x\n');
+
+    expect(lines.filter((entry) => entry.ref === 'src/api.ts')).toEqual([
+      { ref: 'src/api.ts', line: 99, source: 'diff_hunk' },
+    ]);
+  });
+
+  it('leaves an index line standing for a path the diff does not touch', async () => {
+    const lines = await withPatch(gateBlast(), '@@ -1,2 +99,3 @@\n+x\n');
+
+    expect(lines).toContainEqual({ ref: 'src/caller.ts', line: 34, source: 'blast_caller' });
+  });
+
+  it('stores no line for a file whose patch carries no hunk header', async () => {
+    const stale = gateBlast({ index_matches_head: false });
+
+    expect(await withPatch(stale, '')).toEqual([]);
   });
 });

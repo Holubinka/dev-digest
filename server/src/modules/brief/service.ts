@@ -24,6 +24,7 @@ import {
   buildAllowedRefs,
   buildBlocks,
   buildRefLines,
+  firstHunkLine,
   fitToBudget,
   groundBrief,
   intentFreshness,
@@ -201,10 +202,25 @@ export class BriefService {
       ...grounded.risks.flatMap((risk) => risk.file_refs),
       ...grounded.review_focus.map((item) => item.ref),
     ]);
-    const refLines =
+    const blastLines =
       indexMatchesHead && linkSha !== null
         ? buildRefLines(fit.included).filter((entry) => groundedRefs.has(entry.ref))
         : [];
+
+    // A second source, and the only one that survives a stale index. These
+    // numbers are read out of the PR's OWN patch, so they are true at `head_sha`
+    // — which is the commit a reference links to — and they need no index at
+    // all. That is also why they win over a blast number for the same path: the
+    // text and the target have to describe one commit, and the target is the
+    // head. A blast number keeps its place where nothing changed hands: a path
+    // the diff does not touch, with the index fresh.
+    const patchHeads = await this.repo.getFilePatchHeads(pull.id, [...groundedRefs]);
+    const hunkLines = patchHeads.flatMap(({ path, head }) => {
+      const line = firstHunkLine(head);
+      return line === null ? [] : [{ ref: path, line, source: 'diff_hunk' as const }];
+    });
+    const hunkRefs = new Set(hunkLines.map((entry) => entry.ref));
+    const refLines = [...hunkLines, ...blastLines.filter((entry) => !hunkRefs.has(entry.ref))];
 
     const row = await this.repo.upsertBrief(
       pull.id,

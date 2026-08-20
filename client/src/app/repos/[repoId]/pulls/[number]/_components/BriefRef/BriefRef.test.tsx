@@ -226,4 +226,27 @@ describe("BriefRef — a path is one unbreakable word", () => {
     const label = screen.getByText(`${LONG_PATH}:12`);
     expect(label.childElementCount).toBe(0);
   });
+
+  it("shows a diff-hunk line even when the index is behind, or absent", () => {
+    // The number came out of the PR's own patch, so it is true at `head_sha` —
+    // the commit the link goes to. Gating it on the index would suppress the one
+    // source that survives a stale index, which is the state every PR is in here.
+    const refLines = [{ ref: PATH, line: 40, source: "diff_hunk" as const }];
+
+    renderLink({ refLines, indexMatchesHead: false, linkSha: null });
+
+    expect(screen.getByRole("link", { name: `${PATH}:40` })).toHaveAttribute(
+      "href",
+      `https://github.com/acme/payments-api/blob/${HEAD}/${PATH}#L40`,
+    );
+  });
+
+  it("still refuses an index-measured line when the index is behind", () => {
+    // The exemption is for `diff_hunk` alone; a `blast_*` number was measured at
+    // `link_sha` and describes a file the reader is not looking at.
+    renderLink({ indexMatchesHead: false });
+
+    expect(screen.queryByText(`${PATH}:12`)).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: PATH })).toBeInTheDocument();
+  });
 });

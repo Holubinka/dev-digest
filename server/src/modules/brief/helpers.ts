@@ -636,6 +636,26 @@ export function mergeInputs(
  * never saw, and grounding — the strongest control this feature has — would
  * confirm it.
  */
+/**
+ * The head line the first hunk of a unified patch starts at — the `+c` of
+ * `@@ -a,b +c,d @@`.
+ *
+ * Measured, not claimed: the number comes out of the PR's own diff, so it is
+ * true at `head_sha` and needs no index. `,d` is optional in the format (a
+ * single-line hunk omits it) and `c` may be `0` for a pure deletion, which is
+ * not a line anyone can open — so that one is refused here rather than left for
+ * the client to notice.
+ *
+ * It says where the CHANGE begins, not where a problem is. Nothing downstream
+ * may word it as the second.
+ */
+export function firstHunkLine(patchHead: string): number | null {
+  const hit = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/m.exec(patchHead);
+  if (hit?.[1] === undefined) return null;
+  const line = Number(hit[1]);
+  return Number.isInteger(line) && line >= 1 ? line : null;
+}
+
 export function buildAllowedRefs(included: BriefBlock[]): Set<string> {
   const allowed = new Set<string>();
   for (const block of included) {

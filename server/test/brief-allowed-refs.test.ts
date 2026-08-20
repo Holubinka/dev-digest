@@ -20,6 +20,7 @@ import type { BlastRadiusView } from '@devdigest/shared';
 import {
   buildAllowedRefs,
   buildBlocks,
+  firstHunkLine,
   fitToBudget,
   groundBrief,
 } from '../src/modules/brief/helpers.js';
@@ -446,5 +447,39 @@ describe('buildAllowedRefs — the allowed set is a SUBSET of what the prompt pr
 
     expect(printed).toHaveLength(1);
     expect([...printed[0]!]).toHaveLength(MAX_FILE_PATH_CHARS);
+  });
+});
+
+/**
+ * The second source of a line number, and the only one a stale index cannot
+ * silence: the `+c` of the first `@@ -a,b +c,d @@` in the PR's own patch.
+ */
+describe('firstHunkLine', () => {
+  it('reads the head start of the first hunk', () => {
+    expect(firstHunkLine('@@ -1,4 +12,6 @@ function x() {\n-old\n+new\n')).toBe(12);
+  });
+
+  it('accepts the single-line form, where `,d` is omitted', () => {
+    // `@@ -0,0 +1 @@` is what a one-line new file looks like.
+    expect(firstHunkLine('@@ -0,0 +1 @@\n+only\n')).toBe(1);
+    expect(firstHunkLine('@@ -3 +7 @@\n-a\n+b\n')).toBe(7);
+  });
+
+  it('finds the header when a file header precedes it', () => {
+    expect(firstHunkLine('--- a/src/x.ts\n+++ b/src/x.ts\n@@ -1,2 +40,3 @@\n+x\n')).toBe(40);
+  });
+
+  it('takes the FIRST hunk when there are several', () => {
+    expect(firstHunkLine('@@ -1,2 +5,2 @@\n+a\n@@ -20,2 +80,2 @@\n+b\n')).toBe(5);
+  });
+
+  it('refuses a pure deletion, whose `+0` is not a line anyone can open', () => {
+    expect(firstHunkLine('@@ -1,3 +0,0 @@\n-gone\n')).toBeNull();
+  });
+
+  it('refuses anything that is not a hunk header', () => {
+    for (const text of ['', 'no hunks here', '@@ malformed @@', '+++ b/x.ts\n']) {
+      expect(firstHunkLine(text), JSON.stringify(text)).toBeNull();
+    }
   });
 });
