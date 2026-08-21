@@ -9,7 +9,8 @@ import type { PrFile } from "@/lib/types";
 import type { ReviewRecord, RunSummary } from "@devdigest/shared";
 import { BlastRadiusCard } from "../BlastRadiusCard";
 import { IntentCard } from "../IntentCard";
-import { PrBriefBanner, hasReviewForOtherState, reviewsForHead } from "../PrBriefBanner";
+import { PrBriefBanner } from "../PrBriefBanner";
+import { hasReviewForOtherState, reviewsForHead } from "../PrBriefBanner/helpers";
 import { RiskAreas } from "../RiskAreas";
 import { ReviewFocusSection } from "../ReviewFocusSection";
 import { s } from "./styles";
@@ -171,11 +172,14 @@ export function OverviewTab({
                 riskLevel={record?.risk_level ?? null}
                 refLines={record?.ref_lines ?? []}
                 linkSha={record?.link_sha ?? null}
+                headSha={record?.head_sha ?? null}
                 indexMatchesHead={record?.index_matches_head ?? false}
                 repoFullName={repoFullName}
                 intentFreshness={record?.intent_freshness ?? null}
                 intentComputedAt={record?.intent_computed_at ?? null}
                 isLoading={briefBusy}
+                onRecompute={() => compute.mutate()}
+                recomputing={compute.isPending}
               />
             }
           />
@@ -186,6 +190,7 @@ export function OverviewTab({
           items={record?.review_focus ?? null}
           refLines={record?.ref_lines ?? []}
           linkSha={record?.link_sha ?? null}
+          headSha={record?.head_sha ?? null}
           indexMatchesHead={record?.index_matches_head ?? false}
           prFiles={prFiles}
           onOpenFile={onOpenFile}

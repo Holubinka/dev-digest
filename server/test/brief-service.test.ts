@@ -141,6 +141,7 @@ function fakeRepo(opts: RepoOptions = {}) {
     getRepo: async () => ({ owner: 'Holubinka', name: 'dev-digest' }),
     getFilePaths: async () => opts.filePaths ?? ['server/src/modules/brief/service.ts'],
     getDiffStats: async () => opts.diff ?? { files: 1, additions: 10, deletions: 1 },
+    getFilePatchHeads: async () => [],
     getBriefFor: async () => opts.stored,
     getHeadCommittedAt: async () => opts.headCommittedAt ?? null,
     upsertBrief: async (prId, headSha, values, maxStates) => {

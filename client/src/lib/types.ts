@@ -68,16 +68,47 @@ export type {
 
 /** PR Why + Risk Brief (10) — the per-head_sha brief card and its history. */
 export type {
-  RiskBrief,
   RiskBriefRecord,
-  RiskBriefTimeline,
-  RiskBriefTimelineEntry,
   RiskBriefInput,
   RiskBriefRefLine,
-  RiskBriefRefLineSource,
   ReviewFocusItem,
-  RiskBriefTokenizer,
   IntentFreshness,
+} from "@devdigest/shared";
+
+/**
+ * Onboarding Tour (SPEC-03) — the page envelope and everything the tour is made
+ * of. Types only, never the schemas: nothing on this screen validates, and
+ * importing the Zod object would put a parser in the client bundle that no call
+ * site runs.
+ *
+ * `OnboardingSectionKind` is the one the rest of the feature keys on — the
+ * section descriptor, the rail and the empty-state copy all index by it — so a
+ * rename in the contract becomes a compile error here rather than a section
+ * that quietly stops rendering.
+ *
+ * `OnboardingDraft`, `OnboardingDropped` and `OnboardingTokenizer` are
+ * deliberately NOT here. They ride inside the record and nothing on the page
+ * draws them; re-exporting a type no screen reads is how a "the client uses
+ * this" claim gets made by accident.
+ */
+export type {
+  OnboardingPage,
+  OnboardingRecord,
+  OnboardingIndexState,
+  OnboardingRefusal,
+  Onboarding,
+  OnboardingSection,
+  OnboardingSectionKind,
+  OnboardingFlow,
+  OnboardingReadingStep,
+  OnboardingTask,
+  OnboardingTaskStep,
+  OnboardingTaskComplexity,
+  OnboardingPackageBlock,
+  OnboardingSetupCommand,
+  OnboardingEnvVar,
+  OnboardingPackageScan,
+  OnboardingInput,
 } from "@devdigest/shared";
 
 /** UI-only view model for a PR list row (derives display fields from PrMeta). */

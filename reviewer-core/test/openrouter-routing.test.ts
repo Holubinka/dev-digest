@@ -50,6 +50,22 @@ function capture(provider: OpenRouterProvider) {
 }
 
 describe('OpenRouter provider routing constraint', () => {
+  it('asks for the fastest surviving endpoint, not the cheapest', async () => {
+    // `require_parameters` narrows the set; nothing ordered it. Measured
+    // 2026-08-20 on `deepseek/deepseek-v4-flash`, which OpenRouter serves from
+    // eighteen backends: two same-shaped calls landed on two of them and ran at
+    // 5 tokens in 0.78s and 93 tokens in 16.3s — about 5.7 tok/s on the second.
+    // The brief's 45s clock does not fit a real answer at that rate, and the
+    // onboarding tour missed a 219s clock three times running for the same
+    // reason. `sort: 'throughput'` orders what survives the filter.
+    const provider = new OpenRouterProvider('k');
+    const bodies = capture(provider);
+
+    await provider.completeStructured(request());
+
+    expect(bodies[0]?.provider).toMatchObject({ sort: 'throughput' });
+  });
+
   it('sends provider.require_parameters on every OpenRouter request', async () => {
     const provider = new OpenRouterProvider('k');
     const bodies = capture(provider);
@@ -57,7 +73,7 @@ describe('OpenRouter provider routing constraint', () => {
     await provider.completeStructured(request());
 
     expect(bodies).toHaveLength(1);
-    expect(bodies[0]?.provider).toEqual({ require_parameters: true });
+    expect(bodies[0]?.provider).toEqual({ require_parameters: true, sort: 'throughput' });
   });
 
   it('sends it alongside the strict json_schema it exists to protect', async () => {
@@ -70,7 +86,7 @@ describe('OpenRouter provider routing constraint', () => {
       type: 'json_schema',
       json_schema: { name: 'Intent', strict: true },
     });
-    expect(bodies[0]?.provider).toEqual({ require_parameters: true });
+    expect(bodies[0]?.provider).toEqual({ require_parameters: true, sort: 'throughput' });
   });
 
   /**
@@ -105,6 +121,7 @@ describe('OpenRouter provider routing constraint', () => {
     await provider.completeStructured(request());
 
     expect(bodies).toHaveLength(2);
-    for (const body of bodies) expect(body.provider).toEqual({ require_parameters: true });
+    for (const body of bodies)
+      expect(body.provider).toEqual({ require_parameters: true, sort: 'throughput' });
   });
 });

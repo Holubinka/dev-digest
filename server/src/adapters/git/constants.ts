@@ -11,6 +11,10 @@
  * `.git` is in the list twice over: `listFiles` also refuses a root that
  * resolves into the git directory, because `.git/config` carries the clone URL
  * with the stored GitHub PAT embedded in it.
+ *
+ * It leaves the adapter as DATA, in `listFiles`'s `excludedDirs`. A caller that
+ * has to tell a reader where a scan did not look reads it from the result rather
+ * than keeping a fourth copy — `modules/onboarding` kept one until 2026-08-18.
  */
 export const EXCLUDED_WALK_DIRS = [
   'node_modules',

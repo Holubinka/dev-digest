@@ -51,7 +51,7 @@ export function DocPreview({
         ) : doc.isError ? (
           <ErrorState body={t("reader.loadError")} onRetry={() => void doc.refetch()} />
         ) : doc.isSuccess ? (
-          <DocumentReader markdown={doc.data.content ?? ""} />
+          <DocumentReader markdown={doc.data.content ?? ""} resolvePath={null} />
         ) : (
           /* Keyed on `isSuccess`, not on `isLoading`: a disabled TanStack query
              reports `isLoading === false` (client/INSIGHTS.md), so the honest

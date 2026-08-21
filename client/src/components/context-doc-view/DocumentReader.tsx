@@ -25,10 +25,24 @@
 import React from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { isSafeUrl } from "./helpers";
+import { isSafeUrl, resolveHref } from "./helpers";
 import { s } from "./styles";
 
-export function DocumentReader({ markdown }: { markdown: string }) {
+export function DocumentReader({
+  markdown,
+  resolvePath,
+}: {
+  markdown: string;
+  /**
+   * Turns a repo-relative href into a URL, or refuses it. `null` is the
+   * document reader's own answer — "this surface has no repository behind it"
+   * — and leaves a relative href exactly as written, which is what the two
+   * Project Context call sites have always done.
+   *
+   * Required, not optional: see `resolveHref`.
+   */
+  resolvePath: ((path: string) => string | undefined) | null;
+}) {
   return (
     <div className="dd-md" style={s.wrap}>
       <ReactMarkdown
@@ -36,14 +50,16 @@ export function DocumentReader({ markdown }: { markdown: string }) {
         components={{
           // A refused link renders as plain text rather than disappearing: the
           // reader still sees what the document said, it just cannot be clicked.
-          a: ({ children, href }) =>
-            isSafeUrl(href) ? (
-              <a href={href} target="_blank" rel="noopener noreferrer nofollow" style={s.link}>
+          a: ({ children, href }) => {
+            const resolved = resolveHref(href, resolvePath);
+            return resolved !== undefined ? (
+              <a href={resolved} target="_blank" rel="noopener noreferrer nofollow" style={s.link}>
                 {children}
               </a>
             ) : (
               <span style={s.blockedLink}>{children}</span>
-            ),
+            );
+          },
           img: ({ src, alt }) =>
             isSafeUrl(typeof src === "string" ? src : undefined) ? (
               // eslint-disable-next-line @next/next/no-img-element

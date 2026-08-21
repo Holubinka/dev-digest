@@ -309,8 +309,22 @@ export interface GitClient {
    * them, and how large each one is. A root that does not resolve inside the
    * clone contributes nothing; a root that does not exist is not an error, it is
    * simply empty. `bounded` reports that `maxFiles` fired and the list is a
-   * prefix of what is on disk. Paths come back posix-style and sorted, so
-   * "first N when bounded" is reproducible across runs.
+   * prefix of what is on disk.
+   *
+   * ORDER: shallowest first, then by path, posix-style throughout. Reproducible
+   * across runs, which is what makes "first N when bounded" a stable answer —
+   * and DEPTH FIRST because a plain alphabetical sort turns `maxFiles` into an
+   * alphabetical slice. A repository with 65 `apps/aNNN/package.json` loses its
+   * root `package.json` to a ceiling of 64, since `apps/` sorts before it;
+   * raising the ceiling only moves that cut, while ordering by depth removes it.
+   * What a ceiling drops is then the deepest, i.e. the least likely to be what a
+   * caller asking a whole-clone question came for.
+   *
+   * `excludedDirs` names the directory names the walk refuses to descend. It is
+   * RETURNED rather than exported as a constant because it is a fact only the
+   * adapter knows: a caller that has to disclose where a scan did not look would
+   * otherwise keep its own copy of the list, which nothing but a test can hold
+   * straight.
    *
    * A missing clone directory THROWS — the caller maps that to "no clone yet",
    * which is a different answer from "the clone has no documents".
@@ -321,10 +335,37 @@ export interface GitClient {
       roots: string[];
       /** Lower-cased, dot-prefixed, e.g. `['.md']`. Matched case-insensitively. */
       extensions: string[];
+      /**
+       * Exact file NAMES, case-sensitive, e.g. `['package.json']`. A file matches
+       * when its extension is in `extensions` OR its name is in `names`. Absent =
+       * extensions only.
+       *
+       * It is a separate option because a manifest is a name, not an extension:
+       * `package.json` has the extension `.json`, and asking for `.json` returns
+       * `tsconfig.json`, `package-lock.json` and every JSON fixture the
+       * repository committed — on a repo of any size the manifests are a handful
+       * among hundreds. The match is case-sensitive because npm's is: a file
+       * called `Package.json` is not a package manifest.
+       */
+      names?: string[];
+      /**
+       * Directory depth below each root that is still descended. 0 = the root
+       * directory itself only. Absent = no limit, which is what every caller
+       * before this had. Counted per root, so two roots do not share a budget.
+       */
+      maxDepth?: number;
+      /**
+       * Counts MATCHES, never files visited: the slice happens after the filter.
+       *
+       * A ceiling applied before the filter answers a different question. Twelve
+       * files off a walk that has not filtered yet can be twelve `.json` fixtures
+       * that sorted first and not one manifest, so a repository with five
+       * packages reports zero.
+       */
       maxFiles: number;
       maxFileBytes: number;
     },
-  ): Promise<{ files: ClonedFile[]; bounded: boolean }>;
+  ): Promise<{ files: ClonedFile[]; bounded: boolean; excludedDirs: string[] }>;
   /**
    * Write one UTF-8 text file into the clone, refusing anything that resolves
    * outside it, into its git directory, or THROUGH a symbolic link.

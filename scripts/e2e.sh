@@ -48,6 +48,12 @@ warn() { printf '\033[1;33m! %s\033[0m\n' "$*"; }
 # --- prerequisites -----------------------------------------------------------
 command -v docker >/dev/null || { echo "docker not found"; exit 1; }
 command -v pnpm   >/dev/null || { echo "pnpm not found (npm i -g pnpm)"; exit 1; }
+# e2e/ is an npm package, not pnpm, and nothing else in this repo installs it.
+# Checked HERE rather than left to the runner: without it the failure is
+# `sh: tsx: command not found` after Postgres, the API and web are already up —
+# a confusing message at the most expensive possible moment.
+[ -x e2e/node_modules/.bin/tsx ] || \
+  { echo "e2e deps not installed (cd e2e && npm install)"; exit 1; }
 command -v agent-browser >/dev/null || \
   warn "agent-browser not found — install once: npm i -g agent-browser && agent-browser install"
 

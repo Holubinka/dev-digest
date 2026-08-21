@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, ne, notInArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, ne, notInArray, sql } from 'drizzle-orm';
 import type { Db } from '../../db/client.js';
 import * as t from '../../db/schema.js';
 import type { PrBriefRow } from '../../db/rows.js';
@@ -92,6 +92,22 @@ export class BriefRepository implements BriefReads {
       .orderBy(asc(t.prFiles.path))
       .limit(limit);
     return rows.map((row) => row.path);
+  }
+
+  /**
+   * `LEFT(patch, …)` in Postgres, not in JS: a patch can be large and only its
+   * first hunk header is wanted, so the bytes are cut before they cross the wire.
+   */
+  async getFilePatchHeads(
+    prId: string,
+    paths: string[],
+  ): Promise<Array<{ path: string; head: string }>> {
+    if (paths.length === 0) return [];
+    const rows = await this.db
+      .select({ path: t.prFiles.path, head: sql<string>`LEFT(COALESCE(${t.prFiles.patch}, ''), 400)` })
+      .from(t.prFiles)
+      .where(and(eq(t.prFiles.prId, prId), inArray(t.prFiles.path, paths)));
+    return rows;
   }
 
   /** Counts, summed in Postgres: the whole point is not to pull the rows to count them. */

@@ -1,5 +1,5 @@
-import { describe, it, expect, afterEach } from "vitest";
-import { render, screen, cleanup, within } from "@testing-library/react";
+import { describe, it, expect, afterEach, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import type { RiskBriefRefLine } from "@/lib/types";
 import type { Risk } from "@devdigest/shared";
@@ -54,6 +54,8 @@ const REF_LINES: RiskBriefRefLine[] = [
   { ref: "src/middleware/ratelimit.ts", line: 12, source: "blast_symbol" },
 ];
 
+const onRecompute = vi.fn();
+
 function renderSection(props: Partial<React.ComponentProps<typeof RiskAreas>> = {}) {
   return render(
     <NextIntlClientProvider locale="en" messages={{ brief: messages }}>
@@ -62,11 +64,14 @@ function renderSection(props: Partial<React.ComponentProps<typeof RiskAreas>> = 
         riskLevel="high"
         refLines={REF_LINES}
         linkSha={INDEX}
+        headSha={HEAD}
         indexMatchesHead
         repoFullName="acme/payments-api"
         intentFreshness="fresh"
         intentComputedAt="2026-08-15T10:00:00.000Z"
         isLoading={false}
+        onRecompute={onRecompute}
+        recomputing={false}
         {...props}
       />
     </NextIntlClientProvider>,
@@ -203,16 +208,33 @@ describe("RiskAreas — the line a reference carries", () => {
 
     expect(screen.getByRole("link", { name: "src/middleware/ratelimit.ts:12" })).toHaveAttribute(
       "href",
-      `https://github.com/acme/payments-api/blob/${INDEX}/src/middleware/ratelimit.ts#L12`,
+      `https://github.com/acme/payments-api/blob/${HEAD}/src/middleware/ratelimit.ts#L12`,
     );
   });
 
-  it("links a risk reference at the index commit, not at the head", () => {
+  it("links a risk reference at the head, the commit the file exists at", () => {
+    // DIVERGENCE from AC-27, decided 2026-08-20 against a measurement. `link_sha`
+    // is the commit the INDEX sits at; the index tracks the default branch, so
+    // `index_matches_head` is false for every brief of every PR, and a path the
+    // PR ADDS is absent from that tree — every such link was a 404. The old
+    // rule's reason survives where it belongs: the `:line` suffix is still gated
+    // on `indexMatchesHead`, so a head link never carries a line the index
+    // cannot vouch for. `BlastRadiusCard` still links at `link_sha` and must.
     renderSection();
     const link = screen.getByRole("link", { name: "src/middleware/ratelimit.ts:12" });
 
-    expect(link.getAttribute("href")).toContain(INDEX);
-    expect(link.getAttribute("href")).not.toContain(HEAD);
+    expect(link.getAttribute("href")).toContain(HEAD);
+    expect(link.getAttribute("href")).not.toContain(INDEX);
+  });
+
+  it("still links when the repo has no index at all", () => {
+    // `link_sha` null used to mean "no link". It means "no indexed commit", and
+    // the file is still at the head — which is the version under review.
+    renderSection({ linkSha: null, indexMatchesHead: false });
+    const link = screen.getByRole("link", { name: "src/middleware/ratelimit.ts" });
+
+    expect(link.getAttribute("href")).toContain(HEAD);
+    expect(link.getAttribute("href")).not.toContain("#L");
   });
 
   it("shows no `:line` anywhere when the index is behind the head, populated or not", () => {
@@ -245,9 +267,9 @@ describe("RiskAreas — the line a reference carries", () => {
 
 describe("RiskAreas — what may become a link", () => {
   it("renders every reference as text when there is no commit to link them at", () => {
-    // AC-27. A null `link_sha` means there is no commit at which these paths are
-    // true — so no link at all, and above all never one built against the head.
-    const { container } = renderSection({ linkSha: null, indexMatchesHead: false });
+    // The gate is `head_sha` now: with no commit at all there is nothing to link
+    // to, and the path stays as text.
+    const { container } = renderSection({ headSha: null, linkSha: null, indexMatchesHead: false });
 
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
     expect(container.innerHTML).not.toContain("github.com");
@@ -265,7 +287,13 @@ describe("RiskAreas — what may become a link", () => {
 
     expect(screen.getByText("src/middleware/ratelimit.ts")).toBeInTheDocument();
     expect(screen.queryByText("src/middleware/ratelimit.ts:12")).not.toBeInTheDocument();
-    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    // The reference still LINKS — `head_sha` is what a link needs now — and the
+    // point of this case is that it carries no line, because `link_sha` is what
+    // a NUMBER needs and there is none. The two gates stayed independent; only
+    // the one the link hangs on moved.
+    expect(
+      screen.getByRole("link", { name: "src/middleware/ratelimit.ts" }).getAttribute("href"),
+    ).not.toContain("#L");
   });
 
   it("renders no link when the repository name has not loaded yet", () => {
@@ -444,4 +472,17 @@ describe("RiskAreas — the icon dictionary", () => {
       });
     },
   );
+
+  it("recomputes the BRIEF, not the intent, from its own control", () => {
+    // The card this section is slotted into has a Recompute of its own, bound to
+    // the intent. Pressing that one never changed a risk — which under a shared
+    // heading is indistinguishable from a dead button. This control is the
+    // section's, and both labels now name their subject.
+    onRecompute.mockClear();
+    renderSection();
+
+    fireEvent.click(screen.getByRole("button", { name: /recompute brief/i }));
+
+    expect(onRecompute).toHaveBeenCalledTimes(1);
+  });
 });

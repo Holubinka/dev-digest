@@ -15,11 +15,11 @@
     "outOfScope": "Out of scope",
     "riskAreas": "Risk areas",
     "confidence": "{band} confidence",
-    "recompute": "Recompute",
+    "recompute": "Recompute intent",
     "computing": "Computing…",
     "failed": "Couldn't compute intent.",
     "unavailable": "No intent derived for this PR yet.",
-    "unavailableHint": "A review run derives it — or press Recompute.",
+    "unavailableHint": "A review run derives it — or press Recompute intent.",
     "model": "via {model}",
     "none": "—"
   },
@@ -58,7 +58,8 @@
     "failed": "Couldn't compute the brief.",
     "rateLimited": "Too many briefs were requested for this workspace in the last minute. Try again shortly.",
     "notConfigured": "No model is configured for the Risk Brief, so there is nothing to compute it with.",
-    "notConfiguredLink": "Choose one in Settings → Models"
+    "notConfiguredLink": "Choose one in Settings → Models",
+    "recompute": "Recompute brief"
   },
   "why": {
     "title": "git-why",

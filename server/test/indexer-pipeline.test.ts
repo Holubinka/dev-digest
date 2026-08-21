@@ -5,7 +5,9 @@
  * stays on pipeline flow:
  *   - runFullIndex over a tmpdir clone → expected symbols/references persisted,
  *     repo_index_state stamped 'full' on a clean pass (T3: graph/rank/map ran
- *     via stubbed depgraph+tokenizer), unsupported / oversize files counted.
+ *     via stubbed depgraph+tokenizer), unsupported / oversize files counted,
+ *     and a run that throws mid-way stamped 'failed' with the previous pass's
+ *     facts carried forward.
  *   - runIncremental flow branches:
  *       * indexer-version mismatch → delegates to full
  *       * sha unchanged             → touchIndexState, no file work
@@ -21,7 +23,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runFullIndex } from '../src/modules/repo-intel/pipeline/full.js';
 import { runIncremental } from '../src/modules/repo-intel/pipeline/incremental.js';
-import type { RepoIntelRepository } from '../src/modules/repo-intel/repository.js';
+import type {
+  IndexStateUpsert,
+  RepoIntelRepository,
+} from '../src/modules/repo-intel/repository.js';
 import { INDEXER_VERSION } from '../src/modules/repo-intel/constants.js';
 import type { IndexState } from '../src/modules/repo-intel/types.js';
 import type { Container } from '../src/platform/container.js';
@@ -40,15 +45,19 @@ interface RepoBasics {
 function makeRepoStub(opts: {
   basics: RepoBasics | null;
   initialState?: IndexState | null;
+  /** Reject the first write of the persist phase, to abort a run mid-way. */
+  failDeleteAllForRepo?: Error;
 }) {
   const symbols: unknown[] = [];
   const references: unknown[] = [];
+  const upserts: IndexStateUpsert[] = [];
   let state: IndexState | null = opts.initialState ?? null;
 
   const stub = {
     getRepoBasics: async () => opts.basics,
     tryGetIndexState: async () => state,
     deleteAllForRepo: async () => {
+      if (opts.failDeleteAllForRepo) throw opts.failDeleteAllForRepo;
       symbols.length = 0;
       references.length = 0;
     },
@@ -69,15 +78,8 @@ function makeRepoStub(opts: {
     insertReferences: async (rows: unknown[]) => {
       references.push(...rows);
     },
-    upsertIndexState: async (s: {
-      repoId: string;
-      lastIndexedSha: string;
-      indexerVersion: number;
-      status: 'full' | 'partial' | 'degraded' | 'failed';
-      filesIndexed: number;
-      filesSkipped: number;
-      stats: Record<string, unknown>;
-    }) => {
+    upsertIndexState: async (s: IndexStateUpsert) => {
+      upserts.push(s);
       state = {
         repoId: s.repoId,
         status: s.status,
@@ -115,6 +117,7 @@ function makeRepoStub(opts: {
     repo: stub as unknown as RepoIntelRepository,
     symbols,
     references,
+    upserts,
     getState: () => state,
   };
 }
@@ -253,6 +256,50 @@ describe('runFullIndex', () => {
     expect(result.filesIndexed).toBe(0);
     expect(result.reason).toBe('no_files');
     expect(stub.getState()!.lastIndexedSha).toBe('sha-empty');
+  });
+
+  it('stamps status="failed" and re-throws when the run aborts, keeping the last good facts', async () => {
+    await writeFileAt(root, 'src/util.ts', `export function alpha(x: number) { return x + 1; }\n`);
+
+    const boom = new Error('connection terminated unexpectedly');
+    const stub = makeRepoStub({
+      basics: { id: 'r4', owner: 'acme', name: 'app', clonePath: root },
+      initialState: {
+        repoId: 'r4',
+        status: 'full',
+        filesIndexed: 7,
+        filesSkipped: 2,
+        durationMs: 42,
+        lastIndexedSha: 'sha-good',
+        indexerVersion: INDEXER_VERSION,
+        updatedAt: new Date(0),
+      },
+      failDeleteAllForRepo: boom,
+    });
+    const container = makeContainer({
+      currentHead: async () => 'sha-new',
+      diffNameOnly: async () => [],
+    });
+
+    // The caller (JobRunner / the resync route) still sees the failure.
+    await expect(runFullIndex(container, stub.repo, { repoId: 'r4' })).rejects.toThrow(
+      'connection terminated unexpectedly',
+    );
+
+    // ...and the row it left behind says so, instead of looking like "never ran".
+    expect(stub.upserts).toHaveLength(1);
+    const stamped = stub.upserts[0]!;
+    expect(stamped.status).toBe('failed');
+    expect(stamped.stats.degradedReason).toBe('index_failed');
+    expect(stamped.stats.error).toBe('connection terminated unexpectedly');
+
+    // The previous pass's facts survive: `lastIndexedSha` is what blast renders
+    // every line number against, so a failed RE-index must cost only the status.
+    expect(stamped.lastIndexedSha).toBe('sha-good');
+    expect(stamped.filesIndexed).toBe(7);
+    expect(stamped.filesSkipped).toBe(2);
+    expect(stub.getState()!.status).toBe('failed');
+    expect(stub.getState()!.lastIndexedSha).toBe('sha-good');
   });
 });
 

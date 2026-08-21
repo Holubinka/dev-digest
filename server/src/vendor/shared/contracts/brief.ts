@@ -240,7 +240,24 @@ export type RiskBriefInput = z.infer<typeof RiskBriefInput>;
  * `blastBlock` walks, and each carries its own `line` on `BlastRadiusView` — so the
  * source is also the answer to "where do I go back and check this number".
  */
-export const RiskBriefRefLineSource = z.enum(['blast_symbol', 'blast_caller', 'blast_endpoint']);
+export const RiskBriefRefLineSource = z.enum([
+  'blast_symbol',
+  'blast_caller',
+  'blast_endpoint',
+  /**
+   * The first changed hunk of this file, read out of the PR's own patch.
+   *
+   * The three `blast_*` sources are measured in the INDEX and are true at
+   * `link_sha` and nowhere else. This one is measured in the diff, so it is true
+   * at `head_sha` — the commit a reference links to — and it needs no index at
+   * all. That is why `lineFor` lets it past the `index_matches_head` gate the
+   * others must satisfy.
+   *
+   * It answers "where the change is", not "where the bug is", and the wording
+   * around it must not promise the second.
+   */
+  'diff_hunk',
+]);
 export type RiskBriefRefLineSource = z.infer<typeof RiskBriefRefLineSource>;
 
 /**

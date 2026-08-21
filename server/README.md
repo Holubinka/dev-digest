@@ -82,6 +82,7 @@ flowchart TB
   subgraph Intel["Repo intelligence"]
     repoIntel["repo-intel<br/>/repos/:id/index-state · /resync"]
     conventions["conventions<br/>/repos/:id/conventions · /conventions/extract · /conventions/:id"]
+    onboarding["onboarding<br/>GET /repos/:id/onboarding (cached, zero LLM)<br/>POST /repos/:id/onboarding/generate (one call, 6/min per workspace)"]
   end
   subgraph Platform["Platform"]
     settings["settings<br/>/settings · /providers"]

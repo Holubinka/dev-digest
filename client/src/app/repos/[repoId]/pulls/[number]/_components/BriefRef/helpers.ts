@@ -8,13 +8,14 @@ import type { RiskBriefRefLine } from "@/lib/types";
 /**
  * The line to show for one reference, or `null`.
  *
- * THREE gates, all of which must hold (R16, R17):
+ * THREE gates (R16, R17) — the first two only for numbers the INDEX measured:
  *
- *  - `indexMatchesHead` — the numbers were measured against the code at
- *    `link_sha`. If the index is behind the head, every one of them describes a
- *    file the reader is not looking at.
- *  - `linkSha != null` — there is no commit at which these paths are true, so
- *    there is no state a line number could belong to.
+ *  - `indexMatchesHead` — a `blast_*` number was measured against the code at
+ *    `link_sha`. If the index is behind the head, it describes a file the reader
+ *    is not looking at. A `diff_hunk` number is exempt: it comes out of the PR's
+ *    own patch and is true at `head_sha`, which is where the link goes.
+ *  - `linkSha != null` — same scope, same reason: there is no indexed commit a
+ *    `blast_*` number could belong to. A `diff_hunk` number needs no index.
  *  - `ref_lines` carries an entry whose `ref` equals this reference EXACTLY.
  *    The server strips a `:12` suffix before grounding and stores the stripped
  *    value, so the two sides match on the bare path.
@@ -36,10 +37,17 @@ export function lineFor(
   linkSha: string | null,
   indexMatchesHead: boolean,
 ): number | null {
-  if (!indexMatchesHead) return null;
-  if (linkSha == null) return null;
   const hit = refLines.find((entry) => entry.ref === refValue);
   if (hit == null) return null;
+  // The two gates below are about numbers measured in the INDEX, at `link_sha`.
+  // A `diff_hunk` number was measured in the PR's own patch, so it is true at
+  // `head_sha` — the commit the link goes to — however far behind the index is.
+  // Applying the index gates to it would suppress the only number that survives
+  // a stale index, which is the state every PR here is actually in.
+  if (hit.source !== "diff_hunk") {
+    if (!indexMatchesHead) return null;
+    if (linkSha == null) return null;
+  }
   const { line } = hit;
   if (!Number.isInteger(line) || line < 1 || line > MAX_LINE) return null;
   return line;

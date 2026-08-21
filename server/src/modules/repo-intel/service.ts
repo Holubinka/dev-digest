@@ -46,6 +46,7 @@ import type {
 } from './types.js';
 import {
   BFS_DEPTH,
+  CRITICAL_PATH_CHAINS,
   DEFAULT_REPO_MAP_TOKEN_BUDGET,
   INDEX_JOB_KIND,
   INDEXER_VERSION,
@@ -208,6 +209,16 @@ export class RepoIntelService implements RepoIntel {
     const persisted = await this.repo.tryGetIndexState(repoId);
     if (persisted) return persisted;
     return degradedIndexState(repoId, 'no_data');
+  }
+
+  /**
+   * The true file count, for callers that size work to the repository. Distinct
+   * from `getIndexState().filesIndexed`, which is the indexer's cumulative
+   * counter — see `RepoIntelRepository.countIndexedFiles`.
+   */
+  async countIndexedFiles(repoId: string): Promise<number> {
+    if (!this.container.config.repoIntelEnabled) return 0;
+    return this.repo.countIndexedFiles(repoId);
   }
 
   // -------------------------------------------------------------------------
@@ -695,9 +706,31 @@ export class RepoIntelService implements RepoIntel {
   }
 
   /**
-   * Dependency chains from the highest-ranked files (onboarding reading-path).
-   * For each of the top roots, greedily follow the highest-ranked import target
-   * up to BFS_DEPTH hops. Pure read over `file_edges` + `file_rank`.
+   * Dependency chains for the onboarding reading path. Walks the rank list in
+   * order and, for every candidate root that survives the two skips below,
+   * greedily follows the highest-ranked import target up to BFS_DEPTH hops;
+   * stops once CRITICAL_PATH_CHAINS chains are kept. Pure read over
+   * `file_edges` + `file_rank`, and the ceiling is a slice in memory AFTER both
+   * reads — neither query is parameterised by it.
+   *
+   * A candidate is skipped when it imports nothing (a rank-1 file is typically
+   * a leaf everyone imports, so seeding on it dies at `chain.length < 2`), and
+   * when `isJunkPath` rejects it — the same filter `getTopFilesByRank` applies
+   * to samples, and it matters here because 20 chains reach much further down
+   * the rank list than the old 5 roots did.
+   *
+   * THE THIRD SKIP IS WHAT MAKES THE TWENTY DISTINCT. A file already carried by
+   * a kept chain is not seeded again, because seeding on it can only re-walk the
+   * same greedy line from one hop further in: `a→b→c→d→e→f` returned five chains
+   * — `[a,b,c,d,e] [b,c,d,e,f] [c,d,e,f] [d,e,f] [e,f]` — one import line
+   * spending five of the twenty supply slots on one flow. They are SUFFIXES of
+   * each other, so the exact-duplicate key this used to carry never fired; the
+   * covered set subsumes that key, since two distinct roots can never build the
+   * same chain.
+   *
+   * It skips a covered ROOT only. A file reached from two different roots stays
+   * reachable from both, so a shared dependency does not silence the second
+   * chain that leads to it.
    */
   async getCriticalPaths(repoId: string): Promise<string[][]> {
     if (!this.container.config.repoIntelEnabled) return [];
@@ -715,10 +748,13 @@ export class RepoIntelService implements RepoIntel {
       else adj.set(e.fromFile, [e.toFile]);
     }
 
-    const roots = ranked.slice(0, CRITICAL_PATH_ROOTS).map((r) => r.path);
     const paths: string[][] = [];
-    const seenPaths = new Set<string>();
-    for (const root of roots) {
+    const covered = new Set<string>();
+    for (const { path: root } of ranked) {
+      if (paths.length >= CRITICAL_PATH_CHAINS) break;
+      if (!adj.has(root)) continue;
+      if (isJunkPath(root)) continue;
+      if (covered.has(root)) continue;
       const chain = [root];
       const inChain = new Set(chain);
       let cur = root;
@@ -732,17 +768,12 @@ export class RepoIntelService implements RepoIntel {
         cur = next;
       }
       if (chain.length < 2) continue;
-      const key = chain.join('>');
-      if (seenPaths.has(key)) continue;
-      seenPaths.add(key);
+      for (const file of chain) covered.add(file);
       paths.push(chain);
     }
     return paths;
   }
 }
-
-/** How many top-ranked files seed `getCriticalPaths` dependency chains. */
-const CRITICAL_PATH_ROOTS = 5;
 
 /**
  * The degraded `IndexState` every caller can branch on without a null check.

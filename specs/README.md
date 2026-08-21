@@ -53,3 +53,5 @@ the header alone. `Modules` is the same list the spec carries in its `**Modules:
 |---|---|---|
 | [`SPEC-01-project-context.md`](SPEC-01-project-context.md) | server, client, reviewer-core | Approved 2026-08-13 |
 | [`SPEC-02-pr-why-risk-brief.md`](SPEC-02-pr-why-risk-brief.md) | server, client | Approved 2026-08-16 · amendment AC-46…AC-76 approved 2026-08-16 |
+| [`SPEC-03-onboarding-tour.md`](SPEC-03-onboarding-tour.md) | server, client | Approved 2026-08-17 |
+| [`SPEC-04-onboarding-tour-depth.md`](SPEC-04-onboarding-tour-depth.md) | server, client | Approved 2026-08-18 |

@@ -2,7 +2,7 @@
 
 import React from "react";
 import { useTranslations } from "next-intl";
-import { Badge, Icon, Skeleton } from "@devdigest/ui";
+import { Badge, Button, Icon, Skeleton } from "@devdigest/ui";
 import type { RiskBriefRefLine } from "@/lib/types";
 import type { IntentFreshness, Risk } from "@devdigest/shared";
 import { BriefRef } from "../BriefRef";
@@ -16,6 +16,7 @@ interface RiskAreasProps {
   riskLevel: string | null;
   refLines: RiskBriefRefLine[];
   linkSha: string | null;
+  headSha: string | null;
   indexMatchesHead: boolean;
   /** `owner/repo`, or null until the repo loads. No repo, no github.com link. */
   repoFullName: string | null;
@@ -24,6 +25,13 @@ interface RiskAreasProps {
   intentComputedAt: string | null;
   /** The brief is being computed or fetched. The section stays, the rows wait. */
   isLoading: boolean;
+  /**
+   * This section's OWN recompute. The card it is slotted into has one too, and
+   * that one belongs to the intent — pressing it never changed a risk, which
+   * under a shared heading reads as a button that does nothing.
+   */
+  onRecompute: () => void;
+  recomputing: boolean;
 }
 
 /**
@@ -47,11 +55,14 @@ export function RiskAreas({
   riskLevel,
   refLines,
   linkSha,
+  headSha,
   indexMatchesHead,
   repoFullName,
   intentFreshness,
   intentComputedAt,
   isLoading,
+  onRecompute,
+  recomputing,
 }: RiskAreasProps) {
   const t = useTranslations("brief");
 
@@ -83,7 +94,7 @@ export function RiskAreas({
   return (
     <section style={s.section}>
       <div style={s.headRow}>
-        <Heading />
+        <Heading onRecompute={onRecompute} recomputing={recomputing} />
         {/* The WORD, not the colour alone (AC-4). */}
         {riskLevel != null && (
           <Badge color={tone.color} bg={tone.bg} icon={tone.icon}>
@@ -123,6 +134,7 @@ export function RiskAreas({
                 risk={risk}
                 refLines={refLines}
                 linkSha={linkSha}
+                headSha={headSha}
                 indexMatchesHead={indexMatchesHead}
                 repoFullName={repoFullName}
               />
@@ -140,6 +152,7 @@ export function RiskAreas({
                     risk={risk}
                     refLines={refLines}
                     linkSha={linkSha}
+                    headSha={headSha}
                     indexMatchesHead={indexMatchesHead}
                     repoFullName={repoFullName}
                   />
@@ -153,13 +166,29 @@ export function RiskAreas({
   );
 }
 
-/** The section's own label, identical in every state so none reads as another. */
-function Heading() {
+/**
+ * The section's own label, identical in every state so none reads as another,
+ * and its own Recompute.
+ *
+ * The control is HERE and not borrowed from the card this section is slotted
+ * into. That card's Recompute belongs to the intent and always did — pressing it
+ * left the risks untouched, which is indistinguishable from a button that does
+ * nothing when the two sit under one heading. Two subjects in one card need two
+ * named controls, and both labels now say which subject they mean.
+ */
+function Heading({ onRecompute, recomputing }: { onRecompute?: () => void; recomputing?: boolean }) {
   const t = useTranslations("brief");
   return (
-    <div style={s.colLabel}>
-      <Icon.AlertTriangle size={12} />
-      {t("riskBrief.riskAreas")}
+    <div style={s.headRow}>
+      <div style={s.colLabel}>
+        <Icon.AlertTriangle size={12} />
+        {t("riskBrief.riskAreas")}
+      </div>
+      {onRecompute && (
+        <Button kind="ghost" size="sm" icon="RefreshCw" onClick={onRecompute} disabled={recomputing}>
+          {t("riskBrief.recompute")}
+        </Button>
+      )}
     </div>
   );
 }
@@ -178,6 +207,7 @@ function RiskRow({
   risk,
   refLines,
   linkSha,
+  headSha,
   indexMatchesHead,
   repoFullName,
 }: {
@@ -190,6 +220,7 @@ function RiskRow({
    * would open the wrong file rather than no file.
    */
   linkSha: string | null;
+  headSha: string | null;
   indexMatchesHead: boolean;
   repoFullName: string | null;
 }) {
@@ -223,6 +254,7 @@ function RiskRow({
               refValue={ref}
               refLines={refLines}
               linkSha={linkSha}
+              headSha={headSha}
               indexMatchesHead={indexMatchesHead}
               repoFullName={repoFullName}
             />
