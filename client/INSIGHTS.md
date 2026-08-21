@@ -66,6 +66,246 @@ same node count. The general shape: when a capped list repeats across the things
 capping, a per-item cap spends the budget on duplicates. Count what the render actually costs —
 distinct nodes — and cap that.
 
+### `<React.StrictMode>` in the render is how a "fire once on mount" guard gets a failing test
+
+An effect that starts something expensive when data arrives — `OverviewTab`'s automatic first
+Risk Brief computation, 2026-08-16 — is guarded by a `useRef` holding the
+`` `${prId}:${headSha}` `` it already fired for. Testing that guard with a plain `render()` is
+close to vacuous: nothing in a single mount re-runs the effect, so the assertion
+`expect(mutate).toHaveBeenCalledTimes(1)` passes with the ref deleted.
+
+Wrapping the tree in `<React.StrictMode>` fixes that for one line. React deliberately runs an
+effect's setup, cleanup and setup again on mount in development, which is exactly the failure
+the ref exists for. Measured: deleting the guard turns **three** tests in
+`OverviewTab.test.tsx` red, and the count on the first one goes 1 → 2. Refs survive it, because
+StrictMode re-runs the effects of the *same* component instance — which is also why a
+module-level flag would be the wrong guard.
+
+Pair it with a second test that re-renders under a *different* `headSha` and asserts the count
+goes to 2. Together they say the guard is keyed by state rather than being a once-per-mount
+latch, and that pair is what a plain "called once" assertion cannot distinguish.
+
+### A throwaway vitest file can drive the RUNNING API and print the real rendered tree
+
+**Symptom.** No browser automation is available in a session, so a screen built against a live
+server can only be checked with `curl` — which sees the SSR skeleton of a `"use client"` page and
+nothing of what the reader would see.
+
+**Cause / what makes it work.** `src/test/setup.ts` stubs `ResizeObserver` and registers
+jest-dom, and that is all: **global `fetch` is not mocked there**, it is mocked per test file. A
+test that does not mock it reaches `localhost:3001` for real.
+
+**Fix.** Drop a temporary `src/__live-*.test.tsx` that renders the real component with props taken
+from the live API, `await waitFor` on something the tab only renders once its queries settle, then
+walk `document.body` and `console.log` a tag/text/`href` outline. On 2026-08-16 this rendered the
+whole PR Brief composition against `Holubinka/dev-digest#20` — five risk rows, the "1 more risk
+areas" disclosure, every `github.com` href pinned to `link_sha` and carrying no `#L` because
+`ref_lines` was still `[]`, and the provenance block's `$0.0011 / 5718 tokens in`. Delete the file
+afterwards; it is a probe, not a test, and it would fail in CI where nothing is serving.
+
+Give the probe **every** message namespace the tree needs. Supplying only `brief` and `prReview`
+left `BlastRadiusCard` printing `blast.title` and `blast.stat.symbols` — a probe artefact that
+looks exactly like a missing-key bug in the code under review.
+
+### A placement requirement needs an ORDER assertion, not three presence assertions
+
+`IntentCard` rendered its RISK AREAS slot *after* the `via {model}` / Recompute footer for a whole
+round, so a loaded card read scope lists → model/Recompute → RISK AREAS while the design put RISK
+AREAS directly under the scope columns. Every test passed the whole time: all three regions were on
+screen, and "on screen" was all anything asserted. Two independent readers (`plan-verifier` item
+210 and `/code-review`) had to find it by eye.
+
+Assert the order, in the state that has all three:
+
+```ts
+const follows = (first: HTMLElement, second: HTMLElement) =>
+  Boolean(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+expect(follows(scope, risks)).toBe(true);
+expect(follows(risks, footer)).toBe(true);
+```
+
+Cheaper to read than indexing `container.querySelectorAll("*")`, and it fails for the reason it is
+about. `client/AGENTS.md` § *A design is an acceptance criterion* makes placement a requirement;
+this is what pins one. Same shape works for "the cost is under the gauge, not in the title row" —
+`VerdictBanner.test.tsx` (2026-08-17) uses it for three of the mockup's placements.
+
+### Measuring a layout bug: headless Chrome over CDP, in ~60 lines of Node
+
+`agent-browser` (what `e2e/` drives) is not installed on this machine, and jsdom lays nothing out, so
+neither the unit suite nor the e2e suite can answer "does this element stick out of its card". Node
+22 has a global `WebSocket` and Chrome ships a CDP server, which is the whole dependency list:
+
+```
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new \
+  --remote-debugging-port=9333 --user-data-dir=$(mktemp -d) --window-size=1440,1000
+# then: GET http://127.0.0.1:9333/json/list → webSocketDebuggerUrl → Runtime.evaluate
+```
+
+Poll `Runtime.evaluate` until the TanStack queries have resolved (a marker element appears), then ask
+the page arithmetic questions it can answer and a screenshot cannot: `card.scrollWidth -
+card.clientWidth`, `el.getBoundingClientRect().right - cardInnerRight`, and — for "does the line
+number end up alone on its own line" — `Range.getClientRects()` per character, grouped by `top`, which
+reconstructs the text of each line box at every container width in a sweep. On 2026-08-17 that turned
+"the path leaves the card" into `+201px at 1440` before and `−16px` after, and turned a yes/no worry
+about `:12` into 80 widths out of 561. Screenshots still matter — they are what showed the break
+landing inside `[number]` — but they cannot be asserted on.
+
+**Addition, 2026-08-18.** `Page.captureScreenshot` with `captureBeyondViewport` gives you the
+viewport and nothing more on this app, and `document.documentElement.scrollHeight` reports the
+viewport height rather than the page's: `main` is the scroll container (`AppFrame`), so the document
+never scrolls. Set `Emulation.setDeviceMetricsOverride` to a tall viewport and shoot several frames,
+scrolling `document.querySelector("main").scrollTop` between them. Measured on the Onboarding Tour:
+`documentElement.scrollHeight` 1200 against `main.scrollHeight` 3536.
+
+### Cap the child that grows, not the card — and watch what `overflow-y` does to `overflow-x`
+
+BLAST RADIUS on PR #20 answers with 365 symbols. Measured at 1440×1000 on 2026-08-17 with the
+CDP recipe above: the symbol list was 22 422px inside a 22 617px card, beside a 1 719px INTENT —
+13× its neighbour — and `main` scrolled 25 108px. `maxHeight: 570` + `overflow-y: auto` on
+`s.symbolList` put the card at 766px and `main` at 4 210px: the same answer, a 6× shorter page.
+
+Two placement decisions are worth keeping. The cap goes on the **list**, never on the card,
+because the counters above it ("365 symbols") are what keep a cut honest and they only do that
+while they are on screen — verify by scrolling the list and re-reading the stat row's
+`getBoundingClientRect().top`, which must not move. And it stays in `styles.ts` rather than
+`globals.css`, because no breakpoint changes it: at ≤1024px the cards stack full-width and every
+row shrinks to 57px, so one value shows *more* there, not less.
+
+The side effect is the part that is easy to miss: setting `overflow-y: auto` makes the computed
+`overflow-x` `auto` as well, so the box is now a horizontal scroll container too — and that
+silently fixed a second bug. With several disclosures open, a caller `MonoLink` 990px wide used
+to hand the whole page 452px of horizontal scroll at 1440px (`main.scrollWidth -
+main.clientWidth`); it is 0 now, the path scrolling inside the list instead. In the default
+state — one disclosure open — the list does not scroll sideways at any width.
+
+### `el.focus()` in jsdom is a real test of whether an element is focusable
+
+A scroll box needs `tabIndex={0}` even when it is full of focusable children. Measured in Chrome
+151 on 2026-08-17: with the attribute, one Tab from the card's `graph` toggle lands on the box
+itself and PageDown scrolls it (1013px for two presses); without it, Tab skips the box and lands
+on the first `<summary>`, leaving 610 tab stops between the reader and the end of the list.
+Programmatic `.focus()` is not the same question — Chrome grants that to a bare scroller — so
+test the tab order, not `focus()`, when the question is about a browser.
+
+In **jsdom** `focus()` answers it exactly, because jsdom implements the focusable-area check:
+
+```ts
+list.focus();
+expect(list).toHaveFocus();
+```
+
+fails on a plain `<div>` and passes once it carries a `tabindex`, with no attribute assertion and
+no layout. `BlastRadiusCard.test.tsx` uses it; proven by deleting the attribute and watching the
+test go red.
+
+### A capped scroller still knows its uncapped height — which is how you check whose number a report is quoting
+
+**Symptom.** A round opened on the claim that the INTENT card reaches **24 302px** on PR #19,
+so that after BLAST RADIUS was capped at 766px the neighbour beside it was setting the row height.
+
+**Cause.** The number was real, correctly measured, and belonged to the other card. At 1440×1000 on
+2026-08-17 INTENT on PR #19 measures **2 273.06px** — 10.7× smaller — while
+`blast.getBoundingClientRect().height + (list.scrollHeight − list.clientHeight)` is
+`765.5 + (24 107 − 570)` = **24 302.5**, which floors to the reported figure exactly. That is the
+BLAST card as it would be with `BlastRadiusCard/styles.ts` `symbolList` uncapped: the state the
+previous round's own `maxHeight: 570` had just removed.
+
+**Fix — the technique, not the layout.** `overflow-y: auto` leaves the full content height in
+`scrollHeight`, so a capped element still reports what it would have been without the cap:
+`rect.height + (scrollHeight − clientHeight)` reconstructs it with no revert, no rebuild and no
+second branch to measure. Spend the one `Runtime.evaluate` on this before implementing a fix whose
+whole justification is a single number carried over from an earlier session — here it turned a
+build into a two-line refutation.
+
+**Decided 2026-08-17: INTENT keeps growing, and that is a choice.** The human was given the
+numbers — a cap would take the worst case from 2 273px to ~1 470px, still twice the 766px
+neighbour — and chose to live with it rather than change the label. The reason is the part worth
+keeping: BLAST's truncation is honest because `408 SYMBOLS` sits above the cut, and INTENT has no
+such number. Adding one means writing `IN SCOPE (15)`, and that label is fixed verbatim by the
+design in `specs/assets/SPEC-02-pr-brief-overview.png`. **A scroll container whose scale is not
+printed anywhere hides how much it hid** — so the choice was between an unbounded card and a
+dishonest cut, and the card won. If a counter ever becomes acceptable there, the cap becomes
+correct in the same moment; until then, re-measuring 2 273px is not grounds to reopen this.
+
+What INTENT does measure, same run, PRs #15/#19/#20/#21: **425 / 2 273 / 1 734 / 1 560px**, against
+BLAST's **278 / 766 / 766 / 766**. So it is the taller card in the row on all four, and its
+`in_scope` / `out_of_scope` lists are the part that grows unbounded (62 → 1 373px across those four;
+`Intent` at `vendor/shared/contracts/brief.ts:19` is a bare `z.array(z.string())` and nothing in
+`server/src/modules/intent/` slices the model's answer). But the same cap cannot buy the same
+result here: on PR #19 the card's non-scope content is already 871px, of which RISK AREAS is 653px,
+so `maxHeight: 570` per list lands the card near 1 470px — bounded, and still about 2× its sibling.
+
+### Measure a two-column page at breakpoint + 1px, where its content column is narrowest
+
+The Onboarding Tour collapses its rail at 900px, so the worst width for the two-column layout is
+**901px**: sidebar 264 + page padding 64 + rail 200 + gap 28 leaves the content column 345px, the
+narrowest it is ever asked to be. Checking 1430 and 900 on 2026-08-18 said the header fit; 901 said
+`main.scrollWidth` 664 against `clientWidth` 637 — 27px of horizontal scroll from a `flex-shrink: 0`
+button pair that is 241px wide. `pnpm lint`, `pnpm typecheck` and all 958 client tests were green
+through it: jsdom computes no layout, so no unit test in this package can see a column width.
+
+Drive it from Bash with no new dependency — Chrome's own CDP over Node 22's global `WebSocket`:
+
+```sh
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new \
+  --remote-debugging-port=9333 --user-data-dir=/tmp/prof --hide-scrollbars --force-device-scale-factor=1
+# then: Emulation.setDeviceMetricsOverride → Page.navigate → Runtime.evaluate(getBoundingClientRect)
+```
+
+`Emulation.setDeviceMetricsOverride` is what makes the width exact, and
+`main.scrollWidth > main.clientWidth` is the assertion — not `document.scrollingElement`, which on
+this shell stays clean because `main` is the scroll container and swallows its own overflow.
+
+### Drive a fake `IntersectionObserver`; never install a silent one
+
+jsdom ships no `IntersectionObserver` at all — `typeof IntersectionObserver === "undefined"`, the
+way `ResizeObserver` was before `src/test/setup.ts` stubbed it. The tempting fix is a second no-op
+stub in that setup file, and it is a trap: a stub that never calls its callback leaves a scrollspy
+returning exactly what it returns when it is DELETED, so every assertion about the rail passes on
+the URL alone. `src/test/intersection-observer.ts` installs a per-file fake instead and exposes
+`report(ids)` — the scroll itself — plus `observedIds()`. Proven on 2026-08-18 by mutating
+`useScrollSpy` three ways (first-in-band instead of last; the URL preference removed; an
+`isIntersecting: false` entry ignored) and watching each mutation take both the hook's tests and
+`OnboardingTourView.test.tsx` red.
+
+Two details the fake has to get right or the tests lie. It emits an entry for EVERY observed target
+rather than only the changed ones, so a consumer that never removes a target still looks correct
+until a test scrolls back UP — which is why one test does. And the callback is wrapped in `act()`
+inside the fake, so a caller cannot forget it and read stale output.
+
+
+### A dialog whose open state is the URL needs a navigation mock that re-renders
+
+The Onboarding Tour's task window is derived from `?task=` during render and held nowhere else
+(`FirstTasksSection.tsx`, 2026-08-19). The mock every other test here uses —
+`useSearchParams: () => new URLSearchParams("…")` plus a `replace: () => {}` — cannot test it: the
+click calls `replace`, nothing re-renders, and no window ever opens, so "clicking opens the dialog"
+can only be asserted by pointing the mock at a pre-set parameter and never by pressing anything.
+
+Make `replace` do what Next does — rewrite the params and re-render:
+
+```ts
+let notify: (() => void) | null = null;
+const nav = {
+  params: new URLSearchParams(),
+  replace: vi.fn((url: string) => {
+    nav.params = new URLSearchParams(new URL(url, "http://localhost").search);
+    notify?.();
+  }),
+};
+vi.mock("next/navigation", () => ({
+  usePathname: () => PATHNAME,
+  useSearchParams: () => nav.params,
+  useRouter: () => ({ replace: nav.replace }),
+}));
+```
+
+`notify` is a `useReducer` dispatch that a one-line harness component registers on mount. The payoff
+is that open → Esc → "focus is back on the title" is ONE test over the real loop instead of three
+over its pieces, and `nav.replace.mock.calls` still holds the URL for a separate assertion.
+
+
 ## What Doesn't Work
 
 ### A popover anchored inside a PR-list row gets clipped
@@ -379,7 +619,329 @@ instead (`helpers.test.ts` → "refuses a scheme spelled with a control characte
 Not exploitable when found: `react-markdown` v9's `defaultUrlTransform` blanks all nine already,
 measured 2026-08-14. This layer exists so the refusal does not depend on that default.
 
+### A jump effect keyed only on its target scrolls inside the tree that is about to be replaced
+
+**Symptom.** `DiffTab`'s jump from a Risk Brief review-focus item (`DiffTab.tsx:82`) opened the
+right file and left the reader looking at an unrelated one, silently — nothing errors, the card
+really is expanded, just far off-screen. Found in review 2026-08-16, on the feature's headline
+interaction.
+
+**Cause.** The effect depended on `[targetFile]` alone, but the component swaps its whole child
+tree when a query resolves: `showSmart = smartOrder && smartDiff !== undefined`, so the FIRST
+render after a cold arrival is always the plain `DiffViewer`. `FileCard` carries `data-file-path`
+in *both* trees (`components/diff-viewer/FileCard/FileCard.tsx:144`), so `querySelector` found a
+card, scrolled to it, and the effect never ran again once `SmartDiffViewer` replaced the list.
+Timing is not the variable — the swap is unconditional on a first visit to the tab, and the
+request takes ~8 ms locally, which is a window the effect loses 100% of the time, not sometimes.
+
+**Fix.** Key the effect on the render state as well as the target — `[targetFile, showSmart]`,
+the same reason `FindingsPanel.tsx:68-76` keys on `shown`. Then make it idempotent per
+`(viewer, target)` pair (a `Set` in a ref): `?file=` is never cleared, so a plain
+`[targetFile, showSmart]` re-runs on an order toggle minutes later and drags the reader back to
+the brief's file. Rule of thumb for this codebase: if a component chooses between two subtrees on
+query state, every effect that reaches into the DOM must name that choice in its deps.
+
+### Mocking a query hook as already-resolved stages away every cold-path bug in the component
+
+**Symptom.** `DiffTab.test.tsx` mocked `useSmartDiff` as `() => ({ data: smartDiffData.current })`
+with the holder seeded to a full `SmartDiff` in `beforeEach`. Five cases covered the jump; none
+could see the defect above, because the component never rendered its loading tree while a target
+was set.
+
+**Cause.** A hoisted constant return value gives the component ONE state for the whole test. The
+real hook has at least two, and the interesting bugs live in the transition between them.
+
+**Fix.** Keep the holder mutable and re-render in place to move it: seed `undefined`, render, then
+set the resolved value and `rerender` the same tree (`renderTab` returns a `rerenderTab(patch)`
+helper for exactly this). Also make the loading-state stand-in *faithful* — the plain-viewer mock
+had no `data-file-path`, which would have made the new test pass for the wrong reason. Both new
+cases were confirmed to fail against the unfixed component before being left green.
+
+### A `useRef` guard cannot hold a fact about a cached PR state
+
+**Symptom.** `OverviewTab` computes a brief when the server holds none for the current
+`(prId, headSha)`, guarded by `autoComputed = useRef<string|null>(null)` so it fires once. Six
+cases covered the guard and all six passed while a FAILED computation paid for itself again on
+every tab switch — a second `POST /pulls/:id/brief`, with the error message replaced by a fresh
+spinner because the remounted `useMutation` starts at `error: null`.
+
+**Cause.** Two lifetimes that look the same and are not. `page.tsx:171` renders the tab as
+`{tab === "overview" && <OverviewTab …/>}`, so Files changed and back UNMOUNTS it and the ref
+returns to `null`; the fact it recorded — "a compute has been fired for this state" — is about
+the PR state, which the query cache still holds `null` for. Every existing case re-rendered in
+place with `rerender()`, and a re-render does not reset a ref.
+
+**Fix.** Put the fact where facts about a state live. `useComputeBrief` now carries
+`mutationKey: briefQueryKey(prId, headSha)`, and `useBriefComputeAttempted` reads it back with
+`queryClient.getMutationCache().find({ mutationKey, exact: true })`. A CALLBACK, not a boolean:
+`mutate()` registers the mutation synchronously, so a value captured at render is a commit stale,
+and StrictMode's double-invoke runs the effect's setup twice in one commit — reading at call time
+is what lets one guard replace the ref instead of standing beside it. Its window is the mutation's
+`gcTime` (five minutes after the last observer unmounts, `query-core/removable.js:18-22`), the same
+span the query cache holds its `null` for.
+
+**And the test rule that follows.** A guard whose scope is the mount is only observable by a case
+that leaves the mount: `render()` → `unmount()` → `render()` on the SAME `QueryClient`. `rerender()`
+cannot see it, which is exactly why six cases did not. 2026-08-16, round 5 of `plans/10`.
+
+### A mocked hook is a mocked cache, and the cache was where the bug was
+
+**Symptom.** The defect above survived four review rounds with `OverviewTab.test.tsx` at twelve
+green cases.
+
+**Cause.** The file mocked `@/lib/hooks/brief` wholesale — `usePrBrief` and `useComputeBrief` both
+`vi.fn()`. Every fact the automatic computation depends on (the cached `null` for a state, the
+record of a compute already fired) then lived in the test's `beforeEach` rather than in a cache, so
+no unmount could lose anything and no remount could remember anything.
+
+**Fix.** Mock the boundary one layer lower — `@/lib/api` — and render inside a real
+`QueryClientProvider` whose client is built once per test and shared across mounts. The hooks then
+run for real and the assertions move from `computeBrief` to `api.post`, which is the number that
+costs money anyway. `hooks/core` stays mocked deliberately: leaving it real would put the intent's
+own reads into `api.get` and make the brief's call counts ambiguous.
+
+### A mutation's `error` is sticky, so deriving "is there data" from it empties the page for good
+
+**Symptom.** A brief is on screen for the current head. The reader presses the regenerate icon, the
+POST 429s, and RISK AREAS, REVIEW FOCUS, the provenance block and the brief cost all vanish for the
+rest of the mount — three regions printing "The brief for this state has not been computed." about a
+record that is computed and cached. A failed background refetch of a query that already holds data
+does the same thing.
+
+**Cause.** `OverviewTab.tsx:108` derived the record as
+`briefFailure != null ? null : briefData ?? null`. `useMutation().error` is **not** transient: it
+stays set until the mutation is reset or the component unmounts, so one failed *re*computation reads
+forever after as "there is no record". A `useQuery`'s `error` behaves the same beside a populated
+`data`.
+
+**Fix.** Derive the record from `data` alone and render the failure beside it, not instead of it
+(2026-08-17). A failed recomputation must not remove the record it was recomputing; losing the data
+is only correct when `data` itself is `null`. Two things make that safe here and are worth checking
+before copying it: the query key carries the state (`["brief", prId, headSha]`), so a stale record
+cannot be another head's answer, and the in-flight case is still covered separately by `isPending`,
+which is what keeps AC-7 ("never present a previous state as current") true while a computation runs.
+
+### `overflow-wrap: break-word` alone never shrinks a flex item, and Chrome does not break a path at `/`
+
+**Symptom.** `client/src/app/repos/[repoId]/pulls/[number]/_components/PrBriefCard/PrBriefCard.tsx`
+— a `Risk.file_refs` entry on PR #21 — rendered 650px wide on ONE line inside a 449px INTENT card
+at a 1440px window and hung 201px past the card border (`card.scrollWidth - card.clientWidth` = 183).
+Reported 2026-08-17 by a human looking at the screen; no gate can see it.
+
+**Cause.** Two independent facts, and fixing either alone leaves the bug.
+
+1. A repository path is ONE word to a line breaker. Chrome breaks `scan-executor.ts` at the
+   **hyphen** and finds no opportunity at a `/` at all — measured, not assumed. That is why the same
+   card looks fine on PR #20 (every long ref there happens to contain a `-`) and breaks on PR #21.
+2. `overflow-wrap: break-word` is deliberately **not** counted when computing min-content, so a flex
+   item that keeps the default `min-width: auto` still refuses to shrink under its longest word — and
+   a wrap it is never given a narrower line for cannot happen. (`overflow-wrap: anywhere` IS counted,
+   which is why it appears to work alone; `BlastRadiusCard/styles.ts:143` rejects it for a different
+   reason — it splits `helpers.ts:` from `82`.)
+
+**Fix.** Both, together, on the element that IS the flex item:
+`{ minWidth: 0, overflowWrap: "break-word" }` — `BriefRef/styles.ts`. Where the item is a vendored
+component that takes no `style` (`MonoLink`), wrap it in a span that carries them; `overflow-wrap`
+inherits into the anchor, and `min-width` belongs to the flex item, which is then the span.
+
+### `<wbr>` fixes where a path breaks and costs it its accessible name
+
+**Symptom.** Adding `<wbr>` after each `/` so a path breaks at its separators — the standard trick,
+and it does work — turned the accessible name of every reference from `src/middleware/ratelimit.ts`
+into `src/ middleware/ ratelimit.ts` and failed 14 existing tests on 2026-08-17.
+
+**Cause.** `dom-accessibility-api`, which RTL's `getByRole({ name })` uses, joins the name from child
+nodes with a space, and `<wbr>` makes the one text node into three. `getByText` is unaffected — it
+reads direct text-node children and joins them with nothing.
+
+**Fix.** None available here, which is the point: the name could be restored with `aria-label`, but
+the element is `vendor/ui/primitives/MonoLink.tsx`, a read-only copy whose props are
+`children | onClick | href`. So the emergency break stays, and with it a measured ~14% of card widths
+(80 of the 561 between 140px and 700px) where the last line is `:12` alone. Anyone reaching for
+`<wbr>` here should know it is an accessibility trade-off through a component they may not edit, and
+that the decision is the human's, not the implementer's.
+
+**Decided 2026-08-17: the wrap stays, the name is kept.** Presented with the three options — leave
+it, take `<wbr>` and the degraded name, or lift `MonoLink` out of `vendor/ui` into a component that
+accepts `aria-label` — the human chose to leave it. The trade is not symmetric, and that is the
+reasoning to keep: a detached `:12` is ugly for everyone at some widths, while a name read aloud as
+`src/ middleware/ ratelimit.ts` is wrong for the people who have no other way to hear it. The third
+option is still the right one and is a task of its own, not a line in a fix round — until someone
+takes it, this is settled and re-measuring the 80 widths is not grounds to reopen it.
+
+### A fixture whose two fields always agree cannot catch a component reading the wrong one
+
+The Onboarding Tour carries the package blocks in `tour.packages` and the walk's facts in
+`tour.package_scan`, and plan 14 records the collision: `found - shown` is the number of packages a
+ceiling dropped, and `packages.length` knows nothing about them. Eleven `RunLocallySection` tests
+were written and every one of them used a fixture where `package_scan.shown === packages.length` —
+which is also what the live payload has (`found: 5, shown: 5`, five blocks, 2026-08-18).
+
+Mutating `packageScan.found - packageScan.shown` to `packageScan.found - packages.length` broke
+**nothing**. The whole point of the field pair was untested while the suite was green.
+
+The fix is a fixture built to make the two disagree — `scan({ found: 9, shown: 5 })` beside a single
+block, asserting `4 more packages`, not `8`. The general form: when two fields of a contract are
+easy to confuse, at least one test has to give them different values, and realistic data is exactly
+what will not.
+
+**Corrected 2026-08-18 (round 3).** The fixture shape is right and the number in it was not.
+`4 more packages` is `found - shown` — the formula this entry set out to defend, and the one a
+`/code-review` pass then showed to be wrong. `shown` is only where the CEILING cut: the model writes
+a `run` entry for some packages and not others, and grounding drops more as `unknown_path`, so the
+blocks DRAWN can be fewer than `shown` again. With `found: 5, shown: 5` and two blocks, `found -
+shown` says nothing is hidden while the card draws two of five. The number a reader needs is `found`
+minus the blocks drawn — so the same fixture now asserts `8 more packages`, not `4`.
+
+### One alternation cannot be a markdown code-region guard, and it fails into text people paste
+
+`TourProse/helpers.ts` protected code with one alternation, split the body on it and linkified the
+even parts:
+
+~~~
+const PROTECTED =
+  /(```[\s\S]*?```|~~~[\s\S]*?~~~|`+[^`]*`+|!?\[[^\]]*\]\([^)]*\)|<[^>\s]+>)/g;
+~~~
+
+One fenced-block test passed; three regions were missed, each reproduced by running the function on
+2026-08-18:
+
+- **An unclosed fence.** A body ending mid-block matches no open/close fence pair, so the whole tail
+  is prose. Not an edge case here: `server/src/modules/onboarding/helpers.ts` cuts `body` at
+  `MAX_BODY_CHARS = 6000` and computes `verified_paths` off the CUT text, so truncation is what
+  hands the client an open fence together with the paths to link inside it.
+- **A four-space indented block.** Never in the alternation at all — `    node src/app.ts` came back
+  as `    node [src/app.ts](src/app.ts)`.
+- **An odd inline backtick above a fence.** The code-span branch closes on a backtick run of ANY
+  length, so a lone backtick took the opening fence as its terminator and the block body arrived as
+  prose.
+
+All three end the same way: `](` welded into a line beside a copy control, in text a reader is being
+told to paste into a shell. The replacement walks the string instead — blocks first (fences, closed
+or running to end of input; indented runs), then inline over what is left (code spans closing on a
+run of EXACTLY their own length, links, images, autolinks). That ORDER fixes the third route by
+itself: an inline scanner that reaches a fence opener before the block scanner does will always be
+able to close a stray backtick on it.
+
+
+### A narrow `IntersectionObserver` band leaves the LAST rail entry unreachable
+
+**Symptom.** The Onboarding Tour's scrollspy marked "Guided reading path" at the very bottom of the
+page and — worse — kept marking it after a click on the rail's "First tasks" entry. Every unit test
+was green, because jsdom computes no layout and the fake observer reports whatever the test says.
+
+**Cause.** The rule is "the last section whose box reaches the band", with the band a `rootMargin`
+strip across the top of the viewport. A page stops scrolling while its final heading is still
+partway down the screen, so a band that ends above that point can never contain the last section.
+Measured in Chrome 151 at 1440×1000 against the real tour for `Holubinka/dev-digest` on 2026-08-18:
+`main` scrolls 3593px and at the bottom `#first-tasks` sits 374px into the 948px scrollport, while a
+30% band ends at 284px.
+
+**Fix.** Half the viewport (`READING_BAND = "0px 0px -50% 0px"`), which ends at 474px and clears it
+by 100. The rule that leaves is also the plainer one to explain — a section is current once its
+heading crosses the middle of the screen — and the constraint to carry forward is that the LAST
+section needs about half a screen of content below its heading to be reachable at all. Only a
+browser can answer this: sweep `main.scrollTop` over the page and read `aria-current` off the rail
+at each stop, which is how "Critical paths" (a 252px section) was also confirmed to get a window of
+its own rather than being skipped between two tall neighbours.
+
+### An effect that scrolls to the active section becomes a feedback loop the moment the active section follows the scroll
+
+`OnboardingTourView` jumps to the section a fragment names, guarded by a `Set` in a ref so each
+target fires once. It was keyed on `activeAnchor` — safe while that value could only change on a
+click. Adding the scrollspy on 2026-08-18 made `activeAnchor` change on every scroll, and the same
+effect would then have taken each section the reader passed as a new target and scrolled it to the
+top, one card at a time, for as long as the page had anywhere left to go. The key is now
+`anchorFromHash(hash)` — what the URL asked for, which only a click or a hashchange moves.
+
+The general shape: an effect that WRITES to the scroll position must never depend on a value that
+the scroll position writes. This is the same family as the entry above about a jump effect keyed
+only on its target, and it is not caught by the dependency linter, which sees a correctly declared
+dependency either way.
+
+
+### The file-placement rule is applied by eye, and drifts in both directions
+
+`frontend-architecture` § Review checklist says a new file sits at the shallowest level with at
+least one consumer and no shallower, and its step 3 promotes to a shared folder only at **two or
+more consumers in different routes**. Nothing checks it — no gate, no lint rule, no dependency-
+cruiser rule (those cover `server/` layering, not client placement).
+
+Measured on `feat/onboarding-tour`, 2026-08-19. Four violations of that one item on a single
+branch, in **both** directions:
+
+| File | Consumers | Wrong how |
+|---|---|---|
+| `client/src/lib/blockers.ts` | `PrBriefBanner`, `ReviewRunAccordion` — both in `pulls/[number]` | promoted with no cross-route consumer |
+| `client/src/lib/line-numbers.ts` | `pulls/[number]/page.tsx`, `BriefRef/helpers.ts` — same route | promoted with no cross-route consumer |
+| `shortSha` (3 definitions) | `BlastRadiusCard`, `RiskAreas`, `OnboardingTourView` — `pulls/[number]` and `onboarding` | NOT promoted despite two routes |
+| `useCopyToClipboard` + `COPIED_FEEDBACK_MS` (2 definitions of `1500`) | `ConventionCard`, `CopyButton` — `conventions` and `onboarding` | NOT promoted despite two routes |
+
+The rule is understood, not ignored: the same branch promoted `relativeTime` to
+`src/lib/relative-time.ts` and wrote down why, and deliberately kept `CopyButton` colocated with a
+note saying promotion needs a consumer in a different route. `useCopyToClipboard`'s own header
+even cites `ConventionCard.tsx:41-52` as what it copied — the existing consumer was seen and the
+promotion still was not made.
+
+What this costs is concrete rather than tidy: `COPIED_FEEDBACK_MS` is `1500` in two files, so
+retuning the copy feedback in one leaves the two buttons disagreeing.
+
+Two things worth knowing about how it was found. Three of the four came from separate
+`pr-self-review` passes, each surfacing one — a review reaches one instance and stops, so the
+count is only visible across runs. And when the fifth pass was told to skip this item, the
+`conventions` agent returned **nothing** in 71 tool calls: this rule was not merely the most
+common client-side finding on the diff, it was effectively the only one.
+
+**Recommendation, and it is not this file's to make.** `engineering-insights` asks two things
+before an observation becomes a rule: that it recurred, and that obeying it blindly is right every
+time. The first is settled — four instances, one branch. The second is not: "different routes"
+needs a judgement about what counts as a route, so a mechanical check would need that definition
+first. If someone wants it enforced, the place is a lint rule over `client/src/lib/` imports, and
+the decision belongs to whoever owns `frontend-architecture`.
+
+### A link pinned to the indexed commit 404s on every file a PR adds
+
+**Symptom.** Clicking a path in Risk Areas opened GitHub's "does not contain the path" page.
+Reported 2026-08-20 against this repo's own PR #22.
+
+**Cause.** `BriefRef` built the href at `link_sha`, per AC-27, on the reasoning that it is "the
+commit at which this path is true". `link_sha` is the commit the INDEX sits at, and the index
+tracks the default branch — so `index_matches_head` is **false for every brief of every PR** here,
+and a path the PR *adds* is absent from that tree. Measured against real GitHub, same path:
+
+    .../blob/2f8b7e19…/…/ArchitectureSection.tsx   404   (link_sha — main's tip)
+    .../blob/208c29e8…/…/ArchitectureSection.tsx   200   (head_sha — the PR)
+
+Regenerating the brief cannot help: the content was never the problem, the commit in the URL was.
+
+**Fix.** Link at `head_sha` — the commit the brief describes and the version under review. The old
+rule's reason survives where it belongs: the `:line` suffix is still gated on `indexMatchesHead`,
+so a head link never carries a line the index cannot vouch for. `BlastRadiusCard` keeps linking at
+`link_sha` and must — its facts come from the indexed tree, where its paths do exist.
+
+Recorded as a **divergence from AC-27**, not a spec rewrite. Two things made it hard to see:
+the rule was stated as doctrine in a docstring, and that docstring cited
+`client/INSIGHTS.md:418-441` for the failure it was avoiding — a citation that no longer resolves,
+because the entry moved. A rule defended by a dead reference is a rule nobody can re-check.
+
+The tests said so too, by name: *"links a risk reference at the index commit, not at the head"*.
+A test that names the alternative it rejects is the best possible warning — and it is only worth
+as much as the reason behind it, which here had rotted.
+
 ## Codebase Patterns
+
+### A security predicate gets exported, not restated — `hasDotSegment` is the dot-segment rule
+
+`src/lib/github-urls.ts` owns `/(?:^|\/)\.\.?(?:\/|$)/` as `hasDotSegment`, and it is now
+exported for that reason. `PrBriefCard/helpers.ts` shipped a private `DOT_SEGMENT` holding the
+same pattern character for character, under a comment naming the original — the
+cross-check-by-comment shape this file already records as the thing that drifts. A reviewer
+caught it on 2026-08-16 and it became an import.
+
+The rule that follows: when a check exists because a value is hostile, the second caller imports
+the first caller's function. A copy is not a second definition of a rule, it is a second rule that
+happens to agree today. Order still matters at the call site — `isLinkablePath` runs controls,
+then scheme, then dot segments, and `PrBriefCard.test.tsx` pins all three.
 
 ### Run-level data reaches the PR-detail subtree by joining in `FindingsTab`, not by widening `ReviewRecord`
 
@@ -409,6 +971,34 @@ over the same PR with identical severity counts can report different `blockers`.
 **Fix.** Show it as its own thing, sourced from `RunSummary.blockers` — never recompute it
 from findings. `RunFindings` (2026-07-30) renders it as a separate chip behind a divider
 for exactly this reason.
+
+**Correction, 2026-08-17.** Still true about what the column *is*. No longer the number the two
+PR-detail verdict banners show. A round-11 review found the Overview banner reading `run.blockers`
+while `ReviewRunAccordion.tsx:85` counted CRITICAL-and-not-dismissed for the same review: dismiss two
+criticals on Agent runs and the accordion dropped to 3 while the Overview still said 5 — two numbers
+for one review on one page, and only one of them responded to what the reader had just done. The
+stored column is frozen at the end of the run and cannot see a dismissal, so both surfaces now count
+`countBlockingFindings` (`src/lib/blockers.ts`).
+
+Read the entry above as: `RunSummary.blockers` is the agent's gate **decision**, which is history.
+Render it under a label that says whose decision it was — the CI chip in `RunFindings` still does,
+correctly. Do not render it as the live count of what still blocks a merge, and never sum or average
+it across runs.
+
+**Correction to that correction, 2026-08-17.** Reverted the same day, before it left the working
+tree, and the reason above was the weaker of the two available. The recount
+`findings.filter(f => f.severity === "CRITICAL" && !f.dismissed_at)` hardcodes **one** threshold,
+while the stored column is `countBlockers(kept, agent.ciFailOn)` and `ciFailOn` is configured per
+agent. So for any agent that does not gate on critical the recount is not a fresher view of the same
+number — it is the wrong number. Staleness is a delay; a hardcoded threshold is an error for a whole
+class of agents, and it is the one the original entry was written about.
+
+Both surfaces now read the stored column through `blockersForRun` (`src/lib/blockers.ts`), which is
+plan 11's own recommendation 1. The original entry stands unamended and is the rule. The first
+correction is deliberately left in place rather than deleted: it records a decision that was taken,
+written into a review brief, implemented and reversed, and the reversal only reads correctly with
+both steps visible. What survives it is the shared function — one place both banners read from, so
+they cannot drift again in either direction.
 
 ### `FindingRecord` is structurally a superset of `ListFinding`, so one card renders both
 
@@ -690,7 +1280,139 @@ selection is better carried by `--accent-bg` + `--accent`, which is a hue change
 a 2% luminance one. Judge any surface decision against both blocks of that file, not against
 the running theme.
 
+### A `<details>` marker cannot be hidden from `styles.ts`, so its rule lives in `globals.css`
+
+`client/AGENTS.md` says responsive rules go in `app/globals.css` and everything else goes in a
+colocated `styles.ts`. A native disclosure breaks the second half: `list-style: none` on the
+`<summary>` is inlineable, but WebKit draws its own `::-webkit-details-marker`, and a
+pseudo-element has no inline form at all. So `.dd-brief-disclosure > summary` and its
+`::-webkit-details-marker` sit in `globals.css` under a comment saying they are NOT a breakpoint
+rule — otherwise the next reader deletes them as misplaced.
+
+The reason to pay that cost: `<details>` is the cheapest keyboard-reachable disclosure available
+and needs no `useState`, which is what `RiskAreas` and `ReviewFocusSection` use for the risk
+explanations and the "N more" overflow.
+
+### `/onboarding` renders no `AppShell`, so `activeKeyFor` never runs there
+
+`activeKeyFor` (`components/app-shell/helpers.ts`) matched **any** path containing
+`/onboarding` until 2026-08-18, and `plans/14-onboarding-tour-client.md` P1 · 4 called that "a
+live bug the moment R7 lands" — the add-repository screen would light up the new Onboarding Tour
+sidebar row. It would not have. `app/onboarding/page.tsx` renders `AddRepoView` directly and
+`AddRepoView.tsx` imports no `AppShell`, so that route has no sidebar at all; `activeKeyFor` is
+reached only through `app-shell/hooks/useShellContext.ts`, which never mounts there. Verified on
+the running dev server: the SSR HTML of `/onboarding` contains no `WORKSPACE` heading and no nav
+anchor, while `/repos/:id/pulls` renders Pull Requests at `font-weight: 600` and the other rows
+at `500`.
+
+The tightening to `/^\/repos\/[^/]+\/onboarding/` was still made and is still right — the
+function's contract is "which row does this path own", and a substring test answers that wrongly
+for every future path containing the word. But **do not expect a screenshot to show the
+difference**, and do not treat `e2e/specs/06-onboarding.flow.json` as the check that caught it:
+that flow asserts the heading and the URL field, neither of which the sidebar affects.
+`components/app-shell/helpers.test.ts` is the only thing that holds the rule.
+
+### Only the architecture section draws its `body`, and the other four look like an omission
+
+Every `OnboardingSection` carries a markdown `body`, but the Onboarding Tour renders it in
+`ArchitectureSection` and nowhere else (plan 14 · P2 · 3, and steps 4/5/6/9 that pointedly do not).
+It reads like four forgotten calls to `TourProse`, so here is the measurement behind it.
+
+Checked against a live tour of `Holubinka/dev-digest` on 2026-08-18
+(`GET /repos/:id/onboarding`, index `2f8b7e19`): each of the four non-architecture bodies restates
+the structured field beside it. `critical_paths.body` is a numbered list of the same three files as
+`flows[0].steps`; `reading_path.body` names eight of the ten paths already in `reading_path[]`;
+`first_tasks.body` repeats all four tasks with their complexity words spelled out in Ukrainian
+prose. Drawing both would print every list twice.
+
+`how_to_run` is the sharpest case and the reason not to relax this later. Its body listed
+`pnpm db:seed`, `pnpm db:generate` and three other scripts — commands grounding had **already
+dropped**, that generation counting `unknown_script: 16`. Rendering that prose would have put five
+unverified commands on screen next to the grounded blocks, in the one section a reader copies from
+into a shell.
+
+So: if a section looks empty on screen while the payload has a `body`, that is this decision, not a
+bug. Changing it is a question about the contract — whether `body` should exist on all five kinds —
+and not a missing `<TourProse />`.
+
+### `isSafeUrl` accepts a relative URL; it does not refuse one
+
+`components/context-doc-view/helpers.ts` returns `true` for any string with no scheme —
+`if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(cleaned) === false) return true`. So `[rel](docs/spec.md)`
+in a scanned document has always rendered as a working `<a href="docs/spec.md">`, resolved against
+the app's own origin.
+
+Worth stating because plan 14 · P2 · 8 assumed the opposite — "a repo-relative href, one
+`isSafeUrl` refuses today, because it is not `http(s)`" — and an implementation written to that
+premise would have expected the `null` branch to change behaviour it does not change. The
+`resolvePath` seam added on 2026-08-18 is therefore purely additive: with `null` the href is passed
+through exactly as before, and only a non-null resolver gets to see a schemeless href.
+
+
+### An empty flex box still costs its own margin, and hiding it puts `display` out of `styles.ts`
+
+The Onboarding Tour stacks its notes — staleness, a partial index, a failed generation — in one box
+above the sections, and the ordinary page has none of them. React renders nothing for each, so the
+box has zero children and zero height, and its `margin-bottom` is still 18px of blank page.
+
+`.dd-tour-notes:empty { display: none }` in `app/globals.css` is the fix, and it drags one more rule
+with it: `display`, `gap` and the margin must then live ONLY in that class. An inline `display: flex`
+from a `styles.ts` beats the stylesheet whatever the selector, so the box would keep its space while
+the rule that hides it sat there looking correct. This is the same rule `client/AGENTS.md` states for
+breakpoints, in its other form — the trigger is a stylesheet rule changing a property, not a media
+query specifically. A pseudo-class has no inline form at all, so there is never a second place to
+declare it.
+
+### A caption gated on a non-empty string outlives what it captions — ask the child that knows
+
+`ArchitectureSection` drew the diagram frame and "The diagram is how the model described this
+system…" whenever `section.diagram` was a non-empty string. `MermaidDiagram` renders `null` for
+anything mermaid refuses, and a non-empty string is refused often: the prompt forbids fencing the
+diagram (`server/src/prompts/onboarding.system.md`) and nothing strips the fences, and
+`MAX_DIAGRAM_CHARS` cuts one mid-line. The card then printed a caption with nothing above it — and
+on a section whose `body` was also empty that orphan line was the ONLY thing it printed, because the
+same non-empty string was holding the empty state off.
+
+The shape that fixes it: `MermaidDiagram` takes an optional `onRendered(rendered: boolean)`, and the
+caller keys the outcome by the chart it belongs to —
+`useState<{ chart: string; drawn: boolean } | null>` — so a section handed a new diagram is back to
+"waiting" instead of wearing the previous one's verdict. The callback is held in a REF inside
+`MermaidDiagram` and deliberately not named in the render effect's dependencies: an inline arrow is a
+new function every render, and in those deps that is a re-parse per render — with a caller that sets
+state from it, a loop.
+
+### A focus trap must read `onClose` through a ref, or it restores focus to itself
+
+`useFocusTrap` (`TaskDetailDialog/hooks/useFocusTrap.ts`, 2026-08-19) records
+`document.activeElement` on mount and focuses it again on unmount, which is the whole of AC-14. Its
+effect therefore depends on the container ref ALONE. Naming `onClose` in the deps looks more correct
+and breaks it: a parent passing an inline arrow gives a new identity every render, the effect
+re-runs, and each run records the element focused *now* — which by then is the dialog. The reader
+then lands on `<body>` when it closes, and every gate stays green.
+
+The fix is the latest-ref pattern, one effect with no deps array keeping `close.current` fresh while
+the trap's own effect runs once per open. `MermaidDiagram` holds its `onRendered` in a ref for the
+adjacent reason, and the two together are the shape to copy: a callback that must not restart an
+effect does not belong in its dependencies.
+
+
 ## Tool & Library Notes
+
+### lucide-react stamps `class="lucide lucide-<kebab>"`, and the kebab is not always the `Icon` key
+
+**Symptom.** You want a test that says "this row got the *shield* icon, not the fallback triangle",
+and `svg` carries no `data-icon` or `name` attribute to assert on.
+
+**Cause / fact.** lucide-react 0.469 puts the icon name in `class`. Probed on 2026-08-16:
+`Icon.Shield` → `lucide lucide-shield`, `Boxes` → `lucide-boxes`, `Zap` → `lucide-zap`,
+`ChevronDown` → `lucide-chevron-down`. **But `Icon.AlertTriangle` → `lucide-triangle-alert`** —
+upstream renamed the icon and `vendor/ui/icons.tsx` keeps the old key, so the class does not
+kebab-case the key you wrote.
+
+**Fix.** Assert `svg.getAttribute("class")` contains `lucide-<name>`, and **scope the query to the
+row**: a section heading that uses the same icon makes an unscoped assertion pass against a row
+with no icon at all. When in doubt, probe rather than guess — render the icon in a scratch test and
+print the class.
 
 ### `@testing-library/user-event` is not installed here — every test uses `fireEvent`
 
@@ -834,6 +1556,89 @@ Two layers below the component already refuse a `javascript:` URL — `react-mar
 `urlTransform` rewrites it to `""`, and React blocks such an `href` at the DOM — which is why
 `isSafeUrl` is unit-tested directly in `components/context-doc-view/helpers.test.ts`. A
 rendering-only assertion passes whether that function works or not.
+
+### A fixture that trips two independent gates at once tests exactly one of them
+
+**Symptom.** `lineFor` refuses a line number when `index_matches_head` is false **or** when
+`link_sha` is null — two independent gates, per AC-61. The test named "renders every reference as
+text when there is no commit to link them at" set `{ linkSha: null, indexMatchesHead: false }`,
+because that is the pair a real stale record carries. Deleting the `linkSha == null` line from
+`lineFor` left the whole suite green: the first gate had already returned.
+
+**Cause.** Realistic fixtures correlate. The state the server actually produces trips several
+guards together, so a test written from a real payload can only ever pin the guard that fires
+first.
+
+**Fix.** For a predicate with N independent gates, write N fixtures that each violate exactly one
+and satisfy the rest — even when the combination cannot occur in production
+(`{ linkSha: null, indexMatchesHead: true }` here). Then prove it: comment out one gate at a time
+and confirm the suite goes red. On 2026-08-16 a 23-mutation sweep over the PR Brief composition
+found exactly two survivors, and this was one; the other was a `?? null` normalisation whose only
+observable difference needed a fixture with `head_sha: undefined`, which no realistic payload from
+a *current* server would carry.
+
+### `toHaveStyle({ minWidth: "0px" })` never matches a `min-width: 0` declaration
+
+jsdom keeps a declaration as it was written — React renders `{ minWidth: 0 }` as `min-width: 0`, and
+`toHaveStyle` compares the two strings, so the `0px` you would write by habit fails against a
+component that is correct. Assert `minWidth: "0"`. The failure output is no help: jest-dom prints the
+whole expected block with no "received", so a one-property mismatch reads as though every property is
+missing (2026-08-17, `BriefRef.test.tsx`).
+
+### `captureBeyondViewport` photographs the document, and on a PR page the scroller is `main`
+
+`Page.captureScreenshot` with `captureBeyondViewport: true` and a `clip` taller than the window
+returns a correct top and pure black below it on any screen in this app. `AppFrame.tsx:29` gives
+`<main>` `overflow: auto`, so the document itself never scrolls (`document.documentElement
+.scrollHeight` is 913 on a page whose `main.scrollHeight` is 5 793) and there is nothing beyond the
+viewport to capture. Enlarge the viewport instead — `Emulation.setDeviceMetricsOverride` with
+`{ width: 1440, height: 3000 }`, wait ~1s for the relayout, then clip with
+`captureBeyondViewport: false`. That is what got the whole 2 273px INTENT/BLAST row into one image
+on 2026-08-17; `scale: Math.min(1, 1600 / clipHeight)` keeps a tall row legible in the output.
+
+### `createTranslator` from `next-intl` formats a message file with no React and no provider
+
+The `"1 skills"` class of bug (`:400-433`) has cost this repo three shipments, and the stated
+sweep is `grep -n '{count}'` plus a both-branch assertion in the component's test. That assertion
+cannot be written when the message file lands in one work package and the components that render
+it land in the next two — which is exactly the shape of `plans/14`.
+
+`next-intl` does `export * from 'use-intl'` in its client entry
+(`node_modules/next-intl/dist/types/src/react-client/index.d.ts`), so `createTranslator` is
+importable straight from `"next-intl"` — it is not documented on the client entry and does not
+appear in this repo's other tests. It takes `{ locale, messages, namespace }` and returns a
+plain `t(key, values)`; no `NextIntlClientProvider`, no `render`, no jsdom.
+`src/i18n/onboarding-messages.test.ts` (2026-08-18) uses it to assert every plural in a namespace
+on both the `1` and the `n` branch before a single component exists.
+
+Two notes for the next user. Its generics are keyed on the app's `IntlMessages` type, which this
+repo does not declare, so the call needs `as never` on `messages`/`namespace` and one cast on the
+returned function — annoying, and cheaper than the alternative. And `#` inside a plural is
+formatted through `Intl.NumberFormat`, so `{count, plural, other {# files}}` at `12450` renders
+`12,450 files` — grouping separators come from ICU, which is what lets a design showing
+`12,450 files` be met without a client-side formatter.
+
+### next-intl v3 refuses a ReactNode for a plain `{placeholder}`, so one styled word needs two keys
+
+**Fact, measured 2026-08-18 against next-intl 3.26 / use-intl.** `RichTranslationValues` is
+`Record<string, string | number | boolean | Date | null | undefined | ((chunks: ReactNode) => ReactNode)>`
+(`node_modules/use-intl/dist/types/src/core/TranslationValues.d.ts`). The function form is for TAGS —
+`<b>…</b>` inside the message. A simple `{repo}` cannot be given a `<span>`, in `t()` or in `t.rich()`.
+
+So a message like `"Onboarding for {repo}"` can only ever render as one uniform run of text. A design
+that colours or monospaces part of a heading needs the key SPLIT — a prefix plus the value, which is
+what `ConventionsView.tsx` does with `page.headingPrefix` and a `<span className="mono">`. Decide that
+when the message is written; discovering it in the component leaves you choosing between editing
+another package's message file and shipping a heading that differs from the mockup.
+
+**Corrected 2026-08-18 (round 3): recorded is not applied.** This entry was written on the day
+`TourHeader.tsx` shipped `t("heading", { repo: shortName })` — the exact heading it describes, one
+flat run of text against a mockup that draws `payments-api` in accent mono, and `plan-verifier`
+graded the element MET on the short-name derivation alone. The split cost four lines and one message
+key (`headingPrefix` plus `<span className="mono" style={{ color: "var(--accent-text)" }}>`, verified
+in Chrome as `rgb(147, 187, 252)` / JetBrains Mono). What NOT doing it cost was a review round.
+Writing the constraint down does not close it: when a message renders beside a mockup, check whether
+the design puts two faces in one string before the key is written.
 
 ## Recurring Errors & Fixes
 
@@ -1424,8 +2229,225 @@ for page: /` — which looks like a code fault and is not. Build into another di
 `"<distDir>/types/**/*.ts"` to `tsconfig.json` `include` on every build, so a temporary `distDir`
 leaves a temporary line in `tsconfig.json` that has to come back out.
 
+### `setQueryData` writes nothing you can read back when the test client has `gcTime: 0`
+
+**Symptom.** `brief.test.tsx` asserted that `useComputeBrief`'s `onSuccess` writes the record
+into `["brief", prId, headSha]`, and `client.getQueryData(...)` came back `undefined` while the
+mutation itself reported `isSuccess`. Hit 2026-08-16.
+
+**Cause.** The test wrapper was copied from `lib/hooks/core.test.tsx`, which builds its
+`QueryClient` with `gcTime: 0` — correct there, because every test in that file mounts the query
+it asserts on. `setQueryData` creates a cache entry with **no observer**, and at `gcTime: 0`
+TanStack collects it immediately. The write happened; the entry was gone before the assertion.
+
+**Fix.** Mount the query alongside the mutation, the way the component does —
+`renderHook(() => ({ read: usePrBrief(id, sha), compute: useComputeBrief(id, sha) }))` — and
+assert on `result.current.read.data`. That is the better assertion anyway: what a
+"the mutation writes where the query reads" test should prove is that the READER now has it,
+not that a cache key momentarily held it. Raising `gcTime` would have hidden the question.
+
+### RTL's default text matcher collapses the exact whitespace a control-character test is about
+
+**Symptom.** `screen.getByText(path)` failed with *"normalized from 'server/…/brief\t/service.ts'"*
+on a case whose whole point was the TAB — and the tempting fix, matching the collapsed
+`brief /service.ts`, would have passed against a card that silently dropped the character.
+
+**Cause.** `getByText` runs both the element's text and the expected string through
+`getDefaultNormalizer`, which collapses runs of whitespace and trims. A control character in the
+middle of a path is whitespace to it.
+
+**Fix.** `screen.getByText(value, { normalizer: (v) => v })`. Build the hostile input with
+`String.fromCodePoint(9)` rather than a literal — the existing rule at `:365` — so the test
+source stays ASCII and the character is visible in a diff.
+
+### A PR row renders four `—`, so query the SCORE cell by column, not by text
+
+**Symptom.** `screen.getByText("—")` in the first `PRRow.test.tsx` (2026-08-17) failed with
+"multiple elements"; `getAllByText("—")` then returned **4**, not the 2 that looked obvious.
+
+**Cause.** SCORE, FINDINGS, COST (`RunCostBadge` on a null cost) and UPDATED (`relativeTime`
+on a null timestamp) all render the same em dash for a PR nothing has run against. Unlike
+`FindingsCell.test.tsx`, which renders one cell in isolation, a row test has every column in
+the tree.
+
+**Fix.** Scope the query to the cell: `within(container.querySelector("div")!.children[3])`,
+index by the column's position in `COLUMN_KEYS`. It reads worse than `getByText` and is worth
+it — the assertion then fails when the SCORE cell changes, and when the table is reordered,
+rather than when a neighbouring column starts or stops rendering a dash.
+
+### `container.querySelector("svg")` finds the icon, not the diagram
+
+**Symptom.** Three `ArchitectureSection` assertions of the form
+`expect(container.querySelector("svg")).toBeNull()` failed with
+`expected SVGSVGElement{…} to be null`, printing a `class="lucide lucide-activity"` element. Worse
+than the failures: the one *positive* test — "the diagram rendered" — had been passing against that
+same glyph and proved nothing at all.
+
+**Cause.** Every `@devdigest/ui` `Icon.*` is a lucide component and renders an `<svg>`. A tour
+section card has one in its header before any diagram exists, so "is there an svg" is always true
+here and can never answer "did mermaid draw".
+
+**Fix.** Query the diagram by the id `MermaidDiagram.tsx` hands `mermaid.render`:
+`container.querySelector('svg[id^="dd-mermaid"]')`. Same rule for any component that mixes icons
+with generated SVG — assert on something only the generator produces, never on the tag.
+
+### A "no link was created" assertion is vacuous inside a code fence
+
+**Symptom.** `TourProse`'s "does not reach inside a fenced code block" test passed both with the
+fence guard and with it deleted, so it held nothing.
+
+**Cause.** A markdown link written inside a ```` ``` ```` fence is not a link — the fence renders its
+contents literally. A linkifier that wrongly rewrites `cat src/server.ts` to
+`cat [src/server.ts](src/server.ts)` therefore still produces **zero** anchors; what it produces is
+visible link punctuation in a code block.
+
+**Fix.** Assert the fence's own text, not the absence of an anchor:
+`expect(document.querySelector("pre")?.textContent).toContain("cat src/server.ts")` plus
+`.not.toContain("](")`. Deleting the guard then fails the test, which was checked on 2026-08-18.
+
+
+### `rerender` from `renderWithProviders` drops every provider, and the error blames your component
+
+**Symptom.** A test renders through `renderWithProviders`, calls the returned `rerender(<X …/>)` with
+one prop changed, and gets *"Failed to call `useTranslations` because the context from
+`NextIntlClientProvider` was not found … You intended to render this component as a Server
+Component"*. The component is a perfectly ordinary `"use client"` leaf and nothing about it is a
+Server Component.
+
+**Cause.** `src/test/render.tsx` builds the provider tree around the element it is handed, but RTL's
+`rerender` replaces the ROOT with exactly what you pass it — the wrapper is gone. Same trap for
+`QueryClientProvider` and `ToastProvider`; next-intl is simply the loudest about it, and its message
+sends you looking at the RSC boundary.
+
+**Fix.** `cleanup()` and render again through the same helper, or re-wrap by hand. In this suite the
+first is one line: the tests already keep a local `render(over)` helper for the fixture.
+`TourHeader.test.tsx` → "regenerates on a press, and is disabled by its own in-flight mutation only".
+
+### `getByRole("status")` always finds two under `renderWithProviders` — the toast host is one
+
+**Symptom.** *"Found multiple elements with the role `status`"*, listing your note and a
+`<div role="status" aria-live="polite">` with `position: fixed; bottom: 20px`.
+
+**Cause.** `ToastProvider` (`src/lib/toast.tsx`) mounts an empty live region in every test that uses
+`renderWithProviders`. It is empty, so no text query hits it, but a ROLE query does. `alert` behaves
+the same way wherever `ErrorState` is on screen.
+
+**Fix.** Query the note by its own text, or scope with `within`. Do not delete `role="status"` from
+the component to make the test pass — the live region is what announces a state change to a screen
+reader. `TourStates.test.tsx` → "says so beside an existing tour".
+
+### jsdom has no `Element.prototype.scrollIntoView`, so an anchor-jump effect throws in every view test
+
+**Symptom.** A component with an effect that jumps to a section — `document.getElementById(id)
+.scrollIntoView({ block: "start" })` — passes typecheck and throws `TypeError: … is not a function`
+the moment a test mounts it with the target present.
+
+**Cause.** Verified 2026-08-18: `typeof document.createElement("div").scrollIntoView === "undefined"`
+in this suite's jsdom. TypeScript's DOM lib declares it, so nothing warns.
+
+**Fix.** Call it optionally — `el?.scrollIntoView?.({ block: "start" })`. It costs one `?.` and keeps
+the jump untestable-but-harmless rather than stubbing a DOM method in `src/test/setup.ts`, which
+would make every view test assert against a method the browser implements differently anyway. Real
+scroll behaviour is checked in a browser instead (`OnboardingTourView.tsx`, and the CDP recipe under
+What Works).
+
+### A child's async outcome reaches the parent one render late, so `waitFor(child)` then `getBy` fails
+
+**Symptom.** `await waitFor(() => expect(mermaidSvg(container)).not.toBeNull())` resolves and the
+very next line, `screen.getByText(messages.diagramNote)`, throws "Unable to find an element"
+(`ArchitectureSection.test.tsx`, 2026-08-18).
+**Cause.** The svg lands in the same commit that sets the CHILD's state; the parent is told from the
+effect that runs after it, and renders the caption on the render after that. Waiting on the child's
+DOM does not wait for the parent's.
+**Fix.** `expect(await screen.findByText(...)).toBeInTheDocument()` for the parent's half — one
+`findBy` per hop, rather than one `waitFor` covering both.
+
+### `position: sticky; top:` is measured from `main`, not from the viewport — do not add the topbar
+
+**Symptom.** A sticky sidebar rendered 48px lower than the element it is drawn level with, at a
+scroll position of zero, and stayed 76px below the topbar while scrolling.
+**Cause.** `main` is the app's scroll container (`overflow-y: auto`) and its scrollport already
+begins under the 52px topbar, so `top: 76px` on `.dd-tour-rail` — written as "52px of topbar plus
+24px of breathing room" — counted the topbar twice. Sticky then clamps a natural position that sits
+*above* the threshold, so the offset applies even unscrolled: the rail's own row started at viewport
+y=80 and it drew at y=128.
+**Fix.** `top` is measured from `main`, so it carries only the gap wanted under the topbar. For a
+block that starts at the top of `.dd-page`, that is `28px` — the page's own `padding-top` — and the
+element then rests exactly where its column starts and sticks there without appearing to move
+(`client/src/app/globals.css`, `.dd-tour-rail`, 2026-08-18). Anything under `main` that reads
+`top: 76px` has the same bug.
+
+### TS2719 "two different types with this name" from a test fixture is a `Partial<T>` spread, not vendor drift
+
+**Symptom.** `cd client && pnpm typecheck` reports, on a fixture factory's return annotation,
+`error TS2719: Type '{ … }' is not assignable to type '{ … }'. Two different types with this name
+exist, but they are unrelated.` — with two structurally identical types printed. Seen 2026-08-18 at
+`OnboardingTourView.test.tsx:62`, `const record = (over: Partial<OnboardingRecord> = {}):
+OnboardingRecord => ({ …, ...over })`.
+
+**Cause.** Not the two vendored copies of `@devdigest/shared`, which is what the wording sends you
+to check first. Read the indented lines under the message — they name the real one:
+`Types of property 'chains_supplied' are incompatible. Type 'number | undefined' is not assignable
+to type 'number'.` A key that exists in `Partial<T>` but is ABSENT from the base object literal
+survives the spread as `T[K] | undefined`; a key present in both is narrowed back to `T[K]`. So
+adding a required field to a contract breaks exactly the fixtures that do not list it, and TypeScript
+elaborates it as a type-identity mismatch because both operands print as anonymous object types.
+
+**Fix.** Add the new field to the base literal of the fixture factory. `diff -r
+server/src/vendor/shared client/src/vendor/shared` first only if it is cheap — it was clean here,
+and the message will say so in one second rather than the ten minutes the phrase suggests.
+
+### `fireEvent.click` moves no focus, so "focus came back" asserts nothing
+
+**Symptom.** A test opens a dialog with `fireEvent.click(title)`, closes it, and asserts
+`expect(document.activeElement).toBe(title)`. It fails with `<body>` — or worse, it passes while the
+component restores focus to nothing, because both sides are `<body>`.
+
+**Cause.** jsdom implements no default focus behaviour for a click. A real browser focuses a button
+when it is activated; `fireEvent` dispatches the event and nothing else. So at the moment the trap
+records `document.activeElement`, the opener is not focused and `<body>` is what gets recorded.
+`userEvent` would do it — and it is not installed here (see the entry above).
+
+**Fix.** Focus the control, then click it, and say why in the helper:
+
+```ts
+const control = screen.getByRole("button", { name: title });
+control.focus();
+fireEvent.click(control);
+```
+
+This is also the honest simulation: the keyboard path is what AC-14 is about, and Safari does not
+focus a button on click either.
+
+### Adding a navigation hook to a leaf breaks every ancestor's `next/navigation` mock
+
+**Symptom.** `Error: [vitest] No "useRouter" export is defined on the "next/navigation" mock.` in
+`OnboardingTourView.test.tsx` — a file that was not touched — after `FirstTasksSection` started
+reading `?task=`. Twelve tests, none of them about navigation. Hit 2026-08-19.
+
+**Cause.** Each test file mocks `next/navigation` with a factory listing only the members its own
+tree needed when it was written (`useParams` and `usePathname` here). The mock is per file and
+applies to the WHOLE rendered tree, so a hook added five levels down is missing from a factory
+nobody thought about.
+
+**Fix.** After adding `useRouter`, `useSearchParams` or `usePathname` to any component, run
+`rg 'vi.mock\("next/navigation"' client/src` and extend the factory of every test that renders it.
+`useSearchParams: () => new URLSearchParams()` and `useRouter: () => ({ replace: () => {} })` are
+enough when the file asserts nothing about navigation.
+
+
 ## Open Questions
 
+- **A dismissed critical does not move `agent_runs.blockers`, and the fix belongs on the server**
+  (2026-08-17). Repro: open a PR whose completed run has `blockers > 0`, dismiss a CRITICAL finding
+  on Agent runs, and both verdict banners keep the old number. The column is written once, when the
+  run finishes (`server/src/modules/reviews/run-executor.ts:240`). The client must NOT paper over
+  it — recounting there hardcodes CRITICAL and throws away the agent's `ciFailOn`, which is what the
+  Codebase Patterns entry and its two corrections are about. Open on two counts: whether the server
+  should recompute the column on a dismissal at all, and whether it should, given the same column is
+  the CI gate's record of what it decided at the time rather than a live number. Until that is
+  answered, the ⓘ beside the counts in `VerdictBanner` states the as-of ("counted when the run
+  finished") instead of hiding it.
 - Should the accordion header keep showing the run's own totals (`5 findings`) while a
   severity filter is active, or switch to `2 of 5`? Left as totals on 2026-07-28 — the
   header describes the run, not the current view — but it does read oddly next to a

@@ -10,7 +10,7 @@ import {
 } from './constants.js';
 import {
   INDEX_JOB_KIND,
-  REFRESH_JOB_KIND,
+  RESYNC_JOB_KIND,
 } from '../repo-intel/constants.js';
 
 /**
@@ -110,29 +110,52 @@ export class RepoService {
     return rows.map(toRepoDto);
   }
 
-  /** Re-fetch the clone for an existing repo (enqueues a fresh `clone` job). */
+  /**
+   * Bring an existing repo up to date.
+   *
+   * An ALREADY-CLONED repo refreshes through repo-intel's resync job, never
+   * through the clone job. `GitClient.clone` short-circuits to a bare
+   * `fetch()` once `.git` exists (`adapters/git/simple-git.ts`), and a bare
+   * fetch advances `origin/<branch>` while leaving HEAD and the worktree
+   * exactly where they were — yet the worktree is what every consumer reads:
+   * the context scan walks it for documents, the indexer parses it for the
+   * blast radius. Refreshing through the clone job therefore kept serving the
+   * commit the repo was imported at while reporting success. Resync runs
+   * `git.sync` (fetch + `reset --hard origin/<branch>`) and then the same
+   * incremental reindex this method used to enqueue on its own.
+   *
+   * A repo with NO clone yet cannot be resynced, so that case still enqueues
+   * the clone job — which is also the fallback when repo-intel is unwired and
+   * the resync kind has no handler.
+   */
   async refresh(workspaceId: string, id: string): Promise<{ status: 'refreshing' }> {
     const repo = await this.repo.getById(workspaceId, id);
     if (!repo) throw new NotFoundError('Repo not found');
-    await this.container.jobs.enqueue(workspaceId, CLONE_JOB_KIND, {
-      repoId: repo.id,
-      owner: repo.owner,
-      name: repo.name,
-      url: `https://github.com/${repo.fullName}.git`,
-    } satisfies CloneJobPayload);
-    // T2.2 — also enqueue an incremental refresh. The two queue positions are
-    // independent (p-queue doesn't FIFO across kinds), but `runIncremental` is
-    // a no-op when `currentHead === lastIndexedSha`, so ordering is safe: if
-    // refresh fires before the new clone settles, it cheaply exits; if after,
-    // it picks up the new HEAD.
+
+    if (repo.clonePath) {
+      try {
+        await this.container.jobs.enqueue(workspaceId, RESYNC_JOB_KIND, {
+          repoId: repo.id,
+          owner: repo.owner,
+          name: repo.name,
+        });
+        return { status: 'refreshing' };
+      } catch {
+        // No resync handler (repo-intel not wired) — fall through to the clone
+        // job, which at least keeps the refs current.
+      }
+    }
+
     try {
-      await this.container.jobs.enqueue(workspaceId, REFRESH_JOB_KIND, {
+      await this.container.jobs.enqueue(workspaceId, CLONE_JOB_KIND, {
         repoId: repo.id,
         owner: repo.owner,
         name: repo.name,
-      });
+        url: `https://github.com/${repo.fullName}.git`,
+      } satisfies CloneJobPayload);
     } catch {
-      // No handler / transient enqueue failure — refresh button is best-effort.
+      // No handler / transient enqueue failure — refresh button is best-effort
+      // and answers the same either way, exactly as the resync branch does.
     }
     return { status: 'refreshing' };
   }

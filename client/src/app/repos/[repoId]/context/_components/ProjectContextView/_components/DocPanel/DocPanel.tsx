@@ -225,7 +225,7 @@ function Body({
     );
   }
 
-  return <DocumentReader markdown={doc.data.content ?? ""} />;
+  return <DocumentReader markdown={doc.data.content ?? ""} resolvePath={null} />;
 }
 
 /** The name at the end of the path; the whole path is in the row's tooltip. */

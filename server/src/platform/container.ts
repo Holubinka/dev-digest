@@ -32,6 +32,16 @@ import { SettingsRepository } from '../modules/settings/repository.js';
 import type { RepoIntel } from '../modules/repo-intel/types.js';
 import { RepoIntelService } from '../modules/repo-intel/service.js';
 import type { IntentDeriver } from '../modules/intent/types.js';
+import type { BlastReader } from '../modules/blast/types.js';
+import { BlastService } from '../modules/blast/service.js';
+import { BlastRepository } from '../modules/blast/repository.js';
+import type { BriefReader } from '../modules/brief/types.js';
+import { BriefService } from '../modules/brief/service.js';
+import { BriefRepository } from '../modules/brief/repository.js';
+import type { OnboardingGenerator, OnboardingReader } from '../modules/onboarding/types.js';
+import { OnboardingService } from '../modules/onboarding/service.js';
+import { OnboardingRepository } from '../modules/onboarding/repository.js';
+import { OnboardingGenerateExecutor } from '../modules/onboarding/generate-executor.js';
 import { IntentService } from '../modules/intent/service.js';
 import { IntentRepository } from '../modules/intent/repository.js';
 import type { ProjectContextResolver } from '../modules/context/types.js';
@@ -82,6 +92,18 @@ export interface ContainerOverrides {
   repoIntel?: RepoIntel;
   /** PR intent derivation (05) — tests inject a canned deriver. */
   intent?: IntentDeriver;
+  /** Blast radius (07) — the brief's tests inject a canned view instead of an index. */
+  blast?: BlastReader;
+  /** Risk Brief (10) — injectable for the same reason every other service here is. */
+  brief?: BriefReader;
+  /** Onboarding Tour (11) — the routes' own tests inject a canned page and record. */
+  onboarding?: OnboardingReader;
+  /**
+   * The tour's ONE model call. Overridden by every `onboarding` integration test:
+   * a canned draft is what keeps a suite that reaches the real routes off the
+   * network and off a paid provider.
+   */
+  onboardingGenerator?: OnboardingGenerator;
   /**
    * Project Context (08) — a review test injects a canned resolver and reaches
    * no clone and no `repo_docs` row at all.
@@ -119,6 +141,10 @@ export class Container {
   private _settingsRepo?: SettingsRepository;
   private _repoIntel?: RepoIntel;
   private _intentService?: IntentDeriver;
+  private _blastService?: BlastReader;
+  private _briefService?: BriefReader;
+  private _onboardingService?: OnboardingReader;
+  private _onboardingGenerator?: OnboardingGenerator;
   private _projectContext?: ProjectContextResolver;
   private _depgraph?: DepGraph;
   private _tokenizer?: Tokenizer;
@@ -214,6 +240,73 @@ export class Container {
     // concrete type is the composition root's job, and it is what keeps `Db`
     // off `IntentContainer`, the port `IntentService` codes against.
     return (this._intentService ??= new IntentService(this, new IntentRepository(this.db)));
+  }
+
+  /**
+   * Blast radius (07). The Risk Brief reads it through this interface rather
+   * than an import: `modules/brief/**` may not reach into `modules/blast/**`
+   * (`no-cross-module`), and `import type` counts.
+   *
+   * `blast/routes.ts` uses this getter too, instead of constructing its own
+   * instance. One owner is the point: two live `BlastService`s answering the
+   * same question is the drift `intentService` was created to prevent.
+   */
+  get blastService(): BlastReader {
+    if (this.overrides.blast) return this.overrides.blast;
+    return (this._blastService ??= new BlastService(this, new BlastRepository(this.db)));
+  }
+
+  /**
+   * Risk Brief (10). MEMOISED, and that is the point rather than a convenience:
+   * `BriefService` carries the single-flight map that makes AC-45 true — two
+   * tabs on one PR state pay for one model call — and a map on a second instance
+   * is not the same lock. Constructing it in `brief/routes.ts` made that
+   * correctness depend on module registration running exactly once; the first
+   * non-HTTP caller (MCP, a review executor) would have had a fresh empty Map
+   * and no way to know.
+   *
+   * The repository is built HERE, like `intentService`'s and `blastService`'s:
+   * naming a concrete type is the composition root's job, and it is what keeps
+   * `Db` off `BriefContainer`, the port `BriefService` codes against.
+   */
+  get briefService(): BriefReader {
+    if (this.overrides.brief) return this.overrides.brief;
+    return (this._briefService ??= new BriefService(this, new BriefRepository(this.db)));
+  }
+
+  /**
+   * Onboarding Tour (11). MEMOISED, for the reason `briefService` is: the
+   * service carries the single-flight map that makes AC-74 true — two people
+   * pressing Generate on one repo within the same second pay for one model call
+   * — and a map on a second instance is not the same lock. Constructing it in
+   * `onboarding/routes.ts` would make that correctness depend on module
+   * registration running exactly once, and `pnpm arch` cannot see the
+   * difference.
+   *
+   * The repository is built HERE, like every other service's: naming a concrete
+   * type is the composition root's job, and it is what keeps `Db` off
+   * `OnboardingContainer`, the port `OnboardingService` codes against.
+   */
+  get onboardingService(): OnboardingReader {
+    if (this.overrides.onboarding) return this.overrides.onboarding;
+    return (this._onboardingService ??= new OnboardingService(
+      this,
+      new OnboardingRepository(this.db),
+    ));
+  }
+
+  /**
+   * The tour's generation half — gather, one structured call, ground, hand back
+   * a draft. It writes nothing and reads no index state; this container is where
+   * the two halves meet.
+   *
+   * The port keeps its role name (`OnboardingGenerator`) rather than the class's,
+   * because this file imports both and two identical names collide. Same shape as
+   * `BriefReader` implemented by `BriefService`.
+   */
+  get onboardingGenerator(): OnboardingGenerator {
+    if (this.overrides.onboardingGenerator) return this.overrides.onboardingGenerator;
+    return (this._onboardingGenerator ??= new OnboardingGenerateExecutor(this));
   }
 
   /**

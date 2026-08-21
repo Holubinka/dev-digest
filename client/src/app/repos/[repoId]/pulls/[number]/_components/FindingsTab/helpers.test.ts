@@ -10,6 +10,9 @@ function run(id: string, severities: string[]): ReviewRecord {
     agent_id: null,
     run_id: `run-${id}`,
     agent_name: `agent ${id}`,
+    // null = written before `head_sha` existed; this fixture counts severities and
+    // says nothing about which state of the PR the run saw.
+    head_sha: null,
     kind: "review",
     verdict: "comment",
     summary: null,

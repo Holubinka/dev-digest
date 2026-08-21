@@ -4,7 +4,7 @@ import React from "react";
 import { useTranslations } from "next-intl";
 import { Badge, Button, Icon, SectionLabel, Skeleton, type IconName } from "@devdigest/ui";
 import type { IntentRecord } from "@/lib/types";
-import { confidenceColor, riskChip } from "./constants";
+import { confidenceColor } from "./constants";
 import { s } from "./styles";
 
 interface IntentCardProps {
@@ -13,6 +13,16 @@ interface IntentCardProps {
   isError: boolean;
   onRecompute: () => void;
   recomputing: boolean;
+  /**
+   * RISK AREAS, rendered at the foot of every state of this card.
+   *
+   * A SLOT, not a prop the card understands: its producer is the brief, not the
+   * intent (D18), and `OverviewTab` owns both queries. So the card learns
+   * nothing about the brief, and the section survives the three states in which
+   * there is no intent at all — which is the point of R33, because an absent
+   * intent says nothing about whether the brief found risks.
+   */
+  riskAreas?: React.ReactNode;
 }
 
 /**
@@ -28,6 +38,7 @@ export function IntentCard({
   isError,
   onRecompute,
   recomputing,
+  riskAreas,
 }: IntentCardProps) {
   const t = useTranslations("brief");
 
@@ -48,6 +59,7 @@ export function IntentCard({
         <SectionLabel icon="Target">{t("block.intent")}</SectionLabel>
         <Skeleton height={16} style={s.skeletonRow} />
         <Skeleton width="70%" height={12} />
+        {riskAreas}
       </section>
     );
   }
@@ -58,6 +70,7 @@ export function IntentCard({
         <SectionLabel icon="Target">{t("block.intent")}</SectionLabel>
         <p style={s.note}>{t("intent.failed")}</p>
         {recompute}
+        {riskAreas}
       </section>
     );
   }
@@ -75,6 +88,7 @@ export function IntentCard({
         <p style={s.note}>{t("intent.unavailable")}</p>
         <p style={s.hint}>{t("intent.unavailableHint")}</p>
         {recompute}
+        {riskAreas}
       </section>
     );
   }
@@ -112,23 +126,16 @@ export function IntentCard({
         />
       </div>
 
-      {intent.risk_areas.length > 0 && (
-        <div style={s.risks}>
-          <div style={s.colLabel}>{t("intent.riskAreas")}</div>
-          <div style={s.riskRow}>
-            {intent.risk_areas.map((area, i) => {
-              const chip = riskChip(area);
-              // `Badge` is a <span>. `Chip` renders a <button>, and a button
-              // with no action is an accessibility defect.
-              return (
-                <Badge key={`${area}-${i}`} icon={chip.icon} color={chip.color} bg={chip.bg}>
-                  {area}
-                </Badge>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      {/* `intent.risk_areas` is DELIBERATELY not rendered (D18). Two sections
+          called "risk areas", one grounded against the repository index and one
+          not, is the thing the amendment removes — the slot below carries the
+          brief's `risks[]`, which is the checked one. The field stays in the
+          contract and in the record; only this card stops drawing it. */}
+      {/* Directly under the scope columns, with nothing wedged between: that is
+          where the design puts it, and the `via {model}` / Recompute footer used
+          to sit in the gap. The other three states of this card already render
+          the slot last, which in them IS directly under their own content. */}
+      {riskAreas}
 
       <div style={s.footer}>
         <span>{t("intent.model", { model: intent.model })}</span>

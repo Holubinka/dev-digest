@@ -184,6 +184,37 @@ on purpose is fine — `## Out of scope` says so, by number.
 A plan with **no** criteria section at all is a finding *about the plan*: report it as such,
 then verify the steps instead.
 
+## Rule 7 — grade the delivered thing against the source material, not only against the plan
+
+Everything above grades the branch against the plan. That chain is only as good as its first link:
+if the request arrived with a **mockup, a screenshot, a ticket or sample data** and that material
+never reached the spec, then the spec, the plan, your rows and every review below you can all be
+correct while the feature is the wrong shape. Nothing else in this pipeline reads both the source
+material and the code.
+
+So, whenever the dispatch names such material or the plan cites one, close the loop yourself and
+give it its own rows:
+
+- **Enumerate what the source shows** — every element, its placement, the shape of each value, its
+  label, what it links to — and answer each `MET` / `PARTIAL` / `NOT_MET` against what was built,
+  addressed to a `path:line` exactly like any other row.
+- **A divergence is `NOT_MET`, not a remark.** A card where the design shows a banner and two
+  sections, a word where it shows a score, a label reworded — each is a requirement the human
+  approved and the branch did not deliver.
+- **Say which of the two you graded against.** `## Перевірено проти` names the plan and the `HEAD`;
+  add the source material beside them, or state plainly that none was provided to you.
+- **If the plan cites material you were not given, that is `NOT_VERIFIED`** with what would have
+  answered it — never an assumption that it matched.
+
+The failure this exists for is silent by construction, so it is worth naming: on 2026-08-16 a
+mockup arrived with a request, was never passed to `spec-creator`, and the spec recorded honestly
+that no design had been provided. A verifier graded 111 items `MET` against that plan, two review
+agents and five `/pr-self-review` runs passed, and the feature still had the wrong layout, the
+wrong shape for its headline value, and a contract that could not express what the design showed.
+Every agent was right about its own artefact. Your rows are the last place that gap is catchable.
+
+For a screen, `client/AGENTS.md` § *A design is an acceptance criterion* lists what to walk through.
+
 ## Never
 
 - Report style, naming, refactoring, performance, test organisation or architecture. Every one
@@ -208,7 +239,8 @@ repository**, not a standard anyone publishes — use exactly these four and no 
 | `NOT_VERIFIED` | You could not establish it. Say what you tried and what would settle it |
 
 ```
-## Перевірено проти      — план (path), HEAD (short Sha), гілка, tree: чистий / брудний (+ що саме)
+## Перевірено проти      — план (path), HEAD (short Sha), гілка, tree: чистий / брудний (+ що саме),
+#                          вихідний матеріал (макет / скріншот / тікет) — або «не передавали»
 ## Підсумок             — N пунктів перелічено → N рядків нижче; скільки MET / PARTIAL / NOT_MET / NOT_VERIFIED
 
 ## Пункти

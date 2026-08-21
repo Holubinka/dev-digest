@@ -46,3 +46,9 @@ with, `LNN-` included; a new plan takes the next free `NN`.
 | [`07-blast-radius.md`](07-blast-radius.md) | repo-wide | legacy | In progress 2026-08-09 |
 | [`08-project-context.md`](08-project-context.md) | repo-wide | single-agent | Planned 2026-08-13 |
 | [`09-project-context-authoring.md`](09-project-context-authoring.md) | server · client | multi-agent | Planned 2026-08-14 |
+| [`10-pr-why-risk-brief.md`](10-pr-why-risk-brief.md) | server · client | multi-agent | Round one implemented 2026-08-16 (P4/P5 deferred) |
+| [`11-pr-brief-overview-composition.md`](11-pr-brief-overview-composition.md) | server · client | multi-agent | Planned 2026-08-16 |
+| [`12-onboarding-tour-server-generation.md`](12-onboarding-tour-server-generation.md) | server · client | multi-agent | Implemented 2026-08-17 |
+| [`13-onboarding-tour-server-api.md`](13-onboarding-tour-server-api.md) | server | multi-agent | Implemented 2026-08-18 |
+| [`14-onboarding-tour-client.md`](14-onboarding-tour-client.md) | client | multi-agent | Implemented 2026-08-18 |
+| [`15-onboarding-tour-depth.md`](15-onboarding-tour-depth.md) | server · client | multi-agent | Implemented 2026-08-19 |

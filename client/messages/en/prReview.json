@@ -24,7 +24,8 @@
     "comment": "Comment",
     "findingsCount": "{count} findings",
     "blockers": " · {count} blockers",
-    "prScore": "PR SCORE"
+    "prScore": "PR SCORE",
+    "countsHint": "Findings are everything this run reported. Blockers are the ones that crossed this agent's own fail threshold, counted when the run finished."
   },
   "severityFilter": {
     "groupLabel": "Filter findings by severity",
@@ -117,6 +118,8 @@
       "updated": "Updated"
     },
     "costHint": "Total spent by every agent run on this PR",
+    "scoreEarlier": "earlier",
+    "scoreEarlierHint": "This score comes from an earlier state of the pull request, not from its current commit.",
     "findings": {
       "total": "{count} finding(s)"
     },

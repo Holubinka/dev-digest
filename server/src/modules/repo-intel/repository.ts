@@ -480,6 +480,22 @@ export class RepoIntelRepository {
       .limit(limit);
   }
 
+  /**
+   * How many files the index actually holds — which is NOT what
+   * `repo_index_state.files_indexed` reports. That column ACCUMULATES:
+   * `pipeline/incremental.ts` writes `state.filesIndexed + filesIndexed` on
+   * every pass, so a file changed ten times is counted ten times, and only a
+   * full re-index resets it. A caller sizing work to how big the repository is
+   * needs this number; a caller reporting what the indexer did needs that one.
+   */
+  async countIndexedFiles(repoId: string): Promise<number> {
+    const [row] = await this.db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(t.fileRank)
+      .where(eq(t.fileRank.repoId, repoId));
+    return row?.n ?? 0;
+  }
+
   /** Repo-map candidates: symbols with a signature, joined to rank, ordered. */
   async getRepoMapCandidates(repoId: string): Promise<RepoMapCandidateRow[]> {
     return this.db

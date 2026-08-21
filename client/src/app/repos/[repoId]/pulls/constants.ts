@@ -27,8 +27,13 @@ export const SIZE_COLOR: Record<string, string> = {
  * Grid template for both the header row and PR rows. The title takes what is
  * left, so every fixed column is sized to its content and no wider — adding
  * FINDINGS cost the title 100px and it truncates first on a narrow window.
+ *
+ * SCORE is 88px rather than the 56px the ring alone needs, because a score from
+ * an earlier state of the PR is shown WITH a marker beside it, and the marker is
+ * a word rather than a colour (`PRRow.tsx`). A grid cell does not clip, so a
+ * marker wider than its column would paint over FINDINGS instead of truncating.
  */
-export const GRID = "1fr 104px 84px 56px 96px 108px 68px 70px";
+export const GRID = "1fr 104px 84px 88px 96px 108px 68px 70px";
 
 /** Column gap, shared by the header row and the PR rows. */
 export const GRID_GAP = 12;

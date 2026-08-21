@@ -23,7 +23,30 @@ import { usePrReviews, useCancelRun, usePrActiveRuns, usePrRuns, useDeleteRun } 
 import { useActiveRepo, useRepoNotFound } from "../../../../../lib/repo-context";
 import { ApiError } from "../../../../../lib/api";
 import { githubPrUrl } from "../../../../../lib/github-urls";
+import { MAX_LINE } from "@/lib/line-numbers";
 import type { FindingRecord } from "@devdigest/shared";
+
+/**
+ * A line number someone could have typed into the address bar.
+ *
+ * The WHOLE string is matched, and only then converted. `Number.parseInt` is the
+ * wrong tool here and is deliberately not used: it reads `12abc` as 12, `1e3` as
+ * 1 and ` 12` as 12, and it has no upper bound at all.
+ *
+ * Two separate jobs, and the split is why this is not the same function as
+ * `BriefRef`'s `lineFor`: the pattern refuses the SHAPES a string can take
+ * (`12abc`, `1e3`, ` 12`, `0`, a leading zero, a non-ASCII digit), and `MAX_LINE`
+ * bounds the VALUE. The bound is shared with the reference renderer rather than
+ * written out again here — a reference printing a line the jump then declines to
+ * open is exactly what two independent literals would let happen.
+ */
+const USABLE_LINE = /^[1-9][0-9]*$/;
+
+function usableLine(raw: string | null): number | null {
+  if (raw == null || !USABLE_LINE.test(raw)) return null;
+  const line = Number(raw);
+  return line <= MAX_LINE ? line : null;
+}
 
 export default function PRDetailPage() {
   const params = useParams<{ repoId: string; number: string }>();
@@ -90,6 +113,17 @@ export default function PRDetailPage() {
   // target could land behind a filter that hides it.
   const targetFindingId = search.get("finding");
   const openFinding = (id: string) => setParams({ tab: "findings", finding: id, sev: null });
+  // Set by a review-focus item in the PR Brief: which file — and, when the brief
+  // knows one, which LINE — the Files changed tab should open and scroll to.
+  // Three keys, ONE `setParams`: three `setParam` calls would build their params
+  // from the same captured `search`, race, and leave only the last one
+  // (`client/INSIGHTS.md:585-592`). A jump with no line CLEARS the key rather
+  // than leaving the previous one behind, or the reader lands on a line the
+  // reference they just pressed never named.
+  const targetFile = search.get("file");
+  const targetLine = usableLine(search.get("line"));
+  const openFile = (path: string, line?: number) =>
+    setParams({ tab: "diff", file: path, line: line != null ? String(line) : null });
   // Risk order is the default: GitHub's order is what Smart Diff exists to fix.
   // Only the explicit opt-out is written, so the URL stays clean until asked.
   const smartOrder = search.get("diffOrder") !== "original";
@@ -162,7 +196,18 @@ export default function PRDetailPage() {
       />
 
       <div style={{ padding: "24px 32px 44px", display: "flex", flexDirection: "column", gap: 24, maxWidth: 1080, margin: "0 auto" }}>
-        {tab === "overview" && <OverviewTab prBody={pr.body} prId={prId} />}
+        {tab === "overview" && (
+          <OverviewTab
+            prBody={pr.body}
+            prId={prId}
+            headSha={pr.head_sha}
+            prFiles={pr.files}
+            repoFullName={repoFullName}
+            reviews={reviews}
+            prRuns={prRuns}
+            onOpenFile={openFile}
+          />
+        )}
 
         {tab === "findings" && (
           <FindingsTab
@@ -201,6 +246,8 @@ export default function PRDetailPage() {
             findings={allFindings}
             canComment={pr.status === "open"}
             onOpenFinding={openFinding}
+            targetFile={targetFile}
+            targetLine={targetLine}
             smartOrder={smartOrder}
             onSmartOrderChange={setSmartOrder}
           />

@@ -18,10 +18,33 @@ function looksLikeMermaid(src: string): boolean {
  * (client-only). We VALIDATE with mermaid.parse({suppressErrors}) before
  * rendering — mermaid otherwise injects a "Syntax error" bomb graphic into the
  * DOM on bad input instead of throwing. Junk/unparseable input renders nothing.
+ *
+ * `onRendered` reports whether the chart actually drew, because "renders
+ * nothing" is invisible to the caller: a non-empty string is not a diagram, and
+ * a caption or a frame hung on `chart !== ""` outlives the diagram it belongs
+ * to. It is called once per outcome, never while the parse is still in flight.
  */
-export function MermaidDiagram({ chart }: { chart: string }) {
+export function MermaidDiagram({
+  chart,
+  onRendered,
+}: {
+  chart: string;
+  onRendered?: (rendered: boolean) => void;
+}) {
   const ref = React.useRef<HTMLDivElement>(null);
   const [state, setState] = React.useState<"pending" | "ok" | "invalid">("pending");
+
+  // Held in a ref rather than named as a dependency below: an inline callback
+  // is a new function every render, and in the deps of the render effect that
+  // is a re-parse per render — with a caller that sets state from it, a loop.
+  const notify = React.useRef(onRendered);
+  React.useEffect(() => {
+    notify.current = onRendered;
+  });
+
+  React.useEffect(() => {
+    if (state !== "pending") notify.current?.(state === "ok");
+  }, [state]);
 
   React.useEffect(() => {
     let cancelled = false;

@@ -165,7 +165,24 @@ export class OpenRouterProvider implements LLMProvider {
         // `response_format: json_schema, strict: true` needs. Applied to every
         // OpenRouter call on purpose: a review whose schema was quietly dropped
         // is worse than one that fails loudly.
-        ...(this.id === 'openrouter' ? { provider: { require_parameters: true } } : {}),
+        //
+        // `sort` orders what survives that filter, and it is a separate problem:
+        // `require_parameters` says which backends MAY serve the request and
+        // nothing about which one should. OpenRouter's default balances price and
+        // availability, and the spread is large — measured 2026-08-20 on
+        // `deepseek/deepseek-v4-flash`, served from eighteen backends, two
+        // same-shaped calls ran at 5 tokens in 0.78s and 93 tokens in 16.3s, the
+        // second about 5.7 tok/s. At that rate a normal brief does not fit its
+        // 45s clock, and the onboarding tour missed a 219s clock three times
+        // running. The failure looks like a broken feature and is a routing
+        // draw, which is why it is fixed here rather than by lengthening clocks:
+        // a longer clock waits out the slow draw instead of avoiding it.
+        //
+        // Throughput, not latency: these calls want a whole answer, and
+        // time-to-first-token buys nothing when nothing streams to a user.
+        ...(this.id === 'openrouter'
+          ? { provider: { require_parameters: true, sort: 'throughput' as const } }
+          : {}),
         // Reasoning off, only when the caller explicitly asks for it. A short
         // extraction (the intent classifier) has no use for reasoning tokens
         // and they bill at the output rate: measured 2026-08-05, the same

@@ -33,9 +33,9 @@ export const MAX_CALLERS_PER_SYMBOL = 20;
  * Hard ceiling on `getDownstream`'s reverse import-graph walk. Two hops is what
  * keeps the query bounded — each level is one indexed `(repo_id, to_file)`
  * lookup, and the fan-out of a third would be the whole repo on any hub file.
- * Deliberately NOT `BFS_DEPTH`, which happens to be 2 as well but belongs to
- * getCriticalPaths: tying the two together makes one feature's tuning move the
- * other's contract.
+ * Deliberately NOT `BFS_DEPTH`, which belongs to getCriticalPaths and is now 4:
+ * the two are no longer even equal, and tying them together would make one
+ * feature's tuning move the other's contract.
  */
 export const MAX_DOWNSTREAM_DEPTH = 2;
 
@@ -56,7 +56,22 @@ export const MAX_PARSE_MS_PER_FILE = 2000;
 export const INDEX_SOFT_BUDGET_MS = 110_000;
 
 // --- [T3] Graph / hotness / repo-map ---------------------------------------
-export const BFS_DEPTH = 2;
+/**
+ * Hops `getCriticalPaths` walks down from a chain root, so one chain is at most
+ * `1 + BFS_DEPTH` = 5 files — the length the onboarding reading path asks for.
+ */
+export const BFS_DEPTH = 4;
+
+/**
+ * Ceiling on the number of chains `getCriticalPaths` KEEPS — not on the roots it
+ * tries. The rule walks the whole rank list, skipping a candidate that imports
+ * nothing or that `isJunkPath` rejects, and stops once this many chains are
+ * collected. Measured on `Holubinka/dev-digest` (656 ranked files, 1113 edges):
+ * seeding from the top 20 ranked files instead yields 7 chains, because 13 of
+ * those 20 have no out-edge at all — rank rewards being imported, the walk
+ * follows importer → imported, so the best-ranked files are the worst roots.
+ */
+export const CRITICAL_PATH_CHAINS = 20;
 export const HOTNESS_WINDOW_DAYS = 180;
 export const DEFAULT_REPO_MAP_TOKEN_BUDGET = 1500;
 /** Signatures are trimmed to this many chars in the parse phase (cache stability). */

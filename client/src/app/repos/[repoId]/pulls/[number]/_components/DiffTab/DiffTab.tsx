@@ -3,7 +3,7 @@
 import React from "react";
 import { useTranslations } from "next-intl";
 import { SectionLabel, Button } from "@devdigest/ui";
-import { DiffViewer, type DiffCommentApi } from "@/components/diff-viewer";
+import { DiffViewer, lineDomId, type DiffCommentApi } from "@/components/diff-viewer";
 import { usePrComments, useCreatePrComment } from "@/lib/hooks/reviews";
 import { useSmartDiff } from "@/lib/hooks/core";
 import { notify } from "@/lib/toast";
@@ -22,6 +22,18 @@ interface DiffTabProps {
   /** Hands a finding id back to the page, which opens it in the Agent runs tab. */
   onOpenFinding?: (findingId: string) => void;
   /**
+   * The file a review-focus item on the Risk Brief card sent the reader to.
+   * Held in the URL by the page (`?file=`), like every other cross-tab target
+   * here, so the trip survives a reload and can be handed to someone else.
+   */
+  targetFile?: string | null;
+  /**
+   * The LINE inside that file, when the reference the reader pressed carried one
+   * — also from the URL (`?line=`), already parsed and bounded by the page. Null
+   * means the reference named no line, and the jump degrades to the file.
+   */
+  targetLine?: number | null;
+  /**
    * Smart order vs GitHub's order. Held in the URL by the page rather than here:
    * this component unmounts on every tab switch, so following a severity chip to
    * Agent runs and coming back would silently reset the reader's choice.
@@ -37,6 +49,8 @@ export function DiffTab({
   findings,
   canComment,
   onOpenFinding,
+  targetFile,
+  targetLine,
   smartOrder,
   onSmartOrderChange,
 }: DiffTabProps) {
@@ -46,6 +60,55 @@ export function DiffTab({
   // Comments start hidden so the diff is clean by default — toggle to reveal.
   const [showComments, setShowComments] = React.useState(false);
   const { data: smartDiff } = useSmartDiff(prId);
+
+  // Fall back to the plain viewer until the grouping arrives, so the tab never
+  // renders empty while a request is in flight.
+  const showSmart = smartOrder && smartDiff !== undefined;
+
+  // Which (viewer, file) pairs have already been scrolled to. `?file=` is never
+  // cleared, so without this an order toggle minutes later would drag the reader
+  // back to the Risk Brief's file.
+  const scrolled = React.useRef(new Set<string>());
+
+  /**
+   * Scroll the targeted file — or the targeted LINE inside it — into view. Every
+   * `FileCard` carries its own path as `data-file-path` and every rendered
+   * new-side line carries `lineDomId(path, newNo)`, in both viewers, so this
+   * works whichever one is on screen.
+   *
+   * The line is tried first and the file is the fallback, never the other way
+   * round: in the plain viewer a collapsed card renders no lines at all, and a
+   * jump that found nothing must still land on the file rather than sit still.
+   *
+   * Keyed on `showSmart` as well as the target — the same reason the finding
+   * jump keys on `shown` (`FindingsPanel.tsx:68-76`): the tree this scrolls
+   * inside may not be the final one yet. On the cold path the grouping has not
+   * arrived, so the first run lands in the PLAIN viewer and the whole list is
+   * replaced by the risk-ordered one a moment later; re-running after the swap
+   * is what makes the jump land instead of leaving the card open off-screen.
+   *
+   * `CSS.escape`, not interpolation: a path is GitHub-supplied text and a `"`
+   * or a `]` in one would otherwise end the attribute selector and throw a
+   * `SyntaxError` out of `querySelector` — the same rule the finding jump
+   * follows (`FindingsPanel.tsx:74`). `getElementById` needs none of that:
+   * `lineDomId` percent-encodes the path itself.
+   */
+  React.useEffect(() => {
+    if (!targetFile) return;
+    const key = `${showSmart ? "smart" : "plain"}:${targetFile}:${targetLine ?? ""}`;
+    if (scrolled.current.has(key)) return;
+    const line =
+      targetLine != null ? document.getElementById(lineDomId(targetFile, targetLine)) : null;
+    if (line) {
+      scrolled.current.add(key);
+      line.scrollIntoView({ block: "center", behavior: "smooth" });
+      return;
+    }
+    const card = document.querySelector(`[data-file-path="${CSS.escape(targetFile)}"]`);
+    if (!card) return;
+    scrolled.current.add(key);
+    card.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, [targetFile, targetLine, showSmart]);
 
   const commentCount = comments?.length ?? 0;
 
@@ -65,10 +128,6 @@ export function DiffTab({
       }
     },
   };
-
-  // Fall back to the plain viewer until the grouping arrives, so the tab never
-  // renders empty while a request is in flight.
-  const showSmart = smartOrder && smartDiff !== undefined;
 
   // Summed from the files rather than read off PrDetail: the two disagree on a
   // PR whose file list GitHub truncated, and the total under a file list should
@@ -127,6 +186,8 @@ export function DiffTab({
           findings={findings}
           commenting={commenting}
           {...(onOpenFinding ? { onOpenFinding } : {})}
+          {...(targetFile ? { openFile: targetFile } : {})}
+          {...(targetFile && targetLine != null ? { openLine: targetLine } : {})}
         />
       ) : (
         <DiffViewer files={files} commenting={commenting} />

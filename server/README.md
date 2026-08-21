@@ -68,6 +68,7 @@ flowchart TB
     pulls["pulls<br/>/pulls/:id · /pulls/:id/comments"]
     intent["intent<br/>/pulls/:id/intent"]
     blast["blast<br/>/pulls/:id/blast · /pulls/:id/blast/summary"]
+    brief["brief<br/>GET /pulls/:id/brief (cached, zero LLM)<br/>POST /pulls/:id/brief (one call, 20/min per workspace)"]
     smartDiff["smart-diff<br/>/pulls/:id/smart-diff"]
     polling["polling<br/>/repos/:id/poll"]
   end
@@ -81,6 +82,7 @@ flowchart TB
   subgraph Intel["Repo intelligence"]
     repoIntel["repo-intel<br/>/repos/:id/index-state · /resync"]
     conventions["conventions<br/>/repos/:id/conventions · /conventions/extract · /conventions/:id"]
+    onboarding["onboarding<br/>GET /repos/:id/onboarding (cached, zero LLM)<br/>POST /repos/:id/onboarding/generate (one call, 6/min per workspace)"]
   end
   subgraph Platform["Platform"]
     settings["settings<br/>/settings · /providers"]

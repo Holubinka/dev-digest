@@ -1,4 +1,4 @@
-import { desc, eq, inArray } from 'drizzle-orm';
+import { asc, desc, eq, inArray } from 'drizzle-orm';
 import type { Db } from '../../db/client.js';
 import * as t from '../../db/schema.js';
 
@@ -37,11 +37,30 @@ export interface PrListFindingRow {
  * the latest `kind='review'`, while "has this PR ever been reviewed at all" —
  * what separates a reviewed-and-clean `0 · 0 · 0` from a never-reviewed `—` in
  * the FINDINGS column — counts every kind.
+ *
+ * `headSha` is WHICH STATE of the PR the review describes, and it is nullable
+ * because the column is: rows written before it existed carry no head, and no
+ * backfill can invent one (`db/schema/reviews.ts`). Without it the list can
+ * report a score but not whether that score belongs to the commit on screen.
  */
 export interface PrListReviewRow {
   prId: string;
   score: number | null;
+  headSha: string | null;
   kind: 'summary' | 'review';
+  /**
+   * WHICH ANSWER the review gave, and the reason the list can no longer take
+   * whichever row is newest: several agents answer the same state differently,
+   * and `pickListReview` ranks a blocking verdict above an approving one the
+   * way the PR page's banner already does.
+   *
+   * `text` with no enum in the schema, so anything can be in here — the rank
+   * lookup treats an unrecognised value as `comment` rather than trusting it.
+   */
+  verdict: string | null;
+  /** The two fields that make the pick total, so it rests on no incoming order. */
+  createdAt: Date;
+  id: string;
 }
 
 /**
@@ -72,10 +91,15 @@ export class PullsRepository {
   /**
    * Reviews for a page of PRs, newest first, across every review kind.
    *
-   * The ordering is load-bearing and belongs with the query: the caller walks
-   * the rows once and takes the FIRST it sees per PR as that PR's latest
-   * review. Dropping the `ORDER BY` would silently hand it whatever order
-   * Postgres felt like returning.
+   * The ordering is NO LONGER what decides the score. It used to be: the caller
+   * walked the rows once and took the first it saw per PR, which is why this
+   * comment called the `ORDER BY` load-bearing. `pickListReview` now ranks a
+   * PR's reviews with a total comparator of its own, so the result is the same
+   * whatever order Postgres returns.
+   *
+   * The clause stays because a repository handing rows back in an unstated
+   * order is a trap for the next caller, and the tie-break is spelled out so
+   * two runs over identical data cannot disagree.
    *
    * No `kind` predicate — filtering happens in the caller, which needs both the
    * narrow set (score) and the wide one (ever-reviewed) out of one query.
@@ -83,10 +107,18 @@ export class PullsRepository {
   async reviewsForPrs(prIds: string[]): Promise<PrListReviewRow[]> {
     if (prIds.length === 0) return [];
     return this.db
-      .select({ prId: t.reviews.prId, score: t.reviews.score, kind: t.reviews.kind })
+      .select({
+        prId: t.reviews.prId,
+        score: t.reviews.score,
+        headSha: t.reviews.headSha,
+        kind: t.reviews.kind,
+        verdict: t.reviews.verdict,
+        createdAt: t.reviews.createdAt,
+        id: t.reviews.id,
+      })
       .from(t.reviews)
       .where(inArray(t.reviews.prId, prIds))
-      .orderBy(desc(t.reviews.createdAt));
+      .orderBy(desc(t.reviews.createdAt), asc(t.reviews.id));
   }
 
   /**

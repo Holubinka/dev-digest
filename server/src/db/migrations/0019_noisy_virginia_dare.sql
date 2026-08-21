@@ -1,0 +1,1 @@
+ALTER TABLE "pr_brief" DROP COLUMN "json";

@@ -48,8 +48,6 @@ export const s = {
   listItem: { marginBottom: 6 } satisfies CSSProperties,
   /** An empty scope list renders this, never an invented bullet. */
   dash: { fontSize: 13, color: "var(--text-muted)" } satisfies CSSProperties,
-  risks: { marginTop: 16 } satisfies CSSProperties,
-  riskRow: { display: "flex", flexWrap: "wrap", gap: 6 } satisfies CSSProperties,
   footer: {
     display: "flex",
     alignItems: "center",

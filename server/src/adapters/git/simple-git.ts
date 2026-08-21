@@ -27,8 +27,25 @@ import type {
 import { CloneReadError, CloneWriteError } from '@devdigest/shared';
 import { parseUnifiedDiff } from './diff-parser.js';
 import { EXCLUDED_WALK_DIRS } from './constants.js';
+import { byDepthThenPath } from './order.js';
 
 const EXCLUDED_SET: ReadonlySet<string> = new Set(EXCLUDED_WALK_DIRS);
+
+/**
+ * What `listFiles` asked for, resolved once and carried down the recursion.
+ *
+ * One object rather than five positional parameters: the walk is recursive, and
+ * three of the five are a number, a number and a set.
+ */
+interface WalkFilter {
+  /** Lower-cased, compared against a lower-cased `extname`. */
+  extensions: ReadonlySet<string>;
+  /** Compared against the entry name verbatim — see the port's doc comment. */
+  names: ReadonlySet<string>;
+  /** Undefined = descend as far as the clone goes. */
+  maxDepth?: number;
+  maxFileBytes: number;
+}
 
 /**
  * Depth fetched by `sync()`. Deeper than the shallow clone (CLONE_DEPTH=1) so the
@@ -422,17 +439,45 @@ export class SimpleGitClient implements GitClient {
    * The walk itself copies `repo-intel/pipeline/walk.ts`: never descend a
    * symlink, skip the excluded directory names, sort for a reproducible
    * "first N", then cap. The extension match is case-insensitive because `.MD`
-   * is a file people commit.
+   * is a file people commit; the NAME match is not, because npm's is not —
+   * `Package.json` is not a manifest.
+   *
+   * `maxFiles` is applied here, at the end, and never inside the walk: it caps
+   * matches, not files visited. A caller asking for the manifests of a monorepo
+   * would otherwise get the first twelve files a walk happened to reach.
+   *
+   * The sort is DEPTH FIRST, then path — not plain alphabetical, and this is
+   * what decides which matches the cap keeps. Sorted by path alone, a repo with
+   * 65 `apps/aNNN/package.json` and a ceiling of 64 returns no root manifest at
+   * all, because `apps/` precedes `package.json`; every caller then has to
+   * out-guess the port with a wider `maxFiles`, which only moves the boundary.
+   * Shallowest-first makes the root survive by construction and spends the
+   * ceiling on the deepest entries, which are the ones a whole-clone question is
+   * least about.
    *
    * A missing clone DIRECTORY is different and does throw — the caller maps it
    * to "no clone yet", which is not the same answer as "no documents".
    */
   async listFiles(
     repo: RepoRef,
-    opts: { roots: string[]; extensions: string[]; maxFiles: number; maxFileBytes: number },
-  ): Promise<{ files: ClonedFile[]; bounded: boolean }> {
+    opts: {
+      roots: string[];
+      extensions: string[];
+      names?: string[];
+      maxDepth?: number;
+      maxFiles: number;
+      maxFileBytes: number;
+    },
+  ): Promise<{ files: ClonedFile[]; bounded: boolean; excludedDirs: string[] }> {
     const root = await realpath(this.clonePathFor(repo));
-    const wanted = new Set(opts.extensions.map((e) => e.toLowerCase()));
+    const filter: WalkFilter = {
+      extensions: new Set(opts.extensions.map((e) => e.toLowerCase())),
+      // Taken as written: a name is compared the way the tool that reads it
+      // compares one.
+      names: new Set(opts.names ?? []),
+      maxDepth: opts.maxDepth,
+      maxFileBytes: opts.maxFileBytes,
+    };
     const out: ClonedFile[] = [];
 
     for (const configured of opts.roots) {
@@ -445,24 +490,34 @@ export class SimpleGitClient implements GitClient {
       if (target !== root && !target.startsWith(root + sep)) continue;
       const firstSegment = relative(root, target).split(sep)[0];
       if (firstSegment === '.git') continue;
-      await this.walkDocs(root, target, wanted, opts.maxFileBytes, out);
+      await this.walkDocs(root, target, filter, 0, out);
     }
 
     // Sorted, then de-duplicated: two configured roots can nest ("docs" and
     // "docs/adr"), and the same file reached twice would be counted twice and
-    // attached twice.
-    out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    // attached twice. De-duplication compares paths, so the sort has to put
+    // equal paths adjacent — which depth-then-path does, depth being a function
+    // of the path.
+    out.sort(byDepthThenPath);
     const deduped = out.filter((f, i) => i === 0 || f.path !== out[i - 1]!.path);
 
     const bounded = deduped.length > opts.maxFiles;
-    return { files: bounded ? deduped.slice(0, opts.maxFiles) : deduped, bounded };
+    return {
+      files: bounded ? deduped.slice(0, opts.maxFiles) : deduped,
+      bounded,
+      excludedDirs: [...EXCLUDED_WALK_DIRS],
+    };
   }
 
+  /**
+   * One directory of the walk. `depth` is how far `dir` sits below the
+   * configured root, so 0 is the root directory itself.
+   */
   private async walkDocs(
     root: string,
     dir: string,
-    extensions: ReadonlySet<string>,
-    maxFileBytes: number,
+    filter: WalkFilter,
+    depth: number,
     out: ClonedFile[],
   ): Promise<void> {
     let entries: Dirent[];
@@ -477,11 +532,16 @@ export class SimpleGitClient implements GitClient {
       if (entry.isSymbolicLink()) continue; // never follow a symlink (loops, escapes)
       if (entry.isDirectory()) {
         if (EXCLUDED_SET.has(entry.name)) continue;
-        await this.walkDocs(root, join(dir, entry.name), extensions, maxFileBytes, out);
+        // Compared BEFORE descending, so a depth of 2 walks `a/b/` and the file
+        // at `a/b/c/package.json` is never seen — not seen and then dropped.
+        if (filter.maxDepth !== undefined && depth + 1 > filter.maxDepth) continue;
+        await this.walkDocs(root, join(dir, entry.name), filter, depth + 1, out);
         continue;
       }
       if (!entry.isFile()) continue;
-      if (!extensions.has(extname(entry.name).toLowerCase())) continue;
+      const matches =
+        filter.names.has(entry.name) || filter.extensions.has(extname(entry.name).toLowerCase());
+      if (!matches) continue;
 
       const full = join(dir, entry.name);
       let info;
@@ -490,7 +550,7 @@ export class SimpleGitClient implements GitClient {
       } catch {
         continue;
       }
-      if (info.size > maxFileBytes) continue;
+      if (info.size > filter.maxFileBytes) continue;
       out.push({
         // Posix-style relative path so rows are platform-agnostic (the
         // `pr_files.path` convention).

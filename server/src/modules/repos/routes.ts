@@ -10,7 +10,9 @@ import { RepoService } from './service.js';
  * codes, and delegates all business logic to RepoService.
  *   POST   /repos              → add repo (parse URL, persist, enqueue real clone)
  *   GET    /repos              → list repos (workspace-scoped)
- *   POST   /repos/:id/refresh  → re-fetch clone + bump last_polled_at
+ *   POST   /repos/:id/refresh  → advance the clone to origin's tip + reindex
+ *                                (resync job; falls back to `clone` when the
+ *                                repo has no clone yet)
  *   DELETE /repos/:id          → remove repo
  *
  * The clone runs as a JobRunner job (kind 'clone') — real `git clone` via the

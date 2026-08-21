@@ -221,6 +221,103 @@
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 
+/* The PR Brief's disclosures — a risk row's explanation, and the "N more"
+   overflow under RISK AREAS and REVIEW FOCUS. A native <details> is the cheapest
+   keyboard-reachable disclosure there is and needs no state, but its default
+   marker is a triangle on the LEFT and the design draws a chevron on the RIGHT.
+   Hiding the marker cannot be done from `styles.ts`: `list-style` alone does not
+   reach WebKit's own pseudo-element, and a pseudo-element has no inline form.
+   This is not a responsive rule; nothing here changes at a breakpoint. */
+.dd-brief-disclosure > summary {
+  list-style: none;
+}
+
+.dd-brief-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* The Onboarding Tour: the ON THIS PAGE rail beside the five section cards.
+
+   `display`, `grid-template-columns` and the rail's `position` live ONLY here.
+   An inline style beats a stylesheet rule whatever the selector, so a property
+   a breakpoint changes must not also be declared in a `styles.ts`
+   (`client/AGENTS.md`) — and `.dd-tour-notes:empty` below is the same rule in
+   its other form: a `display` declared inline would win over the rule that
+   hides the box.
+
+   `minmax(0, 1fr)`, never `1fr`, for the reason spelled out above
+   `.dd-overview-cards`: a `1fr` track keeps an implicit `min-width: auto` and
+   refuses to shrink below its content. This page is made of unbreakable mono
+   paths — `server/src/modules/repo-intel/pipeline/full.ts`, a `pnpm exec vitest
+   run --exclude` command — and a `1fr` track lets any one of them push `main`
+   sideways. */
+.dd-tour-layout {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  /* Four content rows: header, notes, cards, inputs. The count is explicit
+     because the rail spans `1 / -1`, and `-1` counts lines of the EXPLICIT
+     grid only — over implicit rows it resolves back to line 1 and the rail
+     silently stops spanning. A sixth block on this page needs a fifth `auto`.
+     A row whose block is absent costs nothing: it sizes to 0, and the vertical
+     rhythm is the children's own margins, which is why only the columns are
+     given a gap. */
+  grid-template-rows: repeat(4, auto);
+  column-gap: 28px;
+  align-items: start;
+}
+
+/* EVERY child except the rail sits in the content column — the header among
+   them. The mockup aligns the h1, the provenance line and the two buttons with
+   the left edge of the cards, and gives the rail a narrower column of its own;
+   a header outside this grid starts at the rail's edge instead and pushes the
+   whole reading column 228px right of where the design puts it. Placed by rule
+   rather than by name, so a block added to this page lands in the content
+   column without a second edit here. */
+.dd-tour-layout > * {
+  grid-column: 2;
+  min-width: 0;
+}
+
+/* The header reads a 345px column at 901px of viewport — the last width before
+   the rail collapses — and its two buttons are 241px that do not shrink. On a
+   column that narrow the pair leaves the heading's line instead of pushing
+   `main` 27px sideways; on any wider one both fit and nothing wraps. Scoped to
+   this page: `.dd-page-header` elsewhere still spans the full page width. */
+.dd-tour-layout .dd-page-header {
+  flex-wrap: wrap;
+}
+
+/* Spanning every row is what lets the rail stay sticky down the whole page
+   while the header shares row 1 with it.
+
+   `top` IS MEASURED FROM `main`, NOT FROM THE VIEWPORT. `main` is the app's
+   scroll container (`overflow-y: auto`) and its scrollport already starts under
+   the 52px topbar, so counting that topbar again — the 76px this rule used to
+   carry — pushed the rail 48px below the heading it is drawn level with, at a
+   scroll position of zero and at every other one. 28px is `.dd-page`'s own
+   `padding-top`: the rail rests exactly where the page's content starts and
+   sticks there, so it never appears to move against the top of the page. */
+.dd-tour-rail {
+  grid-column: 1;
+  grid-row: 1 / -1;
+  position: sticky;
+  top: 28px;
+}
+
+/* Staleness, partiality, a failed generation — none of which the ordinary page
+   has. An empty flex box still contributes its own margin, so the box is hidden
+   when React rendered nothing into it. */
+.dd-tour-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.dd-tour-notes:empty {
+  display: none;
+}
+
 @media (max-width: 900px) {
   .dd-sidebar {
     position: fixed;
@@ -252,6 +349,26 @@
   }
   .dd-topbar-search-label {
     display: none;
+  }
+  /* One column: a 200px rail beside the tour leaves the mono paths in Critical
+     paths and How to run locally nowhere to go. The rail stays — it is still
+     five working anchors — but it stops being sticky, because pinned above the
+     content it would cover the section it points at. */
+  .dd-tour-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+  }
+  /* One column, so every child is auto-placed in DOM order — heading, notes,
+     rail, cards, inputs — and the rail keeps the place it has always had here,
+     under the title rather than above it. */
+  .dd-tour-layout > * {
+    grid-column: auto;
+  }
+  .dd-tour-rail {
+    position: static;
+    grid-row: auto;
+    /* The 28px that was the column gap, now that the columns are stacked. */
+    margin-bottom: 28px;
   }
 }
 

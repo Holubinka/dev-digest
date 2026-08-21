@@ -39,7 +39,20 @@ export const s = {
     color: "var(--text-secondary)",
   } satisfies CSSProperties,
   sizeBadgeBorder: (color: string): CSSProperties => ({ border: `1px solid ${color}` }),
-  scoreCell: { display: "flex", alignItems: "center" } satisfies CSSProperties,
+  scoreCell: { display: "flex", alignItems: "center", gap: 6 } satisfies CSSProperties,
+  /**
+   * The marker on a score that came from an earlier state of the PR. A word, not
+   * a tint: the level of a thing has to survive being read without colour — the
+   * same rule the risk badge on the PR page follows (SPEC-02 AC-4).
+   */
+  scoreEarlier: {
+    fontSize: 10,
+    fontWeight: 700,
+    lineHeight: 1.2,
+    letterSpacing: "0.02em",
+    color: "var(--stale)",
+    cursor: "help",
+  } satisfies CSSProperties,
   costCell: { display: "flex", alignItems: "center", minWidth: 0 } satisfies CSSProperties,
   updatedCell: {
     fontSize: 12,

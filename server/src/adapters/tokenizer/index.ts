@@ -17,6 +17,24 @@ import { getEncoding, type Tiktoken } from 'js-tiktoken';
 
 export interface Tokenizer {
   count(text: string): number;
+  /**
+   * WHICH counter answered the last `count`. Required, not optional.
+   *
+   * The degradation above is silent and irreversible: the first failed BPE load
+   * flips every later count to `ceil(chars / 4)` and nothing downstream can tell.
+   * A brief that records `input_tokens_counted: 7800` against an 8000 budget is a
+   * different claim depending on which of the two produced it, so the record
+   * carries the identity beside the number.
+   *
+   * Optional would have kept every existing fixture compiling and let a fake
+   * silently report the encoder — an optional prop nobody passes is a failure
+   * mode already recorded in this repository (`client/INSIGHTS.md:163-249`). One
+   * fixture had to be fixed; that is the whole cost.
+   *
+   * Read it AFTER counting. `TiktokenTokenizer` only learns it is broken by
+   * failing a `count`.
+   */
+  readonly id: 'cl100k_base' | 'heuristic';
 }
 
 /** Heuristic fallback used before/instead of a real encoder. */
@@ -27,6 +45,11 @@ export function approxTokens(text: string): number {
 export class TiktokenTokenizer implements Tokenizer {
   private enc?: Tiktoken;
   private broken = false;
+
+  /** A getter, not a field: `broken` is only set by a failed `count`. */
+  get id(): 'cl100k_base' | 'heuristic' {
+    return this.broken ? 'heuristic' : 'cl100k_base';
+  }
 
   count(text: string): number {
     if (this.broken) return approxTokens(text);

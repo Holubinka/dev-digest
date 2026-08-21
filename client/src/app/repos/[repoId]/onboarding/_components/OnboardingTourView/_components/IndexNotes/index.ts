@@ -1,0 +1,1 @@
+export { IndexNotes } from "./IndexNotes";

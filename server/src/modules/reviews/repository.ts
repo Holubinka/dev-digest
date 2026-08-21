@@ -50,6 +50,8 @@ export class ReviewRepository {
     prId: string;
     agentId: string | null;
     runId: string | null;
+    /** WHICH STATE of the PR this review describes; null = unknown. */
+    headSha: string | null;
     kind: 'summary' | 'review';
     verdict: string | null;
     summary: string | null;

@@ -98,10 +98,10 @@ stage of this pipeline with a clean report at each one. It is a skill the human 
 dispatch, and it takes an effort level — `/code-review high` on a feature, the default on a
 smaller change.
 
-### Three habits that outrank every agent here
+### Four habits that outrank every agent here
 
-The first two are commands you run yourself before dispatching; the third is what you do with what
-they returned.
+The first two are commands you run yourself before dispatching; the third and fourth are what you
+put into the dispatch.
 
 **Grep the nouns of the request, before any `researcher`.** This repo carries scaffolding for
 course lessons that have not landed — tables that migrate but stay empty, contracts nobody
@@ -131,6 +131,36 @@ in, and tell each agent what its siblings were told so it does not re-derive the
 
 Run `run-retrospective` after a multi-agent run to see which facts got bought more than once. The
 answer is what the next brief should carry.
+
+**Hand over the source material itself — a mockup, a screenshot, a ticket, a sample payload —
+never your description of it.** A subagent sees only what the dispatch contains. It cannot open an
+image that was pasted into the conversation, follow a ticket link nobody quoted, or infer a layout
+from prose about the layout. Whatever you were given, pass it: the file path of the screenshot, the
+ticket text, the rows of the payload, the design as an attached image or as an exhaustive
+description of every element in it — label, position, state, and the data each one shows.
+
+The failure is silent and it is expensive, because nothing downstream can detect it. Measured on
+the PR Why + Risk Brief run, 2026-08-16: a mockup arrived with the request and was never passed on.
+`spec-creator` wrote *"Дизайну картки не передавали"* — an accurate report of what it had — and the
+spec then described the card by content and behaviour alone. `implementation-planner` planned that
+spec, an `implementer` built that plan, `plan-verifier` graded 111 items against it, and two review
+agents plus five `/pr-self-review` runs read the result. **All of them passed.** Every one was
+correct about the artefact it was handed; not one could see that the artefact described a different
+thing from the one the human asked for. The divergence surfaced only when the human looked at the
+screen — after the PR was open.
+
+Two rules follow, and the second is the one that makes the first survive a bad day:
+
+- **Dispatching:** if the request carried a design, a screenshot, a ticket or sample data, the
+  brief carries it too. Enumerate what the design shows, don't summarise that a design exists.
+- **Receiving:** an agent told that a design exists, and not given it, **says so and stops** rather
+  than inventing a layout — the same *emit the block and stop* shape as every other "ask when
+  unclear" rule here (§ *Editing an agent here*). Its default assumption goes in that block, so the
+  reply can be one word.
+
+Anything visual ends where it started: **compare the built screen against the source material
+before calling it done.** `client/AGENTS.md` § *A design is an acceptance criterion* carries the
+procedure; `plan-verifier` grades the comparison as its own row.
 
 The last four sit in no script — they are dispatched by a human, or by the main agent when the
 work calls for it. `architecture-reviewer` in particular is **not** a Track B agent:

@@ -8,7 +8,12 @@ import { getContext } from '../_shared/context.js';
 import { IdParams } from '../_shared/schemas.js';
 import { AppError, NotFoundError } from '../../platform/errors.js';
 import { rollupSeverities, topFindings, type ListFinding, type SeverityCounts } from './status.js';
-import { toPrDetail, toPrMeta } from './helpers.js';
+import {
+  pickListReview,
+  toPrDetail,
+  toPrMeta,
+  type ListReviewCandidate,
+} from './helpers.js';
 
 /** How many findings the list previews per PR in its hover card. */
 const LIST_FINDINGS_PREVIEW = 3;
@@ -115,22 +120,30 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
       }
     }
 
-    // Latest-review SCORE per PR for the list's score ring. Computed on read
-    // from reviews (no FK denorm); the list is small, so one IN-query + JS
-    // grouping is cheap.
+    // The SCORE per PR for the list's score ring, plus the head that review ran
+    // on. Computed on read from reviews (no FK denorm); the list is small, so
+    // one IN-query + JS grouping is cheap.
+    //
+    // The head travels with the score and is never dropped here: `toPrMeta`
+    // compares it with the PR's own head to say whether the number describes
+    // the state on screen, and a score without its head is exactly the claim
+    // the PR page refuses to make (SPEC-02 AC-69).
     const prIds = rows.map((r) => r.id);
-    const latestReviewByPr = new Map<string, { score: number | null }>();
+    // Grouped, not reduced to the first row seen: which review a PR's score
+    // speaks for is `pickListReview`'s decision, and it needs the whole set
+    // plus the PR's own head to make it.
+    const reviewsByPr = new Map<string, ListReviewCandidate[]>();
     // Every PR carrying ANY review, whatever its kind — this is what separates
     // "reviewed and clean" from "never reviewed" for the FINDINGS column below.
     const reviewedPrIds = new Set<string>();
     if (prIds.length > 0) {
       const reviewRows = await container.pullsRepo.reviewsForPrs(prIds);
-      // Rows are newest-first → first seen per PR is the latest review.
       for (const rv of reviewRows) {
         reviewedPrIds.add(rv.prId);
-        if (rv.kind === 'review' && !latestReviewByPr.has(rv.prId)) {
-          latestReviewByPr.set(rv.prId, { score: rv.score });
-        }
+        if (rv.kind !== 'review') continue;
+        const list = reviewsByPr.get(rv.prId) ?? [];
+        list.push(rv);
+        reviewsByPr.set(rv.prId, list);
       }
     }
 
@@ -200,7 +213,7 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
       toPrMeta(
         r,
         {
-          review: latestReviewByPr.get(r.id),
+          review: pickListReview(reviewsByPr.get(r.id) ?? [], r.headSha),
           costUsd: totalCostByPr.get(r.id) ?? null,
           findings: findingsByPr.get(r.id),
         },

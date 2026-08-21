@@ -26,6 +26,21 @@ export const ReviewRecord = z.object({
   agent_id: z.string().nullable(),
   run_id: z.string().nullable(),
   agent_name: z.string().nullish(),
+  /**
+   * WHICH STATE OF THE PR this review describes — and nothing else.
+   *
+   * This is not run telemetry, so the standing rule "join `RunSummary` by `run_id`
+   * rather than widen `ReviewRecord`" does not reach it: cost, tokens and blockers
+   * still come off the run and are not duplicated here. Which head a review saw
+   * exists nowhere else in the schema — `pull_requests.last_reviewed_sha` says only
+   * which state the NEWEST completed run saw, which cannot answer "is there a
+   * completed review for the head I am looking at" for any other review.
+   *
+   * `null` means the row was written before this column existed. It does NOT mean
+   * "the current state": treating it as the current head would make every historical
+   * review a review of whatever is checked out now.
+   */
+  head_sha: z.string().nullable(),
   kind: z.enum(['summary', 'review']),
   verdict: Verdict.nullable(),
   summary: z.string().nullable(),

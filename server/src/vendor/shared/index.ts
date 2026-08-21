@@ -8,6 +8,8 @@
  *                         BlastEndpoint, BlastIndexStatus, BlastSummaryResponse
  *  - contracts/knowledge  Conformance, Onboarding, EvalRun/EvalCase, MemoryItem,
  *                         Skill/CommunitySkill, ConventionCandidate, Agent
+ *  - contracts/onboarding-api OnboardingIndexState, OnboardingRefusal,
+ *                         OnboardingGenerateRefusal, OnboardingRecord, OnboardingPage
  *  - contracts/skills-api SkillImportPreview, SkillListItem, SkillVersion
  *  - contracts/trace      RunTrace, RunEvent, RunLogLine (single-document trace)
  *  - contracts/platform   Settings, ConnTestResult, Repo, PrMeta/PrDetail, SpecFile, …
@@ -26,6 +28,7 @@ export * from './contracts/review-api.js';
 export * from './contracts/brief.js';
 export * from './contracts/blast.js';
 export * from './contracts/knowledge.js';
+export * from './contracts/onboarding-api.js';
 export * from './contracts/skills-api.js';
 export * from './contracts/trace.js';
 export * from './contracts/platform.js';

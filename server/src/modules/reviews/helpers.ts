@@ -3,7 +3,7 @@
  * their arguments — no DB / network / `this`).
  */
 
-import type { Finding } from '@devdigest/shared';
+import type { Finding, ReviewRecord } from '@devdigest/shared';
 import { hasInjection } from '../../platform/skill-injection.js';
 import type { FindingRow, ReviewRow } from './repository.js';
 import type { AgentRow, PullRow, RepoRow } from '../../db/rows.js';
@@ -25,6 +25,12 @@ export interface ReviewDto {
   agent_id: string | null;
   run_id: string | null;
   agent_name?: string | null;
+  /**
+   * WHICH STATE of the PR this review describes. `null` means the row predates
+   * the column, and a reader must treat that as "unknown", never as "the current
+   * head" — see `ReviewRecord.head_sha` in the contract.
+   */
+  head_sha: string | null;
   kind: 'summary' | 'review';
   verdict: string | null;
   summary: string | null;
@@ -56,19 +62,45 @@ export function findingRowToDto(row: FindingRow): ReviewDtoFinding {
   };
 }
 
+/**
+ * Row → the wire shape, checked against the CONTRACT rather than against itself.
+ *
+ * The annotation is the whole point and is not documentation: TypeScript's
+ * excess-property check fires on a fresh object literal, so without it this
+ * literal is only ever compared to its own inferred type — a field the contract
+ * declares can go missing and a field it does not declare can ship, with every
+ * typecheck green. `head_sha` reached the contract, both vendored copies, the
+ * table and a migration and still did not reach `GET /pulls/:id/reviews`
+ * (`INSIGHTS.md:357-381`); `toScanDto` was the first occurrence of the same hole.
+ * The route declares no `schema.response` — none of this package's 63 `schema:`
+ * blocks does — so this line is the only place the payload is checked at all.
+ *
+ * THE ONE FIELD THE ANNOTATION COULD NOT CHECK is `verdict`, and it is asserted
+ * rather than proved. `reviews.verdict` is plain `text()`, unlike `reviews.kind`
+ * beside it and unlike every other enum column in this schema, which are
+ * `text(name, { enum })` — a TypeScript-level vocabulary emitting the same SQL
+ * (`db/schema/reviews.ts:99-102`). So the row type is `string | null` while the
+ * contract says `Verdict | null`, and the cast is where that gap sits. It is the
+ * `kind` line's cast one row down and `toCandidateDto`'s `category`, not a new
+ * kind of claim: every value is written by a `Review`-parsed engine answer, and
+ * all 285 rows in the local database hold one of the three (measured 2026-08-16).
+ * Narrowing the COLUMN would remove the cast and needs no migration; it is a
+ * schema change and belongs to whoever decides schema changes.
+ */
 export function reviewToDto(
   review: ReviewRow,
   findings: FindingRow[],
   agentName?: string | null,
-): ReviewDto {
+): ReviewRecord {
   return {
     id: review.id,
     pr_id: review.prId,
     agent_id: review.agentId,
     run_id: review.runId,
     agent_name: agentName ?? null,
+    head_sha: review.headSha,
     kind: review.kind as 'summary' | 'review',
-    verdict: review.verdict,
+    verdict: review.verdict as ReviewRecord['verdict'],
     summary: review.summary,
     score: review.score,
     model: review.model,

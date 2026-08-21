@@ -5,6 +5,7 @@
   "explain": "Explain",
   "explaining": "Explaining…",
   "explainFailed": "The explanation could not be generated.",
+  "symbolList": "Changed symbols and their callers",
   "truncated": "Showing the top {shown} of {count} callers by rank.",
   "endpointsTruncated": "Showing {shown} of {count} endpoints and crons.",
   "stat": {

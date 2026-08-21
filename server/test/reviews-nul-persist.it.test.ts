@@ -68,6 +68,7 @@ d('a NUL in model output does not lose the review', () => {
       prId,
       agentId: null,
       runId: null,
+      headSha: null,
       kind: 'review',
       verdict: 'comment',
       summary: `Two issues${NUL} worth fixing.`,
@@ -84,6 +85,7 @@ d('a NUL in model output does not lose the review', () => {
       prId,
       agentId: null,
       runId: null,
+      headSha: null,
       kind: 'review',
       verdict: 'comment',
       summary: 'ok',
@@ -120,6 +122,7 @@ d('a NUL in model output does not lose the review', () => {
       prId,
       agentId: null,
       runId: null,
+      headSha: null,
       kind: 'review',
       verdict: 'comment',
       summary: 'ok',
@@ -169,7 +172,7 @@ d('a NUL in model output does not lose the review', () => {
    */
   it('stores a finding whose line number does not fit an int4', async () => {
     const review = await repo.insertReview({
-      workspaceId, prId, agentId: null, runId: null, kind: 'review',
+      workspaceId, prId, agentId: null, runId: null, headSha: null, kind: 'review',
       verdict: 'comment', summary: 'ok', score: 60, model: 'm',
     });
 
@@ -194,6 +197,7 @@ d('a NUL in model output does not lose the review', () => {
       prId,
       agentId: null,
       runId: null,
+      headSha: null,
       kind: 'review',
       verdict: 'comment',
       summary: text,

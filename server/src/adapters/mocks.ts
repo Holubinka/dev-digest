@@ -40,6 +40,8 @@ import type {
 } from '@devdigest/shared';
 import { CloneReadError, CloneWriteError } from '@devdigest/shared';
 import { parseUnifiedDiff } from './git/diff-parser.js';
+import { EXCLUDED_WALK_DIRS } from './git/constants.js';
+import { byDepthThenPath } from './git/order.js';
 
 /**
  * Deterministic MOCK adapters for tests/dev — NO real network. Each mirrors the
@@ -342,28 +344,84 @@ export class MockGitClient implements GitClient {
   }
 
   /**
-   * Answers from the tree, filtered by root and extension, and honouring BOTH
-   * caps. A mock that returns more than the real adapter would is how an
-   * unbounded read passes every test — the same reasoning as `readFile`'s.
+   * Answers from the tree, filtered by root, extension and name, honouring BOTH
+   * caps AND `maxDepth`. A mock that returns more than the real adapter would is
+   * how an unbounded read passes every test — the same reasoning as `readFile`'s,
+   * and a mock that ignores `maxDepth` is how a depth bug does the same.
+   *
+   * `maxFiles` is applied last, after every filter, because that is where the
+   * real adapter applies it: it caps matches, not files visited. The order it
+   * slices is `byDepthThenPath`, imported from the adapter rather than copied,
+   * because which entries a ceiling drops is exactly the behaviour a caller
+   * tests against this mock.
+   *
+   * ONE thing here is not the real walk: `EXCLUDED_WALK_DIRS` is not applied.
+   * The tree is taken as given, so a fixture path under `node_modules/` or
+   * `vendor/` comes back from this mock and never from a clone. It is still
+   * REPORTED in `excludedDirs`, because that field is the port's disclosure of
+   * which names a real walk refuses and a caller reads it as such. Assert the
+   * exclusion itself against `SimpleGitClient` (`test/git-list-files.test.ts`),
+   * and do not add a second exclusion list to a module to make a mock-backed
+   * test pass.
    */
   async listFiles(
     _repo: RepoRef,
-    opts: { roots: string[]; extensions: string[]; maxFiles: number; maxFileBytes: number },
-  ): Promise<{ files: ClonedFile[]; bounded: boolean }> {
+    opts: {
+      roots: string[];
+      extensions: string[];
+      names?: string[];
+      maxDepth?: number;
+      maxFiles: number;
+      maxFileBytes: number;
+    },
+  ): Promise<{ files: ClonedFile[]; bounded: boolean; excludedDirs: string[] }> {
     if (this.opts.noClone) throw new Error('ENOENT: no such file or directory');
     const wanted = opts.extensions.map((e) => e.toLowerCase());
+    const names = new Set(opts.names ?? []);
     const all = Object.entries(this.tree)
-      .filter(([path]) => opts.roots.some((r) => path === r || path.startsWith(`${r}/`)))
-      .filter(([path]) => wanted.some((ext) => path.toLowerCase().endsWith(ext)))
+      .filter(([path]) => this.depthUnderRoots(path, opts.roots, opts.maxDepth) !== undefined)
+      .filter(
+        ([path]) =>
+          names.has(path.slice(path.lastIndexOf('/') + 1)) ||
+          wanted.some((ext) => path.toLowerCase().endsWith(ext)),
+      )
       .map(([path, content]) => ({
         path,
         size_bytes: Buffer.byteLength(content, 'utf8'),
         modified_at: '2026-08-13T00:00:00.000Z',
       }))
       .filter((f) => f.size_bytes <= opts.maxFileBytes)
-      .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+      .sort(byDepthThenPath);
     const bounded = all.length > opts.maxFiles;
-    return { files: bounded ? all.slice(0, opts.maxFiles) : all, bounded };
+    return {
+      files: bounded ? all.slice(0, opts.maxFiles) : all,
+      bounded,
+      excludedDirs: [...EXCLUDED_WALK_DIRS],
+    };
+  }
+
+  /**
+   * How far a posix tree path sits below the SHALLOWEST root that claims it, or
+   * `undefined` when no root does or the depth is past `maxDepth`.
+   *
+   * The shallowest wins because the real walk runs each root separately and
+   * de-duplicates afterwards: a file two levels under `.` is zero levels under a
+   * root that names its own directory, and a depth of 0 must still find it.
+   * `.` and `''` claim everything — `path.join(root, '.')` is the clone root, so
+   * that is the root a whole-clone walk passes.
+   */
+  private depthUnderRoots(path: string, roots: string[], maxDepth?: number): number | undefined {
+    let best: number | undefined;
+    for (const root of roots) {
+      const whole = root === '.' || root === '';
+      if (!whole && path !== root && !path.startsWith(`${root}/`)) continue;
+      const rel = whole ? path : path.slice(root.length + 1);
+      const depth = rel.split('/').length - 1;
+      if (best === undefined || depth < best) best = depth;
+    }
+    if (best === undefined) return undefined;
+    if (maxDepth !== undefined && best > maxDepth) return undefined;
+    return best;
   }
 
   /**

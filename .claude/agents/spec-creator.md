@@ -198,6 +198,26 @@ often already in `docs/architecture.md` or an existing route. **A gap you cannot
 name.** Inventing a plausible answer to an unanswered design question is how a spec quietly
 becomes fiction.
 
+**A design that is referred to but not handed over stops you.** If the dispatch mentions a mockup,
+a screenshot, a ticket or a payload and gives you no path and no contents, do not write the spec
+around its absence — emit `## Потрібне уточнення` and stop, naming the missing artefact and asking
+for the path or the pasted text.
+
+Recording *"no design was provided"* inside the spec and carrying on **is not the safe option**,
+and this is the one place in the pipeline where that is true. Downstream nobody re-reads the
+request: `implementation-planner` plans your document, `implementer` builds that plan,
+`plan-verifier` grades against it. A note about what you lacked reads, three agents later, as a
+statement that the design had nothing to say — and every one of them passes while the feature takes
+a shape the human never approved. Measured on 2026-08-16: a mockup arrived with the request, was
+never passed on, and the spec said exactly that sentence. 111 verified items, two review agents and
+five `/pr-self-review` runs later, the layout, the shape of the headline value and the contract's
+ability to express what the design showed were all wrong, and only the human looking at the screen
+caught it.
+
+Your default assumption goes in the block, so a one-word reply unblocks you: *"assuming the card
+is described by content and behaviour only, with layout left to the implementer — confirm or send
+the file"*.
+
 ### When the answer is neither in the prompt nor on the disk
 
 Sort the question by **who can settle it**, because the two kinds go to different places.

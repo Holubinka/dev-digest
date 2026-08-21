@@ -1,5 +1,16 @@
 import { sql } from 'drizzle-orm';
-import { pgTable, uuid, text, integer, jsonb, timestamp, doublePrecision } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  uuid,
+  text,
+  integer,
+  jsonb,
+  timestamp,
+  doublePrecision,
+  boolean,
+  index,
+  primaryKey,
+} from 'drizzle-orm/pg-core';
 import { now } from './_shared';
 import { workspaces } from './core';
 import { pullRequests } from './pulls';
@@ -17,6 +28,14 @@ export const reviews = pgTable('reviews', {
   agentId: uuid('agent_id'),
   /** The agent_run that produced this review (links the timeline run ↔ review). */
   runId: uuid('run_id'),
+  /**
+   * WHICH STATE of the PR this review describes. Nullable with no default and no
+   * backfill: a row written before this column exists has an unknown state, and
+   * both `''` and the PR's current head would be a claim the data cannot support.
+   * `pull_requests.last_reviewed_sha` is not the same fact — it says only which
+   * state the newest completed run saw.
+   */
+  headSha: text('head_sha'),
   kind: text('kind', { enum: ['summary', 'review'] }).notNull(),
   verdict: text('verdict'),
   summary: text('summary'),
@@ -68,9 +87,74 @@ export const prIntent = pgTable('pr_intent', {
   computedAt: timestamp('computed_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
-export const prBrief = pgTable('pr_brief', {
-  prId: uuid('pr_id')
-    .primaryKey()
-    .references(() => pullRequests.id, { onDelete: 'cascade' }),
-  json: jsonb('json').notNull(),
-});
+/**
+ * One Risk Brief per PR STATE — `(pr_id, head_sha)`, not `pr_id`.
+ *
+ * The composite key is what makes "a new head computes a new state without
+ * overwriting the old one" and "regenerating replaces this state's row" true by
+ * construction rather than by a service remembering to check: the first is an
+ * insert against a different key, the second is `onConflictDoUpdate` against the
+ * same one. It is also the unique index that upsert needs.
+ *
+ * Every enum column is `text(name, { enum })` with no CHECK — a TypeScript-level
+ * enum emitting plain text, which is what `pr_intent.confidence`, `reviews.kind`
+ * and `findings.severity` all do. The vocabulary is enforced by the Zod contract
+ * at the edge.
+ */
+export const prBrief = pgTable(
+  'pr_brief',
+  {
+    prId: uuid('pr_id')
+      .notNull()
+      .references(() => pullRequests.id, { onDelete: 'cascade' }),
+    /** The PR state this brief describes. Resolved server-side from `pull_requests`. */
+    headSha: text('head_sha').notNull(),
+    what: text('what').notNull(),
+    why: text('why').notNull(),
+    riskLevel: text('risk_level', { enum: ['high', 'medium', 'low'] }).notNull().default('low'),
+    risks: jsonb('risks').$type<unknown[]>().notNull().default(sql`'[]'::jsonb`),
+    reviewFocus: jsonb('review_focus').$type<unknown[]>().notNull().default(sql`'[]'::jsonb`),
+    /**
+     * Line numbers for the refs in `risks` / `review_focus`, one entry per reference
+     * that the blast answer admitted. `NOT NULL DEFAULT '[]'` is what makes every
+     * row written before this column read back as "no numbers" rather than as a
+     * missing key the parse would reject — there is no data migration.
+     */
+    refLines: jsonb('ref_lines').$type<unknown[]>().notNull().default(sql`'[]'::jsonb`),
+    /** One entry per candidate input with what became of it — the provenance block. */
+    inputs: jsonb('inputs').$type<unknown[]>().notNull().default(sql`'[]'::jsonb`),
+    droppedRefs: jsonb('dropped_refs').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    droppedRisks: integer('dropped_risks').notNull().default(0),
+    intentComputedAt: timestamp('intent_computed_at', { withTimezone: true }),
+    intentFreshness: text('intent_freshness', { enum: ['fresh', 'stale', 'unknown'] })
+      .notNull()
+      .default('unknown'),
+    blastStatus: text('blast_status').notNull(),
+    linkSha: text('link_sha'),
+    indexMatchesHead: boolean('index_matches_head').notNull().default(false),
+    budget: integer('budget').notNull(),
+    inputTokensCounted: integer('input_tokens_counted').notNull(),
+    /** WHICH counter answered — `heuristic` means the encoder had failed. */
+    tokenizer: text('tokenizer').notNull(),
+    attempts: integer('attempts').notNull().default(1),
+    tokensIn: integer('tokens_in').notNull().default(0),
+    provider: text('provider'),
+    model: text('model'),
+    costUsd: doublePrecision('cost_usd'),
+    computedAt: timestamp('computed_at', { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * Running total of states evicted for this PR, as of when THIS row was
+     * written. It cannot be inferred from how many rows come back: a PR sitting
+     * at exactly the cap has evicted nothing, and telling its reader history was
+     * lost is a false disclosure. An evicted row cannot carry the fact of its own
+     * eviction, so the surviving newest row carries it.
+     */
+    evictedCount: integer('evicted_count').notNull().default(0),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.prId, t.headSha] }),
+    // Postgres does not index a FK column for you, and both the timeline read and
+    // the eviction walk go "this PR's rows, ordered by time".
+    byPrTime: index('pr_brief_pr_computed_idx').on(t.prId, t.computedAt.desc()),
+  }),
+);

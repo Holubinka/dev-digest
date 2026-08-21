@@ -26,7 +26,12 @@ export function isTextInput(el: EventTarget | null): boolean {
 export function activeKeyFor(pathname: string): string {
   if (pathname.startsWith("/settings")) return "settings";
   if (pathname.includes("/multi-agent")) return "multi-agent";
-  if (pathname.includes("/onboarding")) return "onboarding-tour";
+  // Only the REPO-SCOPED tour, never the plain `/onboarding` add-repository
+  // screen. A bare `includes("/onboarding")` lit the Onboarding Tour row on
+  // that screen the moment a NAV row claimed the key — a behaviour change on a
+  // route this feature is required to leave alone (SPEC-03 § AC-8), and the
+  // e2e flow `06-onboarding.flow.json` is what would have found it.
+  if (/^\/repos\/[^/]+\/onboarding/.test(pathname)) return "onboarding-tour";
   if (pathname.includes("/context")) return "context";
   if (pathname.includes("/conventions")) return "conventions";
   if (pathname.includes("/pulls")) return "pulls";

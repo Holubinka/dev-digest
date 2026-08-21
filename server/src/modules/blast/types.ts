@@ -1,4 +1,9 @@
-import type { LLMProvider, Provider } from '@devdigest/shared';
+import type {
+  BlastRadiusView,
+  BlastSummaryResponse,
+  LLMProvider,
+  Provider,
+} from '@devdigest/shared';
 import type { SettingsReader } from '../_shared/feature-models.js';
 
 /**
@@ -84,6 +89,23 @@ export interface BlastContainer extends SettingsReader {
     getDownstream(repoId: string, files: string[], maxDepth: number): Promise<DownstreamFile[]>;
   };
   llm(id: Provider): Promise<LLMProvider>;
+}
+
+/**
+ * The port `platform/container.ts` exposes for this slice.
+ *
+ * `modules/brief/**` may not import `modules/blast/**` (`no-cross-module`), so
+ * the brief reaches this interface as `container.blastService` with no import
+ * statement at all — the route `container.intentService` already takes.
+ *
+ * It names BOTH methods even though the brief only needs `getBlast`: the getter
+ * replaces `blast/routes.ts`'s own `new BlastService(...)`, and a port that
+ * dropped `summarize` would leave that route constructing a second instance —
+ * which is exactly the drift `container.intentService` exists to prevent.
+ */
+export interface BlastReader {
+  getBlast(workspaceId: string, prId: string): Promise<BlastRadiusView | undefined>;
+  summarize(workspaceId: string, prId: string): Promise<BlastSummaryResponse | undefined>;
 }
 
 /** The PR row the view is built from, flattened across `pull_requests` → `repos`. */

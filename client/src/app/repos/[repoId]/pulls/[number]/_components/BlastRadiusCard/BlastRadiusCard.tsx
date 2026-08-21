@@ -113,7 +113,16 @@ export function BlastRadiusCard({ prId }: BlastRadiusCardProps) {
         <p style={s.hint}>{t("noDownstream", { count: view.symbols.length })}</p>
       )}
 
-      <div style={s.symbolList}>
+      {/* The scrolling box starts BELOW the counters on purpose: they are what
+          keeps a capped list honest, and they are only honest while they are on
+          screen.
+
+          `tabIndex` is deliberate. Measured in Chrome 151: a scroller holding
+          focusable children is skipped by Tab — focus goes straight to the first
+          <summary> — so without it the rest of a 365-symbol list is reachable
+          only by tabbing through 610 disclosures and links. With it, one Tab
+          lands on the box, named, and PageDown scrolls it. */}
+      <div style={s.symbolList} role="region" aria-label={t("symbolList")} tabIndex={0}>
         {view.symbols.map((symbol, i) => (
           <SymbolDisclosure
             key={`${symbol.file}:${symbol.line}:${symbol.name}`}

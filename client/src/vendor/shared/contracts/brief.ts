@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { BlastIndexStatus } from './blast.js';
 
 /**
  * PR Brief building blocks: Intent, Blast radius, Risks, PR History,
@@ -158,3 +159,198 @@ export const PrBrief = z.object({
   history: PrHistory,
 });
 export type PrBrief = z.infer<typeof PrBrief>;
+
+// ---- Risk Brief (PR Why + Risk Brief, `pr_brief` rows keyed by head_sha) ----
+/**
+ * Risk Brief — the per-state answer served by `GET/POST /pulls/:id/brief`.
+ *
+ * RELATIONSHIP TO `PrBrief` ABOVE
+ * -------------------------------
+ * `PrBrief` is the four-part composition of four *separate* derivations (intent,
+ * blast, risks, history), each produced by its own call. `RiskBrief` is one flat
+ * answer from ONE `completeStructured` call, and it is a different thing in three
+ * ways:
+ *
+ *  - It is keyed to a `head_sha`. `PrBrief` has no notion of which state of the PR
+ *    it describes; a Risk Brief without that key cannot be cached, and cannot say
+ *    whether the risks it lists were measured against the code being read.
+ *  - It carries `what` / `why` in prose, and a `review_focus` list — where to look
+ *    first — which `PrBrief` has no field for.
+ *  - It discloses its own provenance: which inputs went in, which were truncated or
+ *    dropped, which counter measured them, how stale the intent was. `PrBrief` says
+ *    nothing about how it was built.
+ *
+ * `PrBrief` is untouched by this contract and keeps its zero readers and writers.
+ * The severity vocabulary is shared on purpose: `RiskSeverity` and `Risk` above are
+ * reused rather than redefined, so a `high` means the same thing on both paths.
+ */
+
+/** What a review-focus item points at. `endpoint` is a blast endpoint label, not a path. */
+export const ReviewFocusKind = z.enum(['file', 'endpoint']);
+export type ReviewFocusKind = z.infer<typeof ReviewFocusKind>;
+
+export const ReviewFocusItem = z.object({
+  ref: z.string(),
+  kind: ReviewFocusKind,
+  reason: z.string(),
+});
+export type ReviewFocusItem = z.infer<typeof ReviewFocusItem>;
+
+/**
+ * The FLAT schema the model fills. `schemaName: 'RiskBrief'`. Flat for the same
+ * reason `Intent` above is: under Structured Outputs' `strict` mode a small model
+ * holds 100% schema validity while semantic accuracy falls as the schema gains
+ * nesting, unions and optionals, so every field here earns its place.
+ */
+export const RiskBrief = z.object({
+  what: z.string(),
+  why: z.string(),
+  risk_level: RiskSeverity,
+  risks: z.array(Risk),
+  review_focus: z.array(ReviewFocusItem),
+});
+export type RiskBrief = z.infer<typeof RiskBrief>;
+
+/** The six candidate inputs, in the order the budget walk considers them. */
+export const RiskBriefInputId = z.enum([
+  'diff_stats',
+  'intent',
+  'blast',
+  'pr_text',
+  'linked_issue',
+  'specs',
+]);
+export type RiskBriefInputId = z.infer<typeof RiskBriefInputId>;
+
+/** What became of one input. `missing` is "there was none", `dropped` is "there was, and it did not fit". */
+export const RiskBriefInputStatus = z.enum(['included', 'truncated', 'dropped', 'missing']);
+export type RiskBriefInputStatus = z.infer<typeof RiskBriefInputStatus>;
+
+export const RiskBriefInput = z.object({
+  id: RiskBriefInputId,
+  status: RiskBriefInputStatus,
+  tokens: z.number().int(),
+  /** What it was, in one line — spec paths, the blast status, why it is missing. */
+  detail: z.string().nullable(),
+});
+export type RiskBriefInput = z.infer<typeof RiskBriefInput>;
+
+/**
+ * WHICH blast structure the line was read off. The three are the only structures
+ * `blastBlock` walks, and each carries its own `line` on `BlastRadiusView` — so the
+ * source is also the answer to "where do I go back and check this number".
+ */
+export const RiskBriefRefLineSource = z.enum([
+  'blast_symbol',
+  'blast_caller',
+  'blast_endpoint',
+  /**
+   * The first changed hunk of this file, read out of the PR's own patch.
+   *
+   * The three `blast_*` sources are measured in the INDEX and are true at
+   * `link_sha` and nowhere else. This one is measured in the diff, so it is true
+   * at `head_sha` — the commit a reference links to — and it needs no index at
+   * all. That is why `lineFor` lets it past the `index_matches_head` gate the
+   * others must satisfy.
+   *
+   * It answers "where the change is", not "where the bug is", and the wording
+   * around it must not promise the second.
+   */
+  'diff_hunk',
+]);
+export type RiskBriefRefLineSource = z.infer<typeof RiskBriefRefLineSource>;
+
+/**
+ * A line number for ONE reference, carried beside the refs rather than inside them.
+ *
+ * Three facts this shape fixes, and none of them is a style choice:
+ *
+ *  - **The number never enters `RiskBrief`.** `RiskBrief` is the schema the model
+ *    fills, and a line it wrote would be a line nobody measured. Every number here
+ *    comes off the blast answer the server already computed; a reference admitted to
+ *    the allowed set any other way (a changed file, a spec path) gets no entry at
+ *    all, and no placeholder stands in for one.
+ *  - **`Risk.file_refs` and `ReviewFocusItem.ref` do not change.** They stay arrays
+ *    of plain strings, matched here by exact `ref` value. Widening them would put a
+ *    number in the model's own schema, which is the first fact again.
+ *  - **An empty array is a record without numbers, not a broken record.** Every row
+ *    written before this field existed reads back as `[]` (the column is
+ *    `NOT NULL DEFAULT '[]'::jsonb`), and a brief whose references carry no lines is
+ *    the normal rendering, not a degraded one. There is no data migration.
+ */
+export const RiskBriefRefLine = z.object({
+  /** The reference verbatim, as it appears in `Risk.file_refs` or `ReviewFocusItem.ref`. */
+  ref: z.string(),
+  line: z.number().int(),
+  source: RiskBriefRefLineSource,
+});
+export type RiskBriefRefLine = z.infer<typeof RiskBriefRefLine>;
+
+/** Which counter answered. `heuristic` means ceil(chars/4), not the encoder. */
+export const RiskBriefTokenizer = z.enum(['cl100k_base', 'heuristic']);
+export type RiskBriefTokenizer = z.infer<typeof RiskBriefTokenizer>;
+
+/**
+ * THREE-VALUED on purpose (R25). `unknown` is what an absent `pr_commits` row for the head
+ * sha produces, and what "no intent at all" produces. A boolean would spell that `false`,
+ * i.e. "not stale" — a confidence the system does not have, in the one field whose whole job
+ * is disclosing staleness.
+ */
+export const IntentFreshness = z.enum(['fresh', 'stale', 'unknown']);
+export type IntentFreshness = z.infer<typeof IntentFreshness>;
+
+/** The persisted / API shape: the model's answer plus everything we know about how it was built. */
+export const RiskBriefRecord = RiskBrief.extend({
+  head_sha: z.string(),
+  intent_computed_at: z.string().nullable(),
+  intent_freshness: IntentFreshness,
+  blast_status: BlastIndexStatus,
+  link_sha: z.string().nullable(),
+  index_matches_head: z.boolean(),
+  inputs: z.array(RiskBriefInput),
+  /**
+   * Line numbers for the references above, keyed by the ref string. Empty is normal:
+   * see `RiskBriefRefLine`. Only references the blast answer admitted appear here.
+   */
+  ref_lines: z.array(RiskBriefRefLine),
+  dropped_refs: z.array(z.string()),
+  dropped_risks: z.number().int(),
+  budget: z.number().int(),
+  input_tokens_counted: z.number().int(),
+  tokenizer: RiskBriefTokenizer,
+  attempts: z.number().int(),
+  tokens_in: z.number().int(),
+  provider: z.string(),
+  model: z.string(),
+  cost_usd: z.number().nullable(),
+  computed_at: z.string(),
+});
+export type RiskBriefRecord = z.infer<typeof RiskBriefRecord>;
+
+export const RiskBriefTimelineEntry = z.object({
+  head_sha: z.string(),
+  what: z.string(),
+  risk_level: RiskSeverity,
+  computed_at: z.string(),
+  /** False when this sha is no longer among the PR's commits (force-push, rebase). */
+  on_branch: z.boolean(),
+  /** True when this entry's level differs from the entry before it. False on the first. */
+  level_changed: z.boolean(),
+});
+export type RiskBriefTimelineEntry = z.infer<typeof RiskBriefTimelineEntry>;
+
+export const RiskBriefTimeline = z.object({
+  /** Oldest first. */
+  entries: z.array(RiskBriefTimelineEntry),
+  commits_without_brief: z.number().int(),
+  /**
+   * How many states were ACTUALLY evicted for this PR — carried on the rows by
+   * `pr_brief.evicted_count`, never inferred from `entries.length` (R39). A PR sitting at
+   * exactly `max_states` has evicted nothing, and telling its reader that history was lost
+   * is a false disclosure, which is worse than none. The client derives "truncated" as
+   * `evicted > 0`; there is no second field saying the same thing.
+   */
+  evicted: z.number().int(),
+  max_states: z.number().int(),
+});
+export type RiskBriefTimeline = z.infer<typeof RiskBriefTimeline>;

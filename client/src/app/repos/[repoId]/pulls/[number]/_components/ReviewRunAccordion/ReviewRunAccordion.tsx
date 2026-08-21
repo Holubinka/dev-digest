@@ -8,6 +8,7 @@
 import React from "react";
 import { Icon, Badge } from "@devdigest/ui";
 import type { ReviewRecord, RunSummary, Verdict } from "@devdigest/shared";
+import { blockersForRun } from "@/lib/blockers";
 import { FindingsPanel } from "../FindingsPanel";
 import type { SeverityLevel } from "../SeverityFilterBar";
 import { VerdictBanner } from "../VerdictBanner";
@@ -82,7 +83,13 @@ export function ReviewRunAccordion({
     if (holdsTarget) setOpen(true);
   }, [holdsTarget]);
   const del = useDeleteReview(prId);
-  const blockers = findings.filter((f) => f.severity === "CRITICAL" && !f.dismissed_at).length;
+  // The server's stored count, the same one the Overview banner shows
+  // (`src/lib/blockers.ts`). It used to be
+  // `findings.filter(f => f.severity === "CRITICAL" && !f.dismissed_at).length`
+  // right here — two numbers for one review on one page, and the inline one
+  // hardcoded a threshold that belongs to the agent (`ciFailOn`), so it was wrong
+  // rather than merely different for any agent that does not gate on critical.
+  const blockers = blockersForRun(run);
   const verdictColor = review.verdict ? VERDICT_COLOR[review.verdict] ?? "var(--text-muted)" : "var(--text-muted)";
 
   return (
