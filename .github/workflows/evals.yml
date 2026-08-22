@@ -1,0 +1,200 @@
+# Evals — .claude/skills/**, .claude/agents/**, and CLAUDE.md/AGENTS.md routing rules.
+# See root AGENTS.md § "Evals gate what changes" and evals/README.md for the full harness.
+#
+# Two tiers, deliberately split:
+#   quality    — static SKILL.md/AGENTS.md structure gate (`eval:quality`). No model, no secret,
+#                runs on every PR including forks. BLOCKING.
+#   model-run  — LLM-judged quality + trace-asserted workflow evals, routed by what actually
+#                changed (see "Detect what changed" below), on OpenRouter through the bundled
+#                LiteLLM proxy. Needs OPENROUTER_API_KEY, which GitHub never exposes to a fork
+#                PR under the plain `pull_request` trigger used here (NOT `pull_request_target` —
+#                that would expose it). The job checks for the secret itself and skips cleanly
+#                when it's absent, rather than failing on an auth error. Advisory only: it
+#                publishes a report and a baseline diff to the job summary and never blocks a
+#                merge (`continue-on-error: true`), until the team decides to promote it.
+name: evals
+
+on:
+  push:
+    branches: [main]
+    paths: &eval_paths
+      - '.claude/skills/**'
+      - '.claude/agents/**'
+      - 'CLAUDE.md'
+      - 'AGENTS.md'
+      - '*/AGENTS.md'
+      - 'evals/**'
+      - '.github/workflows/evals.yml'
+  pull_request:
+    paths: *eval_paths
+
+permissions:
+  contents: read
+
+concurrency:
+  group: evals-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: static quality gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: evals
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: evals/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm eval:quality
+
+  model-run:
+    name: model-run (advisory — never required)
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # hard budget backstop; eval:repeat itself caps -n at 2
+    continue-on-error: true
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: evals
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # need the merge-base / previous commit to diff changed paths against
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: evals/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Check the model-tier secret is available
+        id: secret
+        run: echo "ok=${{ secrets.OPENROUTER_API_KEY != '' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Skip note (no secret — expected on a fork PR)
+        if: steps.secret.outputs.ok != 'true'
+        run: |
+          {
+            echo "### Model-run evals skipped"
+            echo "No \`OPENROUTER_API_KEY\` in this run — expected on a fork PR, since the"
+            echo "secret is never exposed to one under the \`pull_request\` trigger. The"
+            echo "\`quality\` job above still ran and is still the only blocking check."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Detect what changed
+        if: steps.secret.outputs.ok == 'true'
+        id: changed
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$BASE" ]; then BASE="${{ github.event.before }}"; fi
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            BASE=""
+          fi
+          if [ -z "$BASE" ]; then
+            # No usable base (first push on a branch, or an unexpected event) — run every tier
+            # rather than silently skip.
+            SKILLS=true; AGENTS=true; ROUTING=true; EVALCORE=true
+          else
+            FILES=$(git diff --name-only "$BASE" HEAD)
+            SKILLS=false; AGENTS=false; ROUTING=false; EVALCORE=false
+            echo "$FILES" | grep -q '^\.claude/skills/' && SKILLS=true
+            echo "$FILES" | grep -q '^\.claude/agents/' && AGENTS=true
+            echo "$FILES" | grep -qE '^(CLAUDE\.md|AGENTS\.md|[^/]+/AGENTS\.md)$' && ROUTING=true
+            echo "$FILES" | grep -q '^evals/src/' && EVALCORE=true
+          fi
+          echo "skills=$SKILLS" >> "$GITHUB_OUTPUT"
+          echo "agents=$AGENTS" >> "$GITHUB_OUTPUT"
+          echo "routing=$ROUTING" >> "$GITHUB_OUTPUT"
+          echo "evalcore=$EVALCORE" >> "$GITHUB_OUTPUT"
+
+      - name: Start the LiteLLM proxy
+        if: steps.secret.outputs.ok == 'true'
+        run: docker compose -f proxy/docker-compose.yml up -d
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+
+      - name: Wait for the proxy
+        if: steps.secret.outputs.ok == 'true'
+        run: pnpm proxy:wait
+
+      - name: Restore committed baselines
+        if: steps.secret.outputs.ok == 'true'
+        run: |
+          mkdir -p results
+          for f in baselines/*.json; do
+            [ -e "$f" ] || continue
+            cp "$f" "results/repeat-baseline-$(basename "$f" .json).json"
+          done
+
+      - name: Run the tiers that changed
+        if: steps.secret.outputs.ok == 'true'
+        env:
+          EVAL_BACKEND: openrouter
+          OPENROUTER_BASE_URL: http://localhost:4000
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          EVAL_MODEL: google/gemini-2.5-flash
+          EVAL_JUDGE_MODEL: google/gemini-2.5-flash
+        run: |
+          set -e
+          [ "${{ steps.changed.outputs.skills }}" = "true" ] && pnpm eval:repeat skills -n 2 --label candidate-skills
+          [ "${{ steps.changed.outputs.agents }}" = "true" ] && pnpm eval:repeat agents -n 2 --label candidate-agents
+          [ "${{ steps.changed.outputs.routing }}" = "true" ] && pnpm eval:repeat workflow -n 2 --label candidate-workflow
+          true
+
+      - name: Publish report + baseline comparison
+        if: steps.secret.outputs.ok == 'true'
+        run: |
+          echo "## Eval report" >> "$GITHUB_STEP_SUMMARY"
+          strip_ansi() { sed -E 's/\x1b\[[0-9;]*m//g'; }
+          for name in skills agents workflow; do
+            f="results/repeat-candidate-$name.json"
+            [ -f "$f" ] || continue
+            {
+              echo ""
+              echo "### $name"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            if [ -f "results/repeat-baseline-$name.json" ]; then
+              pnpm eval:delta "baseline-$name" "candidate-$name" 2>&1 | strip_ansi >> "$GITHUB_STEP_SUMMARY" || true
+            else
+              echo "(no committed baseline at evals/baselines/$name.json — raw results only)" >> "$GITHUB_STEP_SUMMARY"
+              cat "$f" | strip_ansi >> "$GITHUB_STEP_SUMMARY" || true
+            fi
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: Warn when the harness/grader itself changed
+        if: steps.secret.outputs.ok == 'true' && steps.changed.outputs.evalcore == 'true'
+        run: |
+          {
+            echo ""
+            echo "### ⚠️ evals/src changed"
+            echo "A grader or the harness changed — every committed baseline under"
+            echo "\`evals/baselines/\` may no longer be comparable to this run. Recalibrate:"
+            echo '`pnpm eval:repeat <pattern> -n 2 --label <name>`, then commit the JSON.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Tear down the proxy
+        if: always() && steps.secret.outputs.ok == 'true'
+        run: docker compose -f proxy/docker-compose.yml down
