@@ -31,6 +31,18 @@ export interface RecordData {
   verdict?: Verdict;
   grounded?: number;
   threshold?: number;
+  /**
+   * Explicit pass/fail for workflow-tier cases (dispatch/activation/trace/contrast), which have
+   * no grounding gate or judge verdict for the fallback below to lean on. The caller derives this
+   * straight from the same boolean(s) its `expect()` checks, so it's the ONE place that has to
+   * stay in sync with the assertion — no reliance on `!result.isError`, which only tells you the
+   * SDK session ended cleanly, not that the thing under test was true. A session that finishes in
+   * one empty turn (e.g. the model asks a clarifying question instead of acting) is "clean" by
+   * that measure yet fails the real check; a session that overruns maxTurns AFTER the check
+   * already passed is "unclean" yet the real check held. Omit for quality-tier cases, where the
+   * grounding/verdict fallback below already matches their `expect()` exactly.
+   */
+  outcome?: boolean;
   extra?: Record<string, unknown>;
 }
 
@@ -44,14 +56,17 @@ export function record(label: string, data: RecordData): void {
   const state = expect.getState();
   const nodeid = `${state.testPath ?? "?"} > ${state.currentTestName ?? label}`;
 
-  // outcome: grounding gate failure short-circuits to false; else the judge threshold; else
-  // "did the run itself succeed" (workflow tests have neither grounding nor a judge verdict).
+  // outcome: an explicit caller-supplied verdict wins; else grounding gate failure short-circuits
+  // to false; else the judge threshold; else "did the run itself succeed" (last resort — only
+  // correct when there is truly nothing else to check the real result against).
   const outcome =
-    grounded !== undefined && grounded < 1
-      ? false
-      : verdict && threshold !== undefined
-        ? verdict.score >= threshold
-        : !result.isError;
+    data.outcome !== undefined
+      ? data.outcome
+      : grounded !== undefined && grounded < 1
+        ? false
+        : verdict && threshold !== undefined
+          ? verdict.score >= threshold
+          : !result.isError;
 
   const outDir = join(OUTPUTS, RUN_ID);
   mkdirSync(outDir, { recursive: true });

@@ -188,60 +188,39 @@ workflow cases:
 
 ### Wiring it into GitHub Actions (per-PR)
 
-The engine is CI-ready: bring the proxy up as a step, wait for it, run the tier, tear it down. Put
-the OpenRouter key in the repo's **Actions secrets** as `OPENROUTER_API_KEY` (Settings → Secrets and
-variables → Actions). Create `.github/workflows/<name>.yml` in your repo:
+Already wired: `.github/workflows/evals.yml` (root `AGENTS.md` § *Evals gate what changes* has the
+routing table). Two jobs —
+
+- **`quality`** — `pnpm eval:quality`, no model, no secret, runs on every PR including forks.
+  **Blocking.**
+- **`model-run`** — brings the LiteLLM proxy up, detects which of `.claude/skills/**`,
+  `.claude/agents/**`, or `CLAUDE.md`/`AGENTS.md` routing actually changed (plain `git diff`, no
+  extra action), and runs only the matching `eval:repeat <pattern> -n 2` tier(s) against a cheap
+  OpenRouter model. Diffs the run against a committed baseline in `evals/baselines/` when one
+  exists (see that folder's README) and publishes both to the job summary. **Advisory, never
+  blocking** (`continue-on-error: true`) — promote it once the team trusts it.
+
+The engine underneath is the same either way: bring the proxy up as a step, wait for it, run the
+tier, tear it down.
 
 ```yaml
-name: evals
-on:
-  pull_request:
-    paths: ['evals/**', '.claude/**', 'CLAUDE.md']   # only when the harness/artifacts change
-
-permissions:
-  contents: read
-
-jobs:
-  workflow-evals:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: evals
-    env:
-      EVAL_BACKEND: openrouter
-      OPENROUTER_BASE_URL: http://localhost:4000
-      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}   # repo Actions secret
-      EVAL_MODEL: google/gemini-2.5-flash
-      EVAL_JUDGE_MODEL: google/gemini-2.5-flash
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with: { version: 10 }
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: evals/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
-
-      # --- the engine ---
-      - run: docker compose -f proxy/docker-compose.yml up -d   # OPENROUTER_API_KEY from job env
-      - run: pnpm proxy:wait                                     # block until the proxy answers
-      - run: pnpm eval:workflow                                  # or eval:agents / eval:skills / eval
-      - if: failure()
-        run: docker compose -f proxy/docker-compose.yml logs --tail 100
-      - if: always()
-        run: docker compose -f proxy/docker-compose.yml down
+- run: docker compose -f proxy/docker-compose.yml up -d   # OPENROUTER_API_KEY from job env
+- run: pnpm proxy:wait                                     # block until the proxy answers
+- run: pnpm eval:repeat skills -n 2 --label candidate-skills
+- if: always()
+  run: docker compose -f proxy/docker-compose.yml down
 ```
 
 Notes:
 - ubuntu runners ship Docker + `docker compose`, so no extra setup is needed.
 - The proxy container reads `OPENROUTER_API_KEY` straight from the job `env` (which is fed by the
   secret) — you don't pass it to `docker compose` explicitly.
-- Because tool tiers cost real tokens, gate on `paths:` (only when the harness/artifacts change) and
-  keep the case count small. For a stricter gate, split into a required `eval:agents`/`eval:skills`
-  job and a non-blocking `eval:workflow` job (activation flakiness, above).
+- `pull_request` (never `pull_request_target`) is what keeps `OPENROUTER_API_KEY` off a fork PR —
+  GitHub does not forward repo secrets to a fork build under that trigger. `model-run` checks the
+  secret is actually present and skips itself cleanly instead of failing on an auth error.
+- Because tool tiers cost real tokens: the paths-based tier routing above already narrows what
+  runs per PR; `-n` is capped at 2 by `eval:repeat` itself; the job carries a 20-minute
+  `timeout-minutes` as the hard backstop.
 
 ## Module layout — `src/` (the engine)
 
@@ -574,6 +553,117 @@ tokens > 125% of baseline), `missing_data` (a config has zero records for a test
 Sessions run with `permissionMode: "bypassPermissions"`, so `workflowTask` keeps a **read-only
 allow-list** (`Read, Grep, Glob, Task, Agent, Skill` — no `Bash`/`Write`/`Edit`). Don't copy the
 bypass pattern into a context that grants write tools.
+
+## Anti-patterns
+
+Failure modes for an eval suite — not bugs, a suite that *looks* trustworthy while measuring the
+wrong thing. Read before writing a new case, grader, or CI step. Each item names what prevents it
+in this codebase today, or says plainly that nothing does yet.
+
+**Data & metrics**
+
+- **Concluding from one nice run.** n=1 is an anecdote. Use `eval:repeat` (capped at n=2 here —
+  see `src/repeat.ts`) before trusting a result; the stats mark n<5 "indicative only" for exactly
+  this reason.
+- **Testing only positive cases — no `must_not_flag` / negative activation.** Every `activation`
+  case needs a near-miss negative sibling (`shouldActivate: false`), not just the positive.
+  `pnpm eval:quality` fails a skill that has positive activation coverage without it — see
+  `skill-quality.ts`'s `activationCoverage()`.
+- **Building the suite only from synthetic examples.** Prefer a real diff, a real fixture, a real
+  finding this repo actually produced — a synthetic-only suite tests whether the model can parse
+  synthetic prose, not whether it does the job.
+- **Treating accept/dismiss without human review as error-free labels.** A user clicking "dismiss"
+  is a hypothesis about the finding being wrong, not a verified label. Don't feed unreviewed
+  accept/dismiss actions into a judge-calibration set (see *Graders*, below) without a human pass
+  over a sample first.
+- **Comparing runs on different dataset/fixture versions as one time series.** *Practice identity
+  is the practice text* (Statistics semantics, above) already treats a reworded practice as a new
+  series by design — the same discipline applies to a changed fixture: label it as a new series,
+  don't average it in with the old one.
+- **Calling a valid `file:line` proof of a correct finding.** `reviewer-core`'s grounding gate
+  proves a finding's line range intersects a real diff hunk — that the finding is *about* real
+  code, not that the finding is *true*. Grounding and correctness are different claims; don't
+  conflate a grounded-but-wrong finding with a passing one.
+- **Hiding recall, precision, cost, and latency in one opaque score.** The record schema keeps
+  them apart on purpose — `score`, `metrics` (duration/tokens/tool calls), `num_turns`, and
+  `trace` are separate fields, never blended into one number. A single composite score is exactly
+  what this item warns against.
+
+**Graders**
+
+- **Paying an LLM judge for schema validation or an exact match.** `patternMatch()` is the cheap,
+  deterministic first tier — a `grounding` gate must equal `1.0` before the judge even runs (*Two
+  scorers*, above). Don't call `llmJudge()` for something a substring or a schema check already
+  settles.
+- **Letting the judge write its own rubric and immediately grade its own example with it,
+  unreviewed.** A practice list in a `*.cases.ts` file is authored by a human case author, not
+  generated and self-graded by the model in the same breath — review a generated rubric before it
+  becomes the practices array.
+- **A generic "rate 1 to 5" with no description of the levels.** `llmJudge()` is binary
+  (PASS/FAIL) per practice, and a PASS requires a verbatim evidence quote (the LLM Message
+  Pattern) — there is no undefined middle ground to rate.
+- **Not calibrating the judge against human labels.** Not done in this repo yet — no
+  human-labeled calibration set exists. Before trusting `llmJudge()` on a case that matters,
+  sample its verdicts against a human read of the same outputs.
+- **Requiring an exact sequence of tool calls when several valid paths exist.** Every
+  `WorkflowCase` assertion checks *presence* (`toContain`, `activated(...)`), never order —
+  `runWorkflowCases` (`src/dsl/case.ts`) has no step-sequence assertion anywhere. Keep new case
+  kinds the same way; a model that reads the doc before vs. after dispatching the subagent is
+  still correct.
+- **Reading only the score, never opening the failing case's trajectory.** `results/outputs/<run>/
+  <slug>.md` holds the full output; `trace` in `records.jsonl` holds tools/subagents/skills/reads.
+  Not hypothetical — see `INSIGHTS.md` § *`eval:repeat`/`eval:delta` reported a wrong pass rate…*,
+  found only by reading the trace behind a `0/2`, not by trusting the number.
+
+**Experiment**
+
+- **Running treatment many times, leaving control as one random run.** `eval:benchmark` runs N
+  candidate **and** N baseline, always symmetric (*What `baseline` removes*, above). Don't break
+  that symmetry when adding a new benchmark case.
+- **Changing the grader and continuing to compare against the previous baseline.** This is why
+  `evals/baselines/` is a committed, human-updated folder rather than an auto-regenerated one, and
+  why `.github/workflows/evals.yml`'s model-run job warns explicitly when `evals/src/**` changed.
+  Root `AGENTS.md`'s eval routing table: *eval case or grader → recalibrate the baseline*.
+- **Testing a skill only in isolation, never checking triggering in the real workflow.** The
+  content tier (`skillTask`) and the systemic tier (`workflowTask`) are deliberately two different
+  runners (*Two ways to run a case*, above) for exactly this reason — a skill that reads well in
+  isolation can still fail to activate for real.
+- **Letting the agent-under-test see the expected answer or the configuration name.** `EVAL_CONFIG`
+  (`candidate`/`baseline`) only gates whether `skillTask`/`agentTask` inject the artifact — it is
+  never interpolated into the `prompt` the model sees (`src/tasks.ts`, `src/config.ts`). Practices
+  live in the case file, never in the prompt.
+- **Reacting to any failure by editing the prompt, without a diagnosis first.** Open the trace
+  (`tools`/`subagents`/`skills`/`reads`) and the output file before touching a prompt or a
+  threshold — `INSIGHTS.md`'s 2026-08-22 entries are what that diagnosis step actually caught: a
+  harness bug that a "just widen maxTurns" fix would have quietly papered over.
+
+**CI & security**
+
+- **Making an unstable model eval a hard gate on day one.** `.github/workflows/evals.yml`'s
+  `model-run` job carries `continue-on-error: true` and is not a required check — only the static,
+  no-model `quality` job blocks. Promoting it is a later, deliberate decision.
+- **Giving the eval job write permissions it doesn't need.** Both jobs in `evals.yml` declare
+  `permissions: contents: read` and nothing else — the report goes to `$GITHUB_STEP_SUMMARY`,
+  never a PR comment via the API, specifically so neither job ever needs `pull-requests: write`.
+- **Passing secrets into the workflow for a fork PR.** `evals.yml` triggers on plain
+  `pull_request` — never `pull_request_target` — so GitHub does not forward
+  `OPENROUTER_API_KEY` to a fork build at all. The job double-checks the secret is actually
+  present and skips itself cleanly instead of failing on an auth error. Do not switch this
+  trigger to `pull_request_target`.
+- **Running untrusted code with a long-lived token.** Same root cause as the item above —
+  `pull_request_target` checks out and can be made to run a fork's code while still carrying the
+  base repo's secrets/token; this repo doesn't use it here for exactly that reason. A job that
+  ever needs to build fork PR code *and* use a secret needs the two-workflow
+  `pull_request` + reviewed `workflow_run` pattern, not this shortcut.
+- **Not setting a budget, timeout, and concurrency limit.** `evals.yml`: `timeout-minutes` on both
+  jobs, `concurrency: { group: evals-${{ github.ref }}, cancel-in-progress: true }`, and the
+  model-run job's own budget control is routing — it runs only the tier(s) whose paths actually
+  changed. `eval:repeat` itself also hard-caps `-n` at 2 (`src/repeat.ts`).
+- **Using a prompt-level hook as a deterministic guard for a critical operation.** The push gate
+  (root `AGENTS.md` § *A push is gated*) is a real `PreToolUse` shell script
+  (`scripts/pr-self-review/gate.sh`) that mechanically refuses the tool call — not an instruction
+  a model could be talked past. Nothing in `evals/` should ever substitute a prompt instruction
+  ("please don't push without…") for that kind of check.
 
 ## Deferred (recorded so it isn't rediscovered)
 

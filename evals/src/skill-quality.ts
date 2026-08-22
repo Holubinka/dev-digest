@@ -8,8 +8,10 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import matter from "gray-matter";
-import { REPO_ROOT, SKILLS_DIR, EVALS_DIR } from "./artifacts/paths.js";
+import { REPO_ROOT, SKILLS_DIR, EVALS_DIR, WORKFLOW_DIR } from "./artifacts/paths.js";
+import type { WorkflowCase } from "./dsl/case.js";
 
 const REQUIRED = ["name", "description"];
 const LINK_RE = /\[([^\]]*)\]\(([^)]+)\)/g;
@@ -65,7 +67,31 @@ const RESET = "\x1b[0m";
 
 const verdictColor = (v: Report["verdict"]) => (v === "FAIL" ? RED : v === "WARN" ? YELLOW : GREEN);
 
-function main() {
+/**
+ * Anti-pattern gate: a skill with ONLY positive `activation` coverage (never a `shouldActivate:
+ * false` near-miss) is one test-suite-editing accident away from "always activates on anything
+ * that mentions the topic" going unnoticed — see evals/README.md § Anti-patterns, "testing only
+ * positive cases". Scans every real `WorkflowCase[]` (dynamic import, not regex — the source of
+ * truth is the actual exported array, not its text) across evals/workflow/*.cases.ts.
+ */
+async function activationCoverage(): Promise<{ skill: string; positive: boolean; negative: boolean }[]> {
+  const bySkill = new Map<string, { positive: boolean; negative: boolean }>();
+  if (!existsSync(WORKFLOW_DIR)) return [];
+  const files = readdirSync(WORKFLOW_DIR).filter((f) => f.endsWith(".cases.ts"));
+  for (const f of files) {
+    const mod = (await import(pathToFileURL(join(WORKFLOW_DIR, f)).href)) as { cases?: WorkflowCase[] };
+    for (const c of mod.cases ?? []) {
+      if (c.kind !== "activation") continue;
+      const entry = bySkill.get(c.skill) ?? { positive: false, negative: false };
+      if (c.shouldActivate) entry.positive = true;
+      else entry.negative = true;
+      bySkill.set(c.skill, entry);
+    }
+  }
+  return [...bySkill.entries()].map(([skill, v]) => ({ skill, ...v }));
+}
+
+async function main() {
   const args = process.argv.slice(2);
   const dirs = args.length
     ? args.map((a) => (a.includes("/") ? a : join(SKILLS_DIR, a)))
@@ -82,8 +108,31 @@ function main() {
     if (!r.errors.length && !r.warnings.length) console.log(`  ${GREEN}all checks passed.${RESET}`);
     if (r.verdict === "FAIL") failures++;
   }
+
+  const coverage = await activationCoverage();
+  const unbalanced = coverage.filter((c) => c.positive !== c.negative);
+  if (coverage.length) {
+    console.log(`\n${"=".repeat(56)}\nworkflow activation coverage\n${"=".repeat(56)}`);
+    for (const c of coverage) {
+      if (c.positive && c.negative) {
+        console.log(`  ${GREEN}OK${RESET}    ${c.skill} — positive + negative`);
+      } else if (c.positive) {
+        console.log(`  ${RED}ERROR${RESET} ${c.skill} — positive activation only, no near-miss negative`);
+        failures++;
+      } else {
+        console.log(`  ${YELLOW}WARN${RESET}  ${c.skill} — negative only, never confirmed it activates at all`);
+      }
+    }
+  }
+  if (unbalanced.some((c) => c.positive && !c.negative)) {
+    console.log(`  ${DIM_HINT}`);
+  }
+
   console.log(`\n${"=".repeat(56)}\nTotal: ${dirs.length} skills, ${failures} failures`);
   process.exit(failures ? 1 : 0);
 }
+
+const DIM_HINT =
+  "\x1b[2madd a `{ kind: \"activation\", shouldActivate: false, ... }` near-miss case for each ERROR above\x1b[0m";
 
 main();

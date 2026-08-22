@@ -35,6 +35,36 @@ function load(label: string): RepeatFile {
 const rate = (s?: Series) => (s ? Math.round(s.rate * 100) : null);
 const fmtRate = (p: number | null) => (p === null ? "  —" : `${p}`.padStart(3));
 
+const shortId = (id: string) => id.split(" > ").slice(-1)[0];
+
+/**
+ * Re-key by test NAME rather than full nodeid. Needed for an agent-variant A/B (e.g.
+ * architecture-reviewer vs architecture-reviewer-lite): each label's tests come from a
+ * DIFFERENT .eval.ts file, so the full nodeid (which embeds the file path) never matches across
+ * labels even when the case name is identical on purpose (architecture-reviewer-lite.eval.ts
+ * deliberately reuses architecture-reviewer's cases). Without this, every row silently prints
+ * `— %` on one side — no error, just a useless diff (see evals/README.md § Anti-patterns,
+ * "hiding ... in one opaque score" — a silent no-match is its own version of that).
+ *
+ * Collision guard: if two DIFFERENT full nodeids within the SAME label collapse to the same
+ * short name (e.g. one `eval:repeat` pattern spanning two files that both have a case called
+ * "handles empty input"), warn instead of silently dropping one — an ambiguous match is worse
+ * than none.
+ */
+function byShortId(tests: Record<string, NodeAggregate>, label: string): Record<string, NodeAggregate> {
+  const out: Record<string, NodeAggregate> = {};
+  const collisions = new Map<string, string[]>();
+  for (const [id, agg] of Object.entries(tests)) {
+    const key = shortId(id);
+    if (key in out) collisions.set(key, [...(collisions.get(key) ?? [out[key].nodeid]), id]);
+    else out[key] = agg;
+  }
+  for (const [key, ids] of collisions) {
+    console.error(`${DIM}warning: '${label}' has ${ids.length} tests named "${key}" — comparing only the first (${ids[0]}); the rest are excluded from this diff.${RESET}`);
+  }
+  return out;
+}
+
 /** baseline → candidate with a colored delta; null side renders as `—`. */
 function rateRow(indent: string, label: string, a?: Series, b?: Series): void {
   const pa = rate(a);
@@ -63,12 +93,14 @@ function main(): void {
   console.log(`A = ${labelA}  sha ${a.git_sha}${a.dirty ? "-dirty" : ""}  (${a.times} runs)`);
   console.log(`B = ${labelB}  sha ${b.git_sha}${b.dirty ? "-dirty" : ""}  (${b.times} runs)`);
 
-  const nodeids = [...new Set([...Object.keys(a.tests), ...Object.keys(b.tests)])].sort();
+  // Keyed by test NAME, not full nodeid — see byShortId's doc comment for why.
+  const aTests = byShortId(a.tests, labelA);
+  const bTests = byShortId(b.tests, labelB);
+  const nodeids = [...new Set([...Object.keys(aTests), ...Object.keys(bTests)])].sort();
   for (const id of nodeids) {
-    const ta = a.tests[id];
-    const tb = b.tests[id];
-    const shortId = id.split(" > ").slice(-1)[0];
-    rateRow("\n  ", shortId, ta?.pass, tb?.pass);
+    const ta = aTests[id];
+    const tb = bTests[id];
+    rateRow("\n  ", id, ta?.pass, tb?.pass);
 
     const practiceTexts = [...new Set([...Object.keys(ta?.practices ?? {}), ...Object.keys(tb?.practices ?? {})])];
     for (const text of practiceTexts) {

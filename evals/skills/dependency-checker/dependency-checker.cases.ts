@@ -72,7 +72,7 @@ export const cases: SkillCase[] = [
     prompt: `We suspect some npm dependencies in server/ and client/ are unused or duplicated across packages with different versions. Check our dependencies and tell me what to prioritize fixing first.\n\n${REPO_DATA}`,
     practices: [
       "findings are explicitly labeled with one of the defined severity tiers (P0, P1, P2, or Info) rather than left unranked",
-      "the three different zod versions across server, client, and reviewer-core are called out explicitly as version drift",
+      "version drift on zod is called out explicitly: server and reviewer-core resolve it to the same 3.23.8 while client resolves it to a different 3.22.4, and the answer names which package(s) and which version(s) are involved rather than a vague 'versions differ' statement",
       "moment being declared in server/package.json but never imported anywhere under server/src is called out explicitly as an unused dependency",
       "each recommendation names a specific package name and package.json/file location (e.g. server/package.json, moment, zod) rather than a generic suggestion",
       "removing a dependency (e.g. moment) is presented as a recommendation for the user to confirm, not something already executed",

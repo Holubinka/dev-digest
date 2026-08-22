@@ -126,22 +126,23 @@ export function runWorkflowCases(cases: WorkflowCase[]): void {
           stopWhen: (p) => p.subagents.includes(expect1),
         });
         logTrace(c.name, result);
-        try {
-          expect(result.subagents, `subagents: ${result.subagents.join(", ")}`).toContain(c.expectSubagent);
-        } finally {
-          record(c.name, { result });
-        }
+        // outcome is the exact boolean the expect() below checks — derived BEFORE asserting, so
+        // record() (which must run either way) never depends on catching the assert's throw.
+        // !result.isError is NOT a substitute: a session that ends cleanly without ever launching
+        // the subagent is "clean" yet fails this check, and one that overruns maxTurns AFTER
+        // launching it is "unclean" yet the check already held.
+        const outcome = result.subagents.includes(c.expectSubagent);
+        record(c.name, { result, outcome });
+        expect(result.subagents, `subagents: ${result.subagents.join(", ")}`).toContain(c.expectSubagent);
       } else if (c.kind === "activation") {
         const result = await workflowTask(c.prompt, { maxTurns: c.maxTurns });
         logTrace(c.name, result);
-        try {
-          expect(
-            activated(result, c.skill),
-            `skills: ${result.skillsInvoked.join(", ")} | reads: ${result.filesRead.join(", ")}`,
-          ).toBe(c.shouldActivate);
-        } finally {
-          record(c.name, { result });
-        }
+        const outcome = activated(result, c.skill) === c.shouldActivate;
+        record(c.name, { result, outcome });
+        expect(
+          activated(result, c.skill),
+          `skills: ${result.skillsInvoked.join(", ")} | reads: ${result.filesRead.join(", ")}`,
+        ).toBe(c.shouldActivate);
       } else if (c.kind === "trace") {
         // One session, many asserts — every provided expectation is checked against the same trace.
         // Stop as soon as ALL expectations are satisfied (e.g. doc read + subagent launched), so a
@@ -160,26 +161,28 @@ export function runWorkflowCases(cases: WorkflowCase[]): void {
             files.every((f) => p.filesRead.some((r) => r.includes(f))),
         });
         logTrace(c.name, result);
-        try {
-          for (const sub of c.expectSubagents ?? []) {
-            expect(result.subagents, `subagents: ${result.subagents.join(", ")}`).toContain(sub);
-          }
-          for (const skill of c.expectSkills ?? []) {
-            expect(
-              activated(result, skill),
-              `skill ${skill} not engaged | skills: ${result.skillsInvoked.join(", ")} | reads: ${result.filesRead.join(", ")}`,
-            ).toBe(true);
-          }
-          for (const file of c.expectFilesRead ?? []) {
-            expect(
-              result.filesRead.some((f) => f.includes(file)),
-              `${file} not read | reads: ${result.filesRead.join(", ")}`,
-            ).toBe(true);
-          }
-          expect(result.isError).toBe(false);
-        } finally {
-          record(c.name, { result });
+        const outcome =
+          subs.every((s) => result.subagents.includes(s)) &&
+          skls.every((s) => skillEngaged(result, s)) &&
+          files.every((f) => result.filesRead.some((r) => r.includes(f))) &&
+          !result.isError;
+        record(c.name, { result, outcome });
+        for (const sub of subs) {
+          expect(result.subagents, `subagents: ${result.subagents.join(", ")}`).toContain(sub);
         }
+        for (const skill of skls) {
+          expect(
+            activated(result, skill),
+            `skill ${skill} not engaged | skills: ${result.skillsInvoked.join(", ")} | reads: ${result.filesRead.join(", ")}`,
+          ).toBe(true);
+        }
+        for (const file of files) {
+          expect(
+            result.filesRead.some((f) => f.includes(file)),
+            `${file} not read | reads: ${result.filesRead.join(", ")}`,
+          ).toBe(true);
+        }
+        expect(result.isError).toBe(false);
       } else {
         // contrast: treatment (real harness) vs control (empty tmpdir, no on-disk config).
         const tools = c.tools ?? ["Read", "Grep", "Glob"];
@@ -193,15 +196,12 @@ export function runWorkflowCases(cases: WorkflowCase[]): void {
         });
         logTrace(`${c.name} [treatment]`, treatment);
         logTrace(`${c.name} [control]`, control);
-        try {
-          const treatmentRead = treatment.filesRead.some((f) => f.includes(c.expectFileRead));
-          const controlRead = control.filesRead.some((f) => f.includes(c.expectFileRead));
-          expect(treatmentRead, `treatment reads: ${treatment.filesRead.join(", ")}`).toBe(true);
-          expect(controlRead, `control reads: ${control.filesRead.join(", ")}`).toBe(false);
-        } finally {
-          record(`${c.name} [treatment]`, { result: treatment });
-          record(`${c.name} [control]`, { result: control });
-        }
+        const treatmentRead = treatment.filesRead.some((f) => f.includes(c.expectFileRead));
+        const controlRead = control.filesRead.some((f) => f.includes(c.expectFileRead));
+        record(`${c.name} [treatment]`, { result: treatment, outcome: treatmentRead });
+        record(`${c.name} [control]`, { result: control, outcome: !controlRead });
+        expect(treatmentRead, `treatment reads: ${treatment.filesRead.join(", ")}`).toBe(true);
+        expect(controlRead, `control reads: ${control.filesRead.join(", ")}`).toBe(false);
       }
     });
   }

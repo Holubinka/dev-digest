@@ -15,7 +15,15 @@ function stripFrontmatter(md: string): string {
   return md;
 }
 
-/** SKILL.md plus every references/*.md — the full payload the harness would assemble. */
+/**
+ * SKILL.md plus every supporting markdown file — the full payload the harness would assemble.
+ * Most skills in this repo keep supporting docs (severity.md, graph.md, ...) as flat siblings of
+ * SKILL.md and link to them by relative path, rather than under a references/ folder — only
+ * third-party-shaped skills (drizzle-orm-patterns, typescript-expert, zod) use references/. A
+ * production session follows those links with its own Read tool; skillTask has no tools, so this
+ * is the only chance for that content to reach the model. Skip loading it and the eval silently
+ * measures SKILL.md alone.
+ */
 export function skillContent(skillName: string): string {
   const dir = join(SKILLS_DIR, skillName);
   const skillMd = join(dir, "SKILL.md");
@@ -25,6 +33,10 @@ export function skillContent(skillName: string): string {
   if (existsSync(refs)) {
     for (const f of readdirSync(refs).filter((f) => f.endsWith(".md")).sort()) {
       parts.push(`\n\n## Reference: ${f}\n\n${readFileSync(join(refs, f), "utf8")}`);
+    }
+  } else {
+    for (const f of readdirSync(dir).filter((f) => f.endsWith(".md") && f !== "SKILL.md").sort()) {
+      parts.push(`\n\n## Reference: ${f}\n\n${readFileSync(join(dir, f), "utf8")}`);
     }
   }
   return parts.join("\n");

@@ -57,6 +57,36 @@ working tree. Only that hook enforces it; a push from your own terminal is untou
 A Track A gate failure (arch, lint, typecheck, tests, vendor mirror, skills registry) stops both
 the push and the PR. A critical found by a review subagent stops only the PR.
 
+## Evals gate what changes
+
+`evals/` (own `package.json`, **pnpm** — see its README) runs three tiers against
+`.claude/skills/*` and `.claude/agents/*`: a static structure gate, LLM-judged content quality,
+and trace-asserted workflow behavior (does `CLAUDE.md` route to the right doc, does a skill
+activate, does a subagent dispatch).
+
+```sh
+cd evals && pnpm eval:quality     # static SKILL.md/AGENTS.md gate — no model, CI-blocking
+cd evals && pnpm eval:workflow    # CLAUDE.md routing / dispatch / activation, the real harness
+cd evals && pnpm eval:skills      # skill content quality (LLM-judged)
+cd evals && pnpm eval:agents      # agent content quality (LLM-judged)
+cd evals && pnpm eval:repeat <pattern> -n 2 --label X   # stability of one change (n capped at 2)
+cd evals && pnpm eval:delta <baseline> <candidate>       # before vs after, per-practice
+cd evals && pnpm eval:benchmark <pattern> -n 5            # with vs without the artifact (lift)
+```
+
+| Change | Minimum check |
+|---|---|
+| `.claude/skills/**` | `eval:quality` + the matching skill eval |
+| `.claude/agents/**` | the agent eval + the relevant workflow case |
+| `CLAUDE.md` / routing rules | `eval:workflow` |
+| An eval case or a grader (`evals/src/**`) | recalibrate: `eval:repeat --label`, commit the JSON under `evals/baselines/` |
+
+CI (`.github/workflows/evals.yml`) blocks a PR on `eval:quality` only. The model-run tier runs the
+subset above that actually changed, publishes a report and a baseline diff to the job summary, and
+does not block — it has no secret on a fork PR by construction (`pull_request`, never
+`pull_request_target`) and skips itself there. Full detail, and the anti-patterns a new case,
+grader or CI step must not reintroduce: `evals/README.md`.
+
 ## What a session costs
 
 Measured on the Intent Layer, 2026-08-06: **$440**, of which **$313 was re-reading context** and

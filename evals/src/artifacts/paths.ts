@@ -12,3 +12,4 @@ export const REPO_ROOT = join(EVALS_DIR, "..");
 export const SKILLS_DIR = join(REPO_ROOT, ".claude", "skills");
 export const AGENTS_DIR = join(REPO_ROOT, ".claude", "agents");
 export const RESULTS_DIR = join(EVALS_DIR, "results");
+export const WORKFLOW_DIR = join(EVALS_DIR, "workflow");
