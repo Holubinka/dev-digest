@@ -1,0 +1,25 @@
+{
+  "name": "security-route",
+  "diff": "diff.patch",
+  "description": "New GET /pulls/:id/files/search route in server/src/modules/pulls/routes.ts. Three planted OWASP-shaped bugs, no comment in the diff names any of them.",
+  "expected_findings": [
+    {
+      "id": "sql-injection",
+      "file": "server/src/modules/pulls/routes.ts",
+      "min_severity": "critical",
+      "keywords": ["sql.raw", "injection", "parameteriz"]
+    },
+    {
+      "id": "missing-tenant-scoping",
+      "file": "server/src/modules/pulls/routes.ts",
+      "min_severity": "critical",
+      "keywords": ["workspace", "tenant", "idor", "scoping"]
+    },
+    {
+      "id": "secret-in-logs",
+      "file": "server/src/modules/pulls/routes.ts",
+      "min_severity": "critical",
+      "keywords": ["token", "log", "secret"]
+    }
+  ]
+}

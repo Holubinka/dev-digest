@@ -1,0 +1,58 @@
+{
+  "expectations": [
+    {
+      "text": "The review flags that fetch is called directly inside the component instead of through a lib/hooks/ hook.",
+      "passed": true,
+      "evidence": "outputs/findings.md, Finding 2 (graded Major): \"Raw fetch in a component instead of a TanStack Query hook. Cited client/AGENTS.md: data should go through TanStack Query, via hooks in src/lib/hooks/*, not fetch called directly from a component.\""
+    },
+    {
+      "text": "The review flags that query data (pulls) is copied into local useState instead of being derived from the query result during render.",
+      "passed": true,
+      "evidence": "outputs/findings.md, Finding 4 (graded Minor): \"Redundant state+effect mirroring already-reactive query data — cachedPulls is local state synced from pulls via useEffect. Since pulls is already reactive (TanStack Query), this just adds an extra render on every data change with no behavioral benefit.\" Substance matches the expectation even though it isn't framed with the words 'derive during render'."
+    },
+    {
+      "text": "The review flags that the shareable selectedLabel filter is kept in local component state instead of the URL.",
+      "passed": false,
+      "evidence": "No mention of URL state, shareable state, search params, or the sibling page's ?status= pattern anywhere across all 8 findings in outputs/findings.md. The closest finding (2, raw fetch) and the closest anti-pattern finding (4, query-data-in-state) both address different lines and different concerns. The bottom-line summary in findings.md states this explicitly: \"No mention of URL-shareable filter state.\""
+    }
+  ],
+  "summary": {
+    "passed": 2,
+    "failed": 1,
+    "total": 3,
+    "pass_rate": 0.67
+  },
+  "execution_metrics": {
+    "total_tool_calls": 15,
+    "errors_encountered": 0
+  },
+  "timing": {},
+  "claims": [
+    {
+      "claim": "The fetch target /api/repos/${repoId}/labels does not match this app's real API pattern and would 404",
+      "type": "factual",
+      "verified": true,
+      "evidence": "Confirmed independently while building the fixture: client/src/lib/api.ts routes every real call through API_BASE (localhost:3001, no /api prefix); this component's fetch target was an authoring oversight in the fixture, not part of the 3 planted issues."
+    },
+    {
+      "claim": "PrMeta has no labels field, so the 'label' filter is really a title substring match",
+      "type": "factual",
+      "verified": true,
+      "evidence": "Consistent with client/src/vendor/shared/contracts/platform.ts's PrMeta shape, which carries no labels field — this is a second unintended bug in the fixture's own authoring, unrelated to the 3 planted issues."
+    }
+  ],
+  "user_notes_summary": {
+    "uncertainties": [],
+    "needs_review": [],
+    "workarounds": []
+  },
+  "eval_feedback": {
+    "suggestions": [
+      {
+        "assertion": "The review flags that the shareable selectedLabel filter is kept in local component state instead of the URL.",
+        "reason": "Genuine miss, not a grading-strictness issue — this run read the diff carefully (found 8 findings, 2 of them real unplanted bugs the fixture accidentally shipped) and still never reached for 'shareable state belongs in the URL.' That pattern has no generic-code-review handle; it's a frontend-architecture-specific convention with nothing in the diff or in general React knowledge to prompt it."
+      }
+    ],
+    "overall": "2/3 genuinely earned. The one failure is the most informative result in this whole eval set: it's the fixture where a capable, repo-aware reviewer with no skill has nothing to reach for."
+  }
+}

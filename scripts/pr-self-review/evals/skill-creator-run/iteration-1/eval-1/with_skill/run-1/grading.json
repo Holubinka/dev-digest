@@ -1,0 +1,53 @@
+{
+  "expectations": [
+    {
+      "text": "The review flags that PrNotifyService constructs its own repository inside the constructor instead of receiving it as a parameter.",
+      "passed": true,
+      "evidence": "outputs/report.md, CRITICAL, notify.ts:12, agent conventions · onion-architecture §7 (§3.3): \"PrNotifyService builds its own repository inside the constructor ... instead of taking it as a parameter ... this is the exact 'service can just take the container' red flag, and pnpm arch has no rule that can see it.\" Verifier: SURVIVED."
+    },
+    {
+      "text": "The review flags that the external Slack webhook call is a raw fetch with no port/adapter abstraction.",
+      "passed": true,
+      "evidence": "outputs/report.md, CRITICAL, notify.ts:22, agent conventions · onion-architecture §7 (§3.4): \"The Slack webhook call is a raw fetch inside a service with no port and no adapter ... No dependency-cruiser rule forbids a bare network call from a service.\" Verifier: SURVIVED."
+    },
+    {
+      "text": "The review flags that the webhook URL is read from process.env instead of the repo's SecretsProvider.",
+      "passed": true,
+      "evidence": "outputs/report.md, CRITICAL, notify.ts:19, agent conventions · onion-architecture §7 (§3.7): \"const webhookUrl = process.env.SLACK_WEBHOOK_URL reads a secret-equivalent credential ... straight from process.env.\" Independently re-derived at MAJOR by agent security (§A04 Cryptographic Failures) on the same line. Verifier: SURVIVED on the conventions finding."
+    }
+  ],
+  "summary": {
+    "passed": 3,
+    "failed": 0,
+    "total": 3,
+    "pass_rate": 1.0
+  },
+  "execution_metrics": {
+    "total_tool_calls": 77,
+    "errors_encountered": 0
+  },
+  "timing": {},
+  "claims": [
+    {
+      "claim": "PrNotifyService has no caller anywhere in the repo, and its natural trigger point (modules/reviews/) cannot legally import modules/pulls/ under the enforced no-cross-module rule",
+      "type": "factual",
+      "verified": true,
+      "evidence": "Consistent with the fixture as authored: the file was deliberately never wired into container.ts or modules/index.ts. Independently reached by the without_skill run in this same eval, which grepped the repo and found zero references outside the new file."
+    },
+    {
+      "claim": "All three criticals survived adversarial verification without needing an orchestrator fallback this time (unlike eval-0)",
+      "type": "process",
+      "verified": true,
+      "evidence": "report.md carries a verifier line on each critical with no process note about a missing subagent reply, unlike eval-0's with_skill run."
+    }
+  ],
+  "user_notes_summary": {
+    "uncertainties": [],
+    "needs_review": [],
+    "workarounds": []
+  },
+  "eval_feedback": {
+    "suggestions": [],
+    "overall": "No suggestions. Same observation as eval-0 about duplicate same-line findings across agents (the secret finding was caught by both conventions at critical and security at major) — worth a shared fourth assertion across all three evals if this eval set grows, but not a defect in this run."
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "skill_name": "pr-self-review",
+  "evals": [
+    {
+      "id": 0,
+      "eval_name": "security-route",
+      "prompt": "Review the diff in fixtures/security-route/diff.patch (a new GET /pulls/:id/files/search route added to server/src/modules/pulls/routes.ts) as you would review a teammate's pull request before it merges.",
+      "expected_output": "Flags SQL injection via sql.raw(), the missing workspace/tenant scoping (IDOR), and the GitHub token written to the log on failure.",
+      "files": ["eval-fixtures/fixtures/security-route/diff.patch"],
+      "expectations": [
+        "The review flags SQL injection risk in the new route's query, specifically the use of sql.raw() with unsanitized user input, at or above high/critical severity.",
+        "The review flags the missing workspace/tenant scoping on the PR lookup (broken access control / IDOR) at or above high/critical severity.",
+        "The review flags that the GitHub token is being written to the application log in the error handler."
+      ]
+    },
+    {
+      "id": 1,
+      "eval_name": "onion-notify-service",
+      "prompt": "Review the diff in fixtures/onion-notify-service/diff.patch (a new server/src/modules/pulls/notify.ts, PrNotifyService) as you would review a teammate's pull request before it merges.",
+      "expected_output": "Flags the repository built inside the constructor instead of taken as a parameter, the raw external fetch with no port/adapter, and the secret read from process.env instead of SecretsProvider.",
+      "files": ["eval-fixtures/fixtures/onion-notify-service/diff.patch"],
+      "expectations": [
+        "The review flags that PrNotifyService constructs its own repository inside the constructor instead of receiving it as a parameter.",
+        "The review flags that the external Slack webhook call is a raw fetch with no port/adapter abstraction.",
+        "The review flags that the webhook URL is read from process.env instead of the repo's SecretsProvider."
+      ]
+    },
+    {
+      "id": 2,
+      "eval_name": "frontend-label-filter",
+      "prompt": "Review the diff in fixtures/frontend-label-filter/diff.patch (a new LabelQuickFilter component under client/src/app/repos/[repoId]/pulls/_components/) as you would review a teammate's pull request before it merges.",
+      "expected_output": "Flags fetch called directly in the component instead of via a hook, query data copied into useState instead of derived, and a shareable filter kept in local state instead of the URL.",
+      "files": ["eval-fixtures/fixtures/frontend-label-filter/diff.patch"],
+      "expectations": [
+        "The review flags that fetch is called directly inside the component instead of through a lib/hooks/ hook.",
+        "The review flags that query data (pulls) is copied into local useState instead of being derived from the query result during render.",
+        "The review flags that the shareable selectedLabel filter is kept in local component state instead of the URL."
+      ]
+    }
+  ]
+}

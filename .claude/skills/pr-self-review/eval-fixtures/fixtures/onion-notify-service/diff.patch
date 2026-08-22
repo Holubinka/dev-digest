@@ -1,0 +1,61 @@
+diff --git a/server/src/modules/pulls/notify.ts b/server/src/modules/pulls/notify.ts
+new file mode 100644
+index 0000000..debfd4e
+--- /dev/null
++++ b/server/src/modules/pulls/notify.ts
+@@ -0,0 +1,28 @@
++import type { Container } from '../../platform/container.js';
++import { PullsRepository } from './repository.js';
++
++/**
++ * Sends a Slack notification when a PR review finishes, so a reviewer does
++ * not have to keep the pull requests list open to see when a run lands.
++ */
++export class PrNotifyService {
++  private repo: PullsRepository;
++
++  constructor(private container: Container) {
++    this.repo = new PullsRepository(container.db);
++  }
++
++  async notifyReviewComplete(prId: string, workspaceId: string): Promise<void> {
++    const pr = await this.repo.findById(prId, workspaceId);
++    if (!pr) return;
++
++    const webhookUrl = process.env.SLACK_WEBHOOK_URL;
++    if (!webhookUrl) return;
++
++    await fetch(webhookUrl, {
++      method: 'POST',
++      headers: { 'Content-Type': 'application/json' },
++      body: JSON.stringify({ text: `Review finished for PR #${pr.number}: ${pr.title}` }),
++    });
++  }
++}
+diff --git a/server/src/modules/pulls/repository.ts b/server/src/modules/pulls/repository.ts
+index 6f1c770..d75ffc0 100644
+--- a/server/src/modules/pulls/repository.ts
++++ b/server/src/modules/pulls/repository.ts
+@@ -1,4 +1,4 @@
+-import { asc, desc, eq, inArray } from 'drizzle-orm';
++import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+ import type { Db } from '../../db/client.js';
+ import * as t from '../../db/schema.js';
+ 
+@@ -149,4 +149,16 @@ export class PullsRepository {
+       .innerJoin(t.reviews, eq(t.reviews.id, t.findings.reviewId))
+       .where(inArray(t.reviews.prId, prIds));
+   }
++
++  /** Single PR row by id, workspace-scoped. */
++  async findById(
++    prId: string,
++    workspaceId: string,
++  ): Promise<typeof t.pullRequests.$inferSelect | undefined> {
++    const [pr] = await this.db
++      .select()
++      .from(t.pullRequests)
++      .where(and(eq(t.pullRequests.workspaceId, workspaceId), eq(t.pullRequests.id, prId)));
++    return pr;
++  }
+ }

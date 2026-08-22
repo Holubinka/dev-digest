@@ -1,0 +1,25 @@
+{
+  "name": "frontend-label-filter",
+  "diff": "diff.patch",
+  "description": "New LabelQuickFilter component under client/src/app/repos/[repoId]/pulls/_components/. Three planted frontend-architecture checklist violations — none of them an OWASP shape, so the bar is major, not critical.",
+  "expected_findings": [
+    {
+      "id": "fetch-outside-hooks",
+      "file": "LabelQuickFilter.tsx",
+      "min_severity": "major",
+      "keywords": ["fetch", "lib/hooks", "hook"]
+    },
+    {
+      "id": "query-data-copied-into-state",
+      "file": "LabelQuickFilter.tsx",
+      "min_severity": "major",
+      "keywords": ["usestate", "derive", "query data"]
+    },
+    {
+      "id": "shareable-state-not-in-url",
+      "file": "LabelQuickFilter.tsx",
+      "min_severity": "major",
+      "keywords": ["url", "search param", "shareable"]
+    }
+  ]
+}

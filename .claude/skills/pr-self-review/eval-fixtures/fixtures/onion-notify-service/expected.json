@@ -1,0 +1,25 @@
+{
+  "name": "onion-notify-service",
+  "diff": "diff.patch",
+  "description": "New server/src/modules/pulls/notify.ts (PrNotifyService) plus a supporting repository method. Three planted onion-architecture violations, none of which pnpm arch can see.",
+  "expected_findings": [
+    {
+      "id": "repo-not-a-parameter",
+      "file": "server/src/modules/pulls/notify.ts",
+      "min_severity": "critical",
+      "keywords": ["parameter", "constructor", "repository"]
+    },
+    {
+      "id": "external-call-no-port",
+      "file": "server/src/modules/pulls/notify.ts",
+      "min_severity": "critical",
+      "keywords": ["port", "adapter", "mock"]
+    },
+    {
+      "id": "secret-via-process-env",
+      "file": "server/src/modules/pulls/notify.ts",
+      "min_severity": "critical",
+      "keywords": ["process.env", "secretsprovider", "secret"]
+    }
+  ]
+}

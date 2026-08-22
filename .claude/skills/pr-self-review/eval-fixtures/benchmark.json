@@ -1,0 +1,272 @@
+{
+  "metadata": {
+    "skill_name": "pr-self-review",
+    "skill_path": ".claude/skills/pr-self-review",
+    "executor_model": "claude-opus-5",
+    "analyzer_model": "claude-opus-5",
+    "timestamp": "2026-08-21T20:08:55Z",
+    "evals_run": [
+      0,
+      1,
+      2
+    ],
+    "runs_per_configuration": 1
+  },
+  "runs": [
+    {
+      "eval_id": 0,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 3,
+        "failed": 0,
+        "total": 3,
+        "time_seconds": 721.0,
+        "tokens": 144535,
+        "tool_calls": 85,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "The review flags SQL injection risk in the new route's query, specifically the use of sql.raw() with unsanitized user input, at or above high/critical severity.",
+          "passed": true,
+          "evidence": "outputs/report.md, CRITICAL, routes.ts:384, agent security · security §A05 Injection: \"q comes from req.query with no querystring schema ... interpolated directly into a raw SQL string via sql.raw(...), bypassing Drizzle's parameter binding entirely.\" Independently re-derived by agent conventions at the same line. Verifier: SURVIVED on both."
+        },
+        {
+          "text": "The review flags the missing workspace/tenant scoping on the PR lookup (broken access control / IDOR) at or above high/critical severity.",
+          "passed": true,
+          "evidence": "outputs/report.md, CRITICAL, routes.ts:378, agent security · security §A01 Broken Access Control: \"The PR lookup filters only eq(t.pullRequests.id, req.params.id), no workspaceId check, while every sibling handler in the file scopes by workspace via getContext.\" Independently re-derived by agent conventions. Verifier: SURVIVED on both."
+        },
+        {
+          "text": "The review flags that the GitHub token is being written to the application log in the error handler.",
+          "passed": true,
+          "evidence": "outputs/report.md, CRITICAL, routes.ts:390, agent security · security §A09 Logging and Alerting: \"On any query failure the handler fetches the plaintext GITHUB_TOKEN and passes it into app.log.error({ err, token }, ...).\" Independently re-derived by agent conventions. Verifier: SURVIVED on both."
+        }
+      ],
+      "notes": [
+        "2 of 6 adversarial-verifier subagents (step 4) never returned a notification within the run and were self-verified by the orchestrator instead of a dispatched subagent — worth watching if step 4 scales to more criticals per run.",
+        "Orchestrator performed the SQL-injection and IDOR verifications itself after the corresponding verifier subagents did not respond."
+      ]
+    },
+    {
+      "eval_id": 1,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 3,
+        "failed": 0,
+        "total": 3,
+        "time_seconds": 624.3,
+        "tokens": 113412,
+        "tool_calls": 77,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "The review flags that PrNotifyService constructs its own repository inside the constructor instead of receiving it as a parameter.",
+          "passed": true,
+          "evidence": "outputs/report.md, CRITICAL, notify.ts:12, agent conventions · onion-architecture §7 (§3.3): \"PrNotifyService builds its own repository inside the constructor ... instead of taking it as a parameter ... this is the exact 'service can just take the container' red flag, and pnpm arch has no rule that can see it.\" Verifier: SURVIVED."
+        },
+        {
+          "text": "The review flags that the external Slack webhook call is a raw fetch with no port/adapter abstraction.",
+          "passed": true,
+          "evidence": "outputs/report.md, CRITICAL, notify.ts:22, agent conventions · onion-architecture §7 (§3.4): \"The Slack webhook call is a raw fetch inside a service with no port and no adapter ... No dependency-cruiser rule forbids a bare network call from a service.\" Verifier: SURVIVED."
+        },
+        {
+          "text": "The review flags that the webhook URL is read from process.env instead of the repo's SecretsProvider.",
+          "passed": true,
+          "evidence": "outputs/report.md, CRITICAL, notify.ts:19, agent conventions · onion-architecture §7 (§3.7): \"const webhookUrl = process.env.SLACK_WEBHOOK_URL reads a secret-equivalent credential ... straight from process.env.\" Independently re-derived at MAJOR by agent security (§A04 Cryptographic Failures) on the same line. Verifier: SURVIVED on the conventions finding."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 3,
+        "failed": 0,
+        "total": 3,
+        "time_seconds": 714.1,
+        "tokens": 124493,
+        "tool_calls": 33,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "The review flags that fetch is called directly inside the component instead of through a lib/hooks/ hook.",
+          "passed": true,
+          "evidence": "outputs/report.md, MAJOR, LabelQuickFilter.tsx:22, agent conventions · frontend-architecture §Review checklist: \"Raw fetch(...) is called directly inside the component's useEffect. The checklist explicitly forbids fetch outside lib/hooks/.\""
+        },
+        {
+          "text": "The review flags that query data (pulls) is copied into local useState instead of being derived from the query result during render.",
+          "passed": true,
+          "evidence": "outputs/report.md, MAJOR, LabelQuickFilter.tsx:13, agent conventions · frontend-architecture §Review checklist: \"cachedPulls mirrors the TanStack Query result from usePulls into local useState ... This is exactly the checklist's 'no query data copied into useState' violation — principle 5 says derive during render.\""
+        },
+        {
+          "text": "The review flags that the shareable selectedLabel filter is kept in local component state instead of the URL.",
+          "passed": true,
+          "evidence": "outputs/report.md, MAJOR, LabelQuickFilter.tsx:14, agent conventions · frontend-architecture §Review checklist: \"selectedLabel is a shareable filter kept in local useState rather than the URL ... the sibling page pulls/page.tsx already puts its status filter in ?status= ... the exact pattern this should reuse.\" The one expectation the without_skill run in this same eval failed."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 0,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 3,
+        "failed": 0,
+        "total": 3,
+        "time_seconds": 194.5,
+        "tokens": 68622,
+        "tool_calls": 10,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "The review flags SQL injection risk in the new route's query, specifically the use of sql.raw() with unsanitized user input, at or above high/critical severity.",
+          "passed": true,
+          "evidence": "outputs/findings.md, Finding 1 (graded Critical): \"sql.raw(...) concatenates the unbounded q param straight into raw SQL — the one drizzle escape hatch that bypasses parameter binding. Noted a safe tagged-template alternative already used one file over, in context/repository.ts.\""
+        },
+        {
+          "text": "The review flags the missing workspace/tenant scoping on the PR lookup (broken access control / IDOR) at or above high/critical severity.",
+          "passed": true,
+          "evidence": "outputs/findings.md, Finding 3 (graded High): \"No workspace filter on the PR lookup, unlike every sibling handler in the same file (GET /pulls/:id, resolvePrAndRepo) — cross-workspace PR search once there's more than one workspace.\""
+        },
+        {
+          "text": "The review flags that the GitHub token is being written to the application log in the error handler.",
+          "passed": true,
+          "evidence": "outputs/findings.md, Finding 2 (graded Critical): \"The catch block fetches the live GITHUB_TOKEN and logs it in plaintext — trivial to trigger, since a single stray quote in q already breaks the injected SQL and lands here.\""
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 3,
+        "failed": 0,
+        "total": 3,
+        "time_seconds": 184.0,
+        "tokens": 83939,
+        "tool_calls": 16,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "The review flags that PrNotifyService constructs its own repository inside the constructor instead of receiving it as a parameter.",
+          "passed": true,
+          "evidence": "outputs/findings.md, item 3 (graded Convention): \"Constructor builds its own repository instead of taking it in, unlike IntentService/BlastService/BriefService, found by comparing this class against those three siblings.\""
+        },
+        {
+          "text": "The review flags that the external Slack webhook call is a raw fetch with no port/adapter abstraction.",
+          "passed": true,
+          "evidence": "outputs/findings.md, item 2 (graded Major): \"Raw fetch to an external service, not behind a port/adapter — unlike every other outbound call in the codebase, so it's not mockable.\""
+        },
+        {
+          "text": "The review flags that the webhook URL is read from process.env instead of the repo's SecretsProvider.",
+          "passed": true,
+          "evidence": "outputs/findings.md, item 1 (graded Major): \"Secret read via process.env — root CLAUDE.md says secrets never pass through process.env/AppConfig, must go through SecretsProvider.\""
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.67,
+        "passed": 2,
+        "failed": 1,
+        "total": 3,
+        "time_seconds": 102.5,
+        "tokens": 58722,
+        "tool_calls": 15,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "The review flags that fetch is called directly inside the component instead of through a lib/hooks/ hook.",
+          "passed": true,
+          "evidence": "outputs/findings.md, Finding 2 (graded Major): \"Raw fetch in a component instead of a TanStack Query hook. Cited client/AGENTS.md: data should go through TanStack Query, via hooks in src/lib/hooks/*, not fetch called directly from a component.\""
+        },
+        {
+          "text": "The review flags that query data (pulls) is copied into local useState instead of being derived from the query result during render.",
+          "passed": true,
+          "evidence": "outputs/findings.md, Finding 4 (graded Minor): \"Redundant state+effect mirroring already-reactive query data — cachedPulls is local state synced from pulls via useEffect. Since pulls is already reactive (TanStack Query), this just adds an extra render on every data change with no behavioral benefit.\" Substance matches the expectation even though it isn't framed with the words 'derive during render'."
+        },
+        {
+          "text": "The review flags that the shareable selectedLabel filter is kept in local component state instead of the URL.",
+          "passed": false,
+          "evidence": "No mention of URL state, shareable state, search params, or the sibling page's ?status= pattern anywhere across all 8 findings in outputs/findings.md. The closest finding (2, raw fetch) and the closest anti-pattern finding (4, query-data-in-state) both address different lines and different concerns. The bottom-line summary in findings.md states this explicitly: \"No mention of URL-shareable filter state.\""
+        }
+      ],
+      "notes": []
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {
+        "mean": 1.0,
+        "stddev": 0.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 686.4667,
+        "stddev": 53.9483,
+        "min": 624.3,
+        "max": 721.0
+      },
+      "tokens": {
+        "mean": 127480.0,
+        "stddev": 15775.0407,
+        "min": 113412,
+        "max": 144535
+      }
+    },
+    "without_skill": {
+      "pass_rate": {
+        "mean": 0.89,
+        "stddev": 0.1905,
+        "min": 0.67,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 160.3333,
+        "stddev": 50.3595,
+        "min": 102.5,
+        "max": 194.5
+      },
+      "tokens": {
+        "mean": 70427.6667,
+        "stddev": 12705.1012,
+        "min": 58722,
+        "max": 83939
+      }
+    },
+    "delta": {
+      "pass_rate": "+0.11",
+      "time_seconds": "+526.1",
+      "tokens": "+57052"
+    }
+  },
+  "notes": [
+    "1 run per configuration, not 3 — real /pr-self-review --full runs cost ~10-12 min and ~100-150k tokens each, so variance across repeats was not measured this round.",
+    "With-skill pass rate is 100% across all 9 assertions (3 fixtures x 3 planted issues); without-skill missed exactly one — the URL-shareable-state convention in eval-2, which has no generic-code-review analog.",
+    "Tokens shown are the top-level orchestrating agent only. With-skill runs dispatch further subagents (2 Track B reviewers + one adversarial verifier per critical), so real total spend is higher than this table shows.",
+    "eval-0 with_skill: 2 of 6 adversarial-verifier subagents never returned a notification; the orchestrator self-verified and disclosed this in the report rather than leaving them unresolved.",
+    "eval-2 with_skill: the security agent initially graded a path-traversal finding critical; the adversarial verifier correctly refuted it to major using reachability evidence (dead code, no /api proxy, no /admin route) — the first real measurement of that verifier actually refuting rather than confirming."
+  ]
+}

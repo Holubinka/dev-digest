@@ -2202,6 +2202,31 @@ to `Edit` — the gate was right, and the script was the way around it.
   after three failed generations the stored tour was byte-identical, `generated_at` unchanged.
   That path had only ever been exercised with fakes.
 
+### 2026-08-21
+
+- Evaluated `pr-self-review` against a plain, no-skill review: 3 synthetic branches
+  (`test/psr-eval-fixture-{1,2,3}`, left in the repo, not merged), each with exactly 3 planted
+  issues and no giveaway comments, run twice — once as an ad hoc "review this diff" pass with
+  full repo access and no Skill tool, once through `/pr-self-review --full`. Full comparison:
+  the artifact linked from this session's transcript.
+- The no-skill baseline was strong, not weak: it independently found 8 of the 9 planted issues,
+  including reasoning nobody asked for — it caught fixture 2's constructor anti-pattern
+  (`server/src/modules/pulls/notify.ts`) only by comparing the new class against
+  `IntentService`/`BlastService`/`BriefService` on its own initiative. The skill's marginal value
+  over a capable, repo-aware reviewer is real but narrower than the skill's own docs might
+  suggest — see the next two entries for where it actually showed up.
+- The baseline's one miss had no generic-review handle: "keep shareable state in the URL" is
+  `frontend-architecture`'s own checklist item, not a security pattern or a widely-known React
+  idiom, and the ad hoc pass never reached for it even after correctly finding two of the other
+  two planted issues in the same file. Running a named checklist as written is where the skill's
+  structure earned its keep, not general code-reading ability.
+- `SKILL.md:207-209`'s "this step has never executed" (§3.4, adversarial verification of a
+  Track B critical) is no longer true — it ran for real on this session's fixtures 1–3, verifying
+  9 criticals total. 8 survived; 1 (a security-agent path-traversal claim on a dead-code
+  component in fixture 3, `LabelQuickFilter.tsx`) was genuinely REFUTED with concrete evidence
+  (zero importers, no `/api` proxy on that origin, no target route exists) and downgraded to
+  major — the mechanism caught a real false positive, not just a critical that happened to hold.
+
 ## Open Questions
 
 - `AGENTS.md` standardises instructions but not capabilities. `.claude/skills/*` and the
@@ -2263,3 +2288,11 @@ to `Edit` — the gate was right, and the script was the way around it.
   as an ICU `{max, number}` was rejected on 2026-08-14 because `en` renders it "40,000" and the
   rest of that file writes numbers with a space; a pre-formatted value would need every `t(errorKey)`
   call site to pass it. Left as prose deliberately, and it is a real coupling, not an oversight.
+- `pr-self-review` §3.4 (adversarial verification) dispatched 6 verifier subagents in one run on
+  2026-08-21 (3 criticals from `security`, 3 from `conventions`, same 3 lines) and 2 of the 6
+  never returned a completion notification within the orchestrating agent's wait — no error, no
+  timeout message, just silence. The orchestrator's workaround (reading the diff and reaching the
+  same SURVIVED verdict itself, disclosed plainly in the report rather than left unverified) held
+  up this one time, but the skill has no written fallback for a verifier that hangs, and this is
+  a single occurrence, not yet a pattern. Worth re-checking if a future run needs step 4 to
+  verify more than a couple of criticals at once.

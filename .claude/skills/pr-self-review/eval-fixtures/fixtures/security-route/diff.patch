@@ -1,0 +1,36 @@
+diff --git a/server/src/modules/pulls/routes.ts b/server/src/modules/pulls/routes.ts
+index bd9c59f..6c138e9 100644
+--- a/server/src/modules/pulls/routes.ts
++++ b/server/src/modules/pulls/routes.ts
+@@ -365,4 +365,31 @@ export default async function pullsRoutes(appBase: FastifyInstance) {
+       }
+     },
+   );
++
++  app.get(
++    '/pulls/:id/files/search',
++    { schema: { params: IdParams } },
++    async (req): Promise<{ path: string; patch: string | null }[]> => {
++      const { q } = req.query as Record<string, string | undefined>;
++
++      const [pr] = await container.db
++        .select()
++        .from(t.pullRequests)
++        .where(eq(t.pullRequests.id, req.params.id));
++      if (!pr) throw new NotFoundError('Pull request not found');
++
++      try {
++        const rows = await container.db.execute(
++          sql.raw(
++            `select path, patch from pr_files where pr_id = '${pr.id}' and path ilike '%${q ?? ''}%'`,
++          ),
++        );
++        return rows as unknown as { path: string; patch: string | null }[];
++      } catch (err) {
++        const token = await container.secrets.get('GITHUB_TOKEN');
++        app.log.error({ err, token }, 'PR file search failed');
++        throw new AppError('search_failed', 'File search failed.', 500);
++      }
++    },
++  );
+ }

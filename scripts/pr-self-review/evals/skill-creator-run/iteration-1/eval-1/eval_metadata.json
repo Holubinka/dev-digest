@@ -1,0 +1,10 @@
+{
+  "eval_id": 1,
+  "eval_name": "onion-notify-service",
+  "prompt": "Review the diff in .claude/skills/pr-self-review/eval-fixtures/fixtures/onion-notify-service/diff.patch (a new server/src/modules/pulls/notify.ts, PrNotifyService) as you would review a teammate's pull request before it merges.",
+  "assertions": [
+    "The review flags that PrNotifyService constructs its own repository inside the constructor instead of receiving it as a parameter.",
+    "The review flags that the external Slack webhook call is a raw fetch with no port/adapter abstraction.",
+    "The review flags that the webhook URL is read from process.env instead of the repo's SecretsProvider."
+  ]
+}

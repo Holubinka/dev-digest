@@ -1,0 +1,47 @@
+{
+  "expectations": [
+    {
+      "text": "The review flags that PrNotifyService constructs its own repository inside the constructor instead of receiving it as a parameter.",
+      "passed": true,
+      "evidence": "outputs/findings.md, item 3 (graded Convention): \"Constructor builds its own repository instead of taking it in, unlike IntentService/BlastService/BriefService, found by comparing this class against those three siblings.\""
+    },
+    {
+      "text": "The review flags that the external Slack webhook call is a raw fetch with no port/adapter abstraction.",
+      "passed": true,
+      "evidence": "outputs/findings.md, item 2 (graded Major): \"Raw fetch to an external service, not behind a port/adapter — unlike every other outbound call in the codebase, so it's not mockable.\""
+    },
+    {
+      "text": "The review flags that the webhook URL is read from process.env instead of the repo's SecretsProvider.",
+      "passed": true,
+      "evidence": "outputs/findings.md, item 1 (graded Major): \"Secret read via process.env — root CLAUDE.md says secrets never pass through process.env/AppConfig, must go through SecretsProvider.\""
+    }
+  ],
+  "summary": {
+    "passed": 3,
+    "failed": 0,
+    "total": 3,
+    "pass_rate": 1.0
+  },
+  "execution_metrics": {
+    "total_tool_calls": 16,
+    "errors_encountered": 0
+  },
+  "timing": {},
+  "claims": [
+    {
+      "claim": "IntentService, BlastService and BriefService all take their repository as a constructor parameter rather than building it internally",
+      "type": "factual",
+      "verified": true,
+      "evidence": "Cited by the reviewer as the basis for finding #3; matches onion-architecture SKILL.md §3.2's own prescribed pattern (constructor(container, repo = new XRepository(container.db)))."
+    }
+  ],
+  "user_notes_summary": {
+    "uncertainties": [],
+    "needs_review": [],
+    "workarounds": []
+  },
+  "eval_feedback": {
+    "suggestions": [],
+    "overall": "No suggestions. This run found all three planted issues unprompted, including the constructor pattern, which it only reached by actively comparing the new class against three sibling services — evidence of real investigation, not keyword matching."
+  }
+}

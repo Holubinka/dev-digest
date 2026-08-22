@@ -165,6 +165,12 @@ domains_for() { # path -> the Track B roster, or empty when the file is checklis
     # because a non-vendored one would be source like any other — it just no
     # longer names a domain nothing dispatches.
     */contracts/*|*.schema.ts)                                          ;;
+    # `mcp/` was absent here from the day this function was written — not a
+    # deliberate exclusion, just never added when the package was. It has no
+    # Track A gate either (TESTING.md), so a diff confined to `mcp/src/**` used
+    # to route to nobody and gate on nothing: `verdict pass`, zero review, on a
+    # package whose one job is talking to the network on the model's behalf.
+    mcp/src/*)                                                          ;;
     *) return 0 ;;
   esac
   printf '%s' "$TRACK_B"

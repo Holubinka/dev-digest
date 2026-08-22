@@ -12,17 +12,21 @@ copy of a rule is a third thing to drift, and this repo already pays that bill t
 `scope.sh` decides, in its `domains_for` function. **That function is the executable copy; the
 tables below are the readable one. If they disagree, the script is right.**
 
-Routed — the source of the three packages this repo gates, after `skip_reason` and `flag_for`
-have removed dependencies, build output, generated snapshots, binaries, secrets, vendored copies
-and locked skills:
+Routed — source Track B reads, after `skip_reason` and `flag_for` have removed dependencies,
+build output, generated snapshots, binaries, secrets, vendored copies and locked skills:
 
 | A path matching | Routed |
 |---|---|
 | `client/src/**/*.ts(x)`, and `client/**/*.test.ts(x)` outside it | yes |
 | `server/src/**` | yes — **all of it**, not only `modules/`, `adapters/`, `platform/` and `db/` |
 | `reviewer-core/src/**` | yes |
+| `mcp/src/**` | yes — added after `TESTING.md` had already named it as a gap: no Track A gate either (still true, unchanged by this), so before this a diff confined to `mcp/src/**` routed to nobody and gated on nothing |
 | `**/contracts/**`, `**/*.schema.ts` | yes, and nothing in this repo matches: there are no `*.schema.ts` files, and every `contracts/` directory sits under `*/vendor/shared/`, which `flag_for` diverts before routing |
 | everything else | no: `checklist[]` |
+
+Track A still gates only three packages (`gates.md`) — this table now routes a fourth to Track B
+without gating it. A `mcp/`-only diff gets a real security/conventions read and still shows every
+Track A row as `skip`; that asymmetry is real, not a bug in this change.
 
 Both agents get that whole set:
 

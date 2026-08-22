@@ -1,0 +1,47 @@
+{
+  "expectations": [
+    {
+      "text": "The review flags SQL injection risk in the new route's query, specifically the use of sql.raw() with unsanitized user input, at or above high/critical severity.",
+      "passed": true,
+      "evidence": "outputs/findings.md, Finding 1 (graded Critical): \"sql.raw(...) concatenates the unbounded q param straight into raw SQL — the one drizzle escape hatch that bypasses parameter binding. Noted a safe tagged-template alternative already used one file over, in context/repository.ts.\""
+    },
+    {
+      "text": "The review flags the missing workspace/tenant scoping on the PR lookup (broken access control / IDOR) at or above high/critical severity.",
+      "passed": true,
+      "evidence": "outputs/findings.md, Finding 3 (graded High): \"No workspace filter on the PR lookup, unlike every sibling handler in the same file (GET /pulls/:id, resolvePrAndRepo) — cross-workspace PR search once there's more than one workspace.\""
+    },
+    {
+      "text": "The review flags that the GitHub token is being written to the application log in the error handler.",
+      "passed": true,
+      "evidence": "outputs/findings.md, Finding 2 (graded Critical): \"The catch block fetches the live GITHUB_TOKEN and logs it in plaintext — trivial to trigger, since a single stray quote in q already breaks the injected SQL and lands here.\""
+    }
+  ],
+  "summary": {
+    "passed": 3,
+    "failed": 0,
+    "total": 3,
+    "pass_rate": 1.0
+  },
+  "execution_metrics": {
+    "total_tool_calls": 10,
+    "errors_encountered": 0
+  },
+  "timing": {},
+  "claims": [
+    {
+      "claim": "A safe tagged-template alternative to sql.raw already exists elsewhere in the codebase (context/repository.ts)",
+      "type": "factual",
+      "verified": true,
+      "evidence": "Cited by file path in the review; consistent with drizzle-orm's documented sql`` tagged-template parameterization, which the reviewer contrasted with the unsafe sql.raw() used in the fixture."
+    }
+  ],
+  "user_notes_summary": {
+    "uncertainties": [],
+    "needs_review": [],
+    "workarounds": []
+  },
+  "eval_feedback": {
+    "suggestions": [],
+    "overall": "No suggestions — this run genuinely found all three planted issues with correct severity and concrete, checkable evidence, not by coincidence. The two unplanted extras (unvalidated q param, growing the routes.ts db-access debt) are real and additive, not noise."
+  }
+}

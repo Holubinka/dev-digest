@@ -1,0 +1,53 @@
+{
+  "expectations": [
+    {
+      "text": "The review flags that fetch is called directly inside the component instead of through a lib/hooks/ hook.",
+      "passed": true,
+      "evidence": "outputs/report.md, MAJOR, LabelQuickFilter.tsx:22, agent conventions · frontend-architecture §Review checklist: \"Raw fetch(...) is called directly inside the component's useEffect. The checklist explicitly forbids fetch outside lib/hooks/.\""
+    },
+    {
+      "text": "The review flags that query data (pulls) is copied into local useState instead of being derived from the query result during render.",
+      "passed": true,
+      "evidence": "outputs/report.md, MAJOR, LabelQuickFilter.tsx:13, agent conventions · frontend-architecture §Review checklist: \"cachedPulls mirrors the TanStack Query result from usePulls into local useState ... This is exactly the checklist's 'no query data copied into useState' violation — principle 5 says derive during render.\""
+    },
+    {
+      "text": "The review flags that the shareable selectedLabel filter is kept in local component state instead of the URL.",
+      "passed": true,
+      "evidence": "outputs/report.md, MAJOR, LabelQuickFilter.tsx:14, agent conventions · frontend-architecture §Review checklist: \"selectedLabel is a shareable filter kept in local useState rather than the URL ... the sibling page pulls/page.tsx already puts its status filter in ?status= ... the exact pattern this should reuse.\" The one expectation the without_skill run in this same eval failed."
+    }
+  ],
+  "summary": {
+    "passed": 3,
+    "failed": 0,
+    "total": 3,
+    "pass_rate": 1.0
+  },
+  "execution_metrics": {
+    "total_tool_calls": 33,
+    "errors_encountered": 0
+  },
+  "timing": {},
+  "claims": [
+    {
+      "claim": "The security agent's path-traversal finding on the unencoded repoId, though mechanistically real, does not reach exploitability because the component is dead code with no /api proxy and no /admin route to reach",
+      "type": "quality",
+      "verified": true,
+      "evidence": "report.md's verifier note lists the three concrete facts: zero importers (grep across client/src), no /api/* handlers on the Next.js origin, and no /admin route anywhere in the app — all three independently checkable and consistent with the fixture as authored (deliberately left unwired)."
+    },
+    {
+      "claim": "Verdict is pass (0 critical) because no finding here is an OWASP shape or a Track A gate failure",
+      "type": "process",
+      "verified": true,
+      "evidence": "report.md header: \"PR Self-Review — PASS 0 critical · 7 major · 1 minor\"; matches severity.md's rule that a frontend-architecture checklist item caps at major."
+    }
+  ],
+  "user_notes_summary": {
+    "uncertainties": [],
+    "needs_review": [],
+    "workarounds": []
+  },
+  "eval_feedback": {
+    "suggestions": [],
+    "overall": "The clearest result in the set: this run passes the one assertion the without_skill run in the same eval fails, and does so by name-checking the exact sibling pattern (?status= in pulls/page.tsx) a generic reviewer had no reason to look for. Also the first real measurement of §3.4's verifier refuting rather than confirming a critical, and it held up under a second read of the evidence it cited."
+  }
+}

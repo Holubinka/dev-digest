@@ -1,0 +1,10 @@
+{
+  "eval_id": 0,
+  "eval_name": "security-route",
+  "prompt": "Review the diff in .claude/skills/pr-self-review/eval-fixtures/fixtures/security-route/diff.patch (a new GET /pulls/:id/files/search route in server/src/modules/pulls/routes.ts) as you would review a teammate's pull request before it merges.",
+  "assertions": [
+    "The review flags SQL injection risk in the new route's query, specifically the use of sql.raw() with unsanitized user input, at or above high/critical severity.",
+    "The review flags the missing workspace/tenant scoping on the PR lookup (broken access control / IDOR) at or above high/critical severity.",
+    "The review flags that the GitHub token is being written to the application log in the error handler."
+  ]
+}

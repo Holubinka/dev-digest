@@ -1,0 +1,67 @@
+{
+  "expectations": [
+    {
+      "text": "The review flags SQL injection risk in the new route's query, specifically the use of sql.raw() with unsanitized user input, at or above high/critical severity.",
+      "passed": true,
+      "evidence": "outputs/report.md, CRITICAL, routes.ts:384, agent security · security §A05 Injection: \"q comes from req.query with no querystring schema ... interpolated directly into a raw SQL string via sql.raw(...), bypassing Drizzle's parameter binding entirely.\" Independently re-derived by agent conventions at the same line. Verifier: SURVIVED on both."
+    },
+    {
+      "text": "The review flags the missing workspace/tenant scoping on the PR lookup (broken access control / IDOR) at or above high/critical severity.",
+      "passed": true,
+      "evidence": "outputs/report.md, CRITICAL, routes.ts:378, agent security · security §A01 Broken Access Control: \"The PR lookup filters only eq(t.pullRequests.id, req.params.id), no workspaceId check, while every sibling handler in the file scopes by workspace via getContext.\" Independently re-derived by agent conventions. Verifier: SURVIVED on both."
+    },
+    {
+      "text": "The review flags that the GitHub token is being written to the application log in the error handler.",
+      "passed": true,
+      "evidence": "outputs/report.md, CRITICAL, routes.ts:390, agent security · security §A09 Logging and Alerting: \"On any query failure the handler fetches the plaintext GITHUB_TOKEN and passes it into app.log.error({ err, token }, ...).\" Independently re-derived by agent conventions. Verifier: SURVIVED on both."
+    }
+  ],
+  "summary": {
+    "passed": 3,
+    "failed": 0,
+    "total": 3,
+    "pass_rate": 1.0
+  },
+  "execution_metrics": {
+    "total_tool_calls": 85,
+    "errors_encountered": 0
+  },
+  "timing": {},
+  "claims": [
+    {
+      "claim": "The sql.raw() injection is a new instance of a violation pnpm arch cannot see, because the routes.ts -> db/schema edge is already frozen in .dependency-cruiser-known-violations.json",
+      "type": "factual",
+      "verified": true,
+      "evidence": "Confirmed independently while building the fixture: server/src/modules/pulls/repository.ts:82-85's own comment states the no-db-from-routes edge for this exact file is frozen, and `pnpm arch` was run against the fixture before it was committed and passed clean."
+    },
+    {
+      "claim": "Every surviving critical came from Track B, so pushBlocked is false and git push is not stopped",
+      "type": "process",
+      "verified": true,
+      "evidence": "report.md header: \"PR Self-Review — BLOCKED ... Every critical here came from Track B, so this stops gh pr create and not git push\" — matches severity.md's documented rule for Track B criticals."
+    },
+    {
+      "claim": "Two of six adversarial verifier subagents never returned a notification and were self-verified by the orchestrator instead",
+      "type": "process",
+      "verified": true,
+      "evidence": "Disclosed plainly in report.md's trailing process note, naming which two findings and what check was performed in place of the missing subagent reply."
+    }
+  ],
+  "user_notes_summary": {
+    "uncertainties": [],
+    "needs_review": [
+      "2 of 6 adversarial-verifier subagents (step 4) never returned a notification within the run and were self-verified by the orchestrator instead of a dispatched subagent — worth watching if step 4 scales to more criticals per run."
+    ],
+    "workarounds": [
+      "Orchestrator performed the SQL-injection and IDOR verifications itself after the corresponding verifier subagents did not respond."
+    ]
+  },
+  "eval_feedback": {
+    "suggestions": [
+      {
+        "reason": "Every planted issue here was reported twice — once by security, once by conventions, on the same file:line. All three assertions above pass regardless of which copy is cited, so this eval can't currently tell a run that gets both agents right apart from one that gets only one right. A fourth assertion naming a specific agent (e.g. \"the security agent specifically cites A01 Broken Access Control\") would be more discriminating."
+      }
+    ],
+    "overall": "Assertions hold, with strong, specific evidence rather than coincidence. The one real gap: nothing here checks that mode ends up \"full\" and both Track B agents show status ok in agents[] — an incomplete run that still happened to phrase a partial finding correctly would pass all three assertions above."
+  }
+}

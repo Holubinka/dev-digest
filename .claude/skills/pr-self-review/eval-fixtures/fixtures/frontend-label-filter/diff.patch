@@ -1,0 +1,57 @@
+diff --git a/client/src/app/repos/[repoId]/pulls/_components/LabelQuickFilter/LabelQuickFilter.tsx b/client/src/app/repos/[repoId]/pulls/_components/LabelQuickFilter/LabelQuickFilter.tsx
+new file mode 100644
+index 0000000..b57ea94
+--- /dev/null
++++ b/client/src/app/repos/[repoId]/pulls/_components/LabelQuickFilter/LabelQuickFilter.tsx
+@@ -0,0 +1,44 @@
++'use client';
++
++import { useEffect, useState } from 'react';
++import { usePulls } from '@/lib/hooks';
++
++interface LabelQuickFilterProps {
++  repoId: string;
++}
++
++/** Lets a reviewer narrow the pull list to PRs whose title mentions a label. */
++export function LabelQuickFilter({ repoId }: LabelQuickFilterProps) {
++  const { data: pulls } = usePulls(repoId);
++  const [cachedPulls, setCachedPulls] = useState(pulls);
++  const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
++  const [availableLabels, setAvailableLabels] = useState<string[]>([]);
++
++  useEffect(() => {
++    setCachedPulls(pulls);
++  }, [pulls]);
++
++  useEffect(() => {
++    fetch(`/api/repos/${repoId}/labels`)
++      .then((res) => res.json())
++      .then((labels: string[]) => setAvailableLabels(labels));
++  }, [repoId]);
++
++  const visible = selectedLabel
++    ? (cachedPulls ?? []).filter((pr) => pr.title.includes(selectedLabel))
++    : (cachedPulls ?? []);
++
++  return (
++    <div>
++      <select value={selectedLabel ?? ''} onChange={(e) => setSelectedLabel(e.target.value || null)}>
++        <option value="">All labels</option>
++        {availableLabels.map((label) => (
++          <option key={label} value={label}>
++            {label}
++          </option>
++        ))}
++      </select>
++      <span>{visible.length} matching</span>
++    </div>
++  );
++}
+diff --git a/client/src/app/repos/[repoId]/pulls/_components/LabelQuickFilter/index.ts b/client/src/app/repos/[repoId]/pulls/_components/LabelQuickFilter/index.ts
+new file mode 100644
+index 0000000..6bad88c
+--- /dev/null
++++ b/client/src/app/repos/[repoId]/pulls/_components/LabelQuickFilter/index.ts
+@@ -0,0 +1 @@
++export { LabelQuickFilter } from "./LabelQuickFilter";
