@@ -2619,6 +2619,28 @@ backtick or an early `*/`, not at the line it names.
   exactly as predicted from the isolated per-case runs (all 4 must-find recall=1, the dismissed
   must-not-flag one fails because the model does occasionally still produce a version of the
   overclaim) — no surprises, nothing to chase further today.
+  - **Correction, same day, after switching Security Reviewer back to `claude-haiku-4.5` from the
+    `deepseek/deepseek-v4-flash` PR #23 test (it was left on deepseek by accident — 18s for one
+    tiny single-file case, ~4x haiku, and worse citation precision on the same case) and re-running
+    the full batch: `weak-password-hashing-using-sha256-without-salt` and
+    `weak-password-reset-token-generation` failed together, every time, and it was NOT model noise
+    — it was a self-inflicted scoring collision. Both bugs were deliberately planted in the SAME
+    file (`password-reset-service.ts`) when the fixture PR was written, and split into two separate
+    single-expectation `must_find` cases. The model correctly finds BOTH bugs on every run — that
+    is the right behavior — but each case's narrow single-expectation scoring only credits its OWN
+    bug and counts the model's correct discovery of the OTHER one as noise, capping precision at
+    0.25 on both cases regardless of how well the model actually did. **Fixed by merging**: one case
+    (renamed `weak-token-and-weak-hashing-in-password-reset-service`) now carries BOTH expectations
+    in its `expected_output` array; the other was deleted. Precision on the merged case measured
+    0.5 across 3 repeated runs (up from 0.25), recall stayed 1/1/1 — exactly the arithmetic
+    predicts: the twin bug now credits instead of counting as noise. Corpus is 16 cases.
+  - **The general lesson: a `must_find` case built from ONE accepted finding is only fair when
+    nothing else in scope is ALSO a real, findable issue.** A fixture (or a real PR) that
+    deliberately or accidentally packs more than one genuine defect into a single file needs either
+    one multi-expectation case covering all of them, or the defects split across files — never one
+    single-expectation case per defect in a shared file, which punishes exactly the thoroughness a
+    reviewer should be praised for. Worth checking before harvesting future finding-derived cases:
+    does this file have another real, already-accepted finding on it?
 
 ### 2026-08-25 (a 166-file real PR 400'd every reviewer — the callers digest was unbounded)
 

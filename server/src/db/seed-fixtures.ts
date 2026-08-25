@@ -1006,6 +1006,102 @@ const PASSWORD_RESET_TEST_TS = `@@ -0,0 +1,29 @@
 +  });
 +});`;
 
+const ORDER_ROUTES_TS = `@@ -0,0 +1,16 @@
++import type { Request, Response } from 'express';
++import { db } from '../../db';
++
++// Support asked for a quick way to look up any order by id while on a call.
++export async function getOrder(req: Request, res: Response) {
++  const order = await db.orders.findById(req.params.id);
++  if (!order) return res.status(404).end();
++  return res.json(order);
++}
++
++export async function cancelOrder(req: Request, res: Response) {
++  const order = await db.orders.findById(req.params.id);
++  if (!order) return res.status(404).end();
++  await db.orders.update(order.id, { status: 'cancelled', cancelledBy: req.user!.id });
++  return res.json({ status: 'cancelled' });
++}`;
+
+const INVOICE_EXPORT_TS = `@@ -0,0 +1,13 @@
++import { exec } from 'node:child_process';
++import { promisify } from 'node:util';
++import type { Request, Response } from 'express';
++
++const run = promisify(exec);
++
++// Ops wanted invoices as PDF, not just JSON — wkhtmltopdf was already on the box.
++export async function exportInvoice(req: Request, res: Response) {
++  const customerName = req.query.customerName as string;
++  const outPath = \`/tmp/invoice-\${Date.now()}.pdf\`;
++  await run(\`wkhtmltopdf --title "Invoice for \${customerName}" /tmp/invoice.html \${outPath}\`);
++  res.sendFile(outPath);
++}`;
+
+const REDIRECT_ROUTES_TS = `@@ -0,0 +1,7 @@
++import type { Request, Response } from 'express';
++
++// Lets a user finish what they were doing before being sent to log in.
++export function continueAfterLogin(req: Request, res: Response) {
++  const returnTo = (req.query.returnTo as string) ?? '/dashboard';
++  res.redirect(returnTo);
++}`;
+
+const PROFILE_ROUTES_TS = `@@ -0,0 +1,11 @@
++import type { Request, Response } from 'express';
++import { db } from '../../db';
++
++// Lets a user update their own display name, email, and avatar in one call.
++export async function updateProfile(req: Request, res: Response) {
++  const user = await db.users.findById(req.user!.id);
++  if (!user) return res.status(404).end();
++  const updated = { ...user, ...req.body };
++  await db.users.update(user.id, updated);
++  return res.json(updated);
++}`;
+
+const ORDER_ROUTES_TEST_TS = `@@ -0,0 +1,39 @@
++import { getOrder, cancelOrder } from '../src/modules/orders/order-routes';
++import { db } from '../src/db';
++
++jest.mock('../src/db');
++
++function mockReq(overrides: Record<string, unknown> = {}) {
++  return { params: {}, user: { id: 'u1' }, ...overrides } as any;
++}
++
++function mockRes() {
++  const res: any = {};
++  res.status = jest.fn(() => res);
++  res.json = jest.fn(() => res);
++  res.end = jest.fn(() => res);
++  return res;
++}
++
++describe('order routes', () => {
++  it('returns 404 for a missing order', async () => {
++    (db.orders.findById as jest.Mock).mockResolvedValue(null);
++    const res = mockRes();
++    await getOrder(mockReq({ params: { id: 'missing' } }), res);
++    expect(res.status).toHaveBeenCalledWith(404);
++  });
++
++  it('returns the order when found', async () => {
++    (db.orders.findById as jest.Mock).mockResolvedValue({ id: 'o1', userId: 'u1', total: 42 });
++    const res = mockRes();
++    await getOrder(mockReq({ params: { id: 'o1' } }), res);
++    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ id: 'o1' }));
++  });
++
++  it('cancels an order', async () => {
++    (db.orders.findById as jest.Mock).mockResolvedValue({ id: 'o1', userId: 'u1' });
++    const res = mockRes();
++    await cancelOrder(mockReq({ params: { id: 'o1' } }), res);
++    expect(db.orders.update).toHaveBeenCalledWith('o1', expect.objectContaining({ status: 'cancelled' }));
++  });
++});`;
+
 interface FixturePr {
   number: number;
   title: string;
@@ -1161,6 +1257,48 @@ const FIXTURE_PRS: FixturePr[] = [
         additions: 29,
         deletions: 0,
         patch: PASSWORD_RESET_TEST_TS,
+      },
+    ],
+  },
+  {
+    number: 108,
+    title: 'Add order self-service: view, cancel, invoice export, and profile updates',
+    branch: 'feat/order-self-service',
+    body:
+      "Support wanted a fast path for the calls where a customer just needs to see or cancel " +
+      "an order, a printable invoice for the ones who ask for one, a way back to what they " +
+      "were doing after logging back in, and a single call to update a profile instead of " +
+      "three separate PATCHes. Tests cover the happy paths.",
+    files: [
+      {
+        path: 'src/modules/orders/order-routes.ts',
+        additions: 16,
+        deletions: 0,
+        patch: ORDER_ROUTES_TS,
+      },
+      {
+        path: 'src/modules/orders/invoice-export.ts',
+        additions: 13,
+        deletions: 0,
+        patch: INVOICE_EXPORT_TS,
+      },
+      {
+        path: 'src/modules/auth/redirect-routes.ts',
+        additions: 7,
+        deletions: 0,
+        patch: REDIRECT_ROUTES_TS,
+      },
+      {
+        path: 'src/modules/users/profile-routes.ts',
+        additions: 11,
+        deletions: 0,
+        patch: PROFILE_ROUTES_TS,
+      },
+      {
+        path: 'test/order-routes.test.ts',
+        additions: 39,
+        deletions: 0,
+        patch: ORDER_ROUTES_TEST_TS,
       },
     ],
   },
