@@ -13,6 +13,8 @@ const hooks = vi.hoisted(() => ({
   runCase: vi.fn(),
   del: vi.fn(),
   runSetPending: false,
+  runCasePending: false,
+  runCaseVariables: undefined as string | undefined,
   push: vi.fn(),
   replace: vi.fn(),
   search: new URLSearchParams(),
@@ -23,7 +25,11 @@ vi.mock("@/lib/hooks/eval", () => ({
   useEvalAgentDashboard: hooks.useEvalAgentDashboard,
   useEvalCase: hooks.useEvalCase,
   useRunEvalSet: () => ({ mutate: hooks.runSet, isPending: hooks.runSetPending }),
-  useRunEvalCase: () => ({ mutate: hooks.runCase, isPending: false, variables: undefined }),
+  useRunEvalCase: () => ({
+    mutate: hooks.runCase,
+    isPending: hooks.runCasePending,
+    variables: hooks.runCaseVariables,
+  }),
   useDeleteEvalCase: () => ({ mutate: hooks.del, isPending: false }),
   useCreateEvalCase: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useUpdateEvalCase: () => ({ mutateAsync: vi.fn(), isPending: false }),
@@ -119,6 +125,8 @@ function mockAll(over: { set?: Partial<EvalCaseSet> | null; batches?: number } =
 beforeEach(() => {
   vi.clearAllMocks();
   hooks.runSetPending = false;
+  hooks.runCasePending = false;
+  hooks.runCaseVariables = undefined;
   hooks.search = new URLSearchParams();
   mockAll();
 });
@@ -240,6 +248,39 @@ describe("EvalsTab — the case set links out", () => {
     renderTab();
     fireEvent.click(screen.getByLabelText("Run missing-retry-after"));
     expect(hooks.runCase).toHaveBeenCalledWith("c2");
+  });
+
+  /**
+   * `running={runCase.isPending && runCase.variables === row.id}` — a row's
+   * OWN in-flight run silences its OWN button, not every button, so a second
+   * click on the same row cannot double-fire while its first run is still out.
+   */
+  it("does not re-fire a case that is already running", () => {
+    hooks.runCasePending = true;
+    hooks.runCaseVariables = "c2";
+    renderTab();
+    fireEvent.click(screen.getByLabelText("Run missing-retry-after"));
+    expect(hooks.runCase).not.toHaveBeenCalled();
+  });
+
+  it("leaves an unrelated row runnable while a different one is in flight", () => {
+    hooks.runCasePending = true;
+    hooks.runCaseVariables = "c2";
+    renderTab();
+    fireEvent.click(screen.getByLabelText("Run stripe-key-leak"));
+    expect(hooks.runCase).toHaveBeenCalledWith("c1");
+  });
+
+  /**
+   * `busy={runSet.isPending}` — "Run all" holds every row inert for the
+   * batch's whole duration (AC context above this component), not just the
+   * ones with results already showing.
+   */
+  it("holds every row inert while Run eval set is in flight", () => {
+    hooks.runSetPending = true;
+    renderTab();
+    fireEvent.click(screen.getByLabelText("Run stripe-key-leak"));
+    expect(hooks.runCase).not.toHaveBeenCalled();
   });
 });
 

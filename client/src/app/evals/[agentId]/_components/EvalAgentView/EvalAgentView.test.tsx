@@ -160,6 +160,37 @@ describe("EvalAgentView — Compare is enabled at exactly two selected rows", ()
 });
 
 /**
+ * `disabled={runSet.isPending || (dashboard?.cases_total ?? 0) === 0}` — the
+ * button reads two independent reasons to be inert through one prop, and a
+ * change to either half is invisible to `tsc`. This covers the half that is
+ * not "a run is already in flight": an agent with no eval cases at all has
+ * nothing for `useRunEvalSet` to run, so the button must not fire it.
+ */
+describe("EvalAgentView — Run eval is disabled when the agent has no cases", () => {
+  it("is disabled at cases_total: 0", () => {
+    const withoutCases = dashboard(BATCHES, null);
+    withoutCases.dashboard.cases_total = 0;
+    hooks.useEvalAgentDashboard.mockReturnValue({
+      data: withoutCases,
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    renderView();
+    const btn = screen.getByRole("button", { name: "Run eval" });
+    expect(btn).toBeDisabled();
+    fireEvent.click(btn);
+    expect(hooks.runSet, "a disabled control must not start a batch").not.toHaveBeenCalled();
+  });
+
+  it("is enabled once the agent has at least one case", () => {
+    mockDash(BATCHES); // cases_total: 20, from the shared fixture
+    renderView();
+    expect(screen.getByRole("button", { name: "Run eval" })).toBeEnabled();
+  });
+});
+
+/**
  * AC-56. One batch has nothing to be a delta against, and a banner about a
  * change nobody can point at is worse than no banner.
  */
