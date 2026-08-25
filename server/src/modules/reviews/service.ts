@@ -177,7 +177,7 @@ export class ReviewService {
     findingId: string,
     action: FindingActionKind,
   ): Promise<{ finding: ReviewDtoFinding }> {
-    return actOnFindingImpl(this.repo, workspaceId, findingId, action);
+    return actOnFindingImpl(this.repo, this.container.evalRepo, workspaceId, findingId, action);
   }
 
   // ===========================================================================

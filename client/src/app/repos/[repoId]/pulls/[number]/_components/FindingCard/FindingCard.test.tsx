@@ -136,25 +136,25 @@ describe("FindingCard card style — no border shorthand", () => {
    * per-side.
    */
   it("sets no border shorthand alongside the per-side longhands", () => {
-    const style = s.card(true, "var(--crit)", false);
+    const style = s.card(true, "var(--crit)");
     expect(style).not.toHaveProperty("border");
     expect(style).not.toHaveProperty("borderColor");
     expect(style).not.toHaveProperty("borderWidth");
   });
 
   it("keeps the severity accent on the left edge in both focus states", () => {
-    expect(s.card(true, "var(--crit)", false).borderLeftColor).toBe("var(--crit)");
-    expect(s.card(false, "var(--crit)", false).borderLeftColor).toBe("var(--crit)");
+    expect(s.card(true, "var(--crit)").borderLeftColor).toBe("var(--crit)");
+    expect(s.card(false, "var(--crit)").borderLeftColor).toBe("var(--crit)");
   });
 
   it("paints the other three sides with the focus colour only when focused", () => {
-    const focused = s.card(true, "var(--crit)", false);
+    const focused = s.card(true, "var(--crit)");
     expect([focused.borderTopColor, focused.borderRightColor, focused.borderBottomColor]).toEqual([
       "var(--crit)",
       "var(--crit)",
       "var(--crit)",
     ]);
-    const idle = s.card(false, "var(--crit)", false);
+    const idle = s.card(false, "var(--crit)");
     expect([idle.borderTopColor, idle.borderRightColor, idle.borderBottomColor]).toEqual([
       "var(--border)",
       "var(--border)",
@@ -163,8 +163,33 @@ describe("FindingCard card style — no border shorthand", () => {
   });
 
   it("keeps the left edge thicker than the other three", () => {
-    const style = s.card(false, "var(--crit)", false);
+    const style = s.card(false, "var(--crit)");
     expect(style.borderLeftWidth).toBe(3);
     expect(style.borderTopWidth).toBe(1);
+  });
+});
+
+/**
+ * A decided finding used to dim the WHOLE card via `s.card`'s `opacity`,
+ * Accept/Dismiss included — nothing there is actually disabled (a decision
+ * can switch accept ↔ dismiss any number of times), but a faded button reads
+ * as an inert one. The fade now lives on `header`/`contentFade` only; `card`
+ * carries no opacity at all, and `actions` is a plain, unparameterized object
+ * that no `muted` value can reach.
+ */
+describe("FindingCard — a decided finding fades its text, not its buttons", () => {
+  it("card carries no opacity — the fade moved off the whole-card wrapper", () => {
+    expect(s.card(false, "var(--crit)")).not.toHaveProperty("opacity");
+  });
+
+  it("header and contentFade dim only when muted", () => {
+    expect(s.header(true).opacity).toBe(0.6);
+    expect(s.header(false).opacity).toBe(1);
+    expect(s.contentFade(true).opacity).toBe(0.6);
+    expect(s.contentFade(false).opacity).toBe(1);
+  });
+
+  it("actions carries no opacity at all — no muted parameter can dim it", () => {
+    expect(s.actions).not.toHaveProperty("opacity");
   });
 });

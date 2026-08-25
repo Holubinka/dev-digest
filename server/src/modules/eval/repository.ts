@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, inArray, like, sql } from 'drizzle-orm';
+import type { EvalExpectation } from '@devdigest/shared';
 import type { Db } from '../../db/client.js';
 import * as t from '../../db/schema.js';
 
@@ -198,6 +199,32 @@ export class EvalRepository {
       .orderBy(asc(t.evalCases.name))
       .limit(1);
     return row;
+  }
+
+  /**
+   * Re-derives a finding-derived case's polarity when its source finding's
+   * accept/dismiss decision changes AFTER the case was made (accepted →
+   * must_find, dismissed → must_not_flag — the same rule `caseFromFinding`
+   * applies at creation). A no-op when no case exists for this finding —
+   * nothing to refuse and nothing to fetch, same shape as AC-10's repeat-click
+   * handling. Every expectation on the case gets the new polarity: a
+   * finding-derived case carries exactly one, but mapping the whole array is
+   * no more expensive and stays correct if that ever changes.
+   */
+  async syncPolarityByFindingId(
+    workspaceId: string,
+    findingId: string,
+    decision: 'accepted' | 'dismissed',
+  ): Promise<void> {
+    const existing = await this.caseByFindingId(workspaceId, findingId);
+    if (!existing) return;
+    const expectations = (existing.expectedOutput ?? []) as EvalExpectation[];
+    if (expectations.length === 0) return;
+    const polarity = decision === 'accepted' ? 'must_find' : 'must_not_flag';
+    if (expectations.every((e) => e.polarity === polarity)) return;
+    await this.updateCase(workspaceId, existing.id, {
+      expectedOutput: expectations.map((e) => ({ ...e, polarity })),
+    });
   }
 
   async insertCase(values: InsertEvalCase): Promise<EvalCaseDbRow> {

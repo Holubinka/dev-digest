@@ -144,6 +144,7 @@ export class Container {
   private _agentsRepo?: AgentsRepository;
   private _skillsRepo?: SkillsRepository;
   private _reviewRepo?: ReviewRepository;
+  private _evalRepo?: EvalRepository;
   private _pullsRepo?: PullsRepository;
   private _settingsRepo?: SettingsRepository;
   private _repoIntel?: RepoIntel;
@@ -204,6 +205,17 @@ export class Container {
 
   get reviewRepo(): ReviewRepository {
     return (this._reviewRepo ??= new ReviewRepository(this.db));
+  }
+
+  /**
+   * Exposed so `modules/reviews` can re-sync a finding-derived eval case's
+   * polarity when the finding's accept/dismiss decision changes after the
+   * case was made — the cross-module edge `no-cross-module` requires going
+   * through the container for (see `evalService` below, the mirror of this
+   * for the opposite direction: `EvalContainer.reviewRepo`).
+   */
+  get evalRepo(): EvalRepository {
+    return (this._evalRepo ??= new EvalRepository(this.db));
   }
 
   /**

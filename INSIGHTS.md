@@ -2013,6 +2013,61 @@ to `Edit` — the gate was right, and the script was the way around it.
 
 ## Session Notes
 
+### 2026-08-25 (a finding-derived eval case used to freeze its polarity forever; now it re-syncs)
+
+Two real bugs found from ordinary usage, not from an investigation — one client, one
+cross-module server, reported here together because the second was found by the user asking
+about the first's consequence.
+
+- **Client:** `FindingCard`'s Accept/Dismiss buttons were never actually `disabled` once a
+  finding was decided — the whole card's `opacity: muted ? 0.6 : 1`
+  (`client/src/app/repos/[repoId]/pulls/[number]/_components/FindingCard/styles.ts`) just made
+  them LOOK inert, and a decision could always be flipped (accept ↔ dismiss, confirmed by calling
+  `POST /findings/:id/accept` on an already-accepted finding and then `/dismiss` on it directly —
+  both succeed). Fixed by moving the fade off the whole-card wrapper onto `header`/`contentFade`
+  only, leaving `actions` at full opacity always. `FindingCard.test.tsx` now pins `s.card` to carry
+  no `opacity` property at all, so a future edit can't quietly move the fade back onto the whole
+  card.
+- **Server, found by the user asking "shouldn't re-deciding also affect the eval case built from
+  this finding?":** it didn't. `EvalService.caseFromFinding`'s polarity (SPEC-05 D12) was a
+  ONE-TIME snapshot — AC-10's repeat-click handling (`EvalRepository.caseByFindingId`) just
+  reopens the existing case unchanged even after the underlying finding's decision flips later, so
+  a case could go stale (`must_find` for a now-dismissed finding, or vice versa) with nothing
+  surfacing it. This was deliberate as far as it went — D11 forbids a foreign key specifically so
+  the case survives the finding/review/PR being deleted — but nothing in D11 argued for freezing
+  polarity too; that was just AC-10 never being asked to look again.
+- **Fix, user's explicit choice (of three offered — freeze as-is / auto-sync / UI-flag-only
+  without syncing): auto-sync.** `EvalRepository.syncPolarityByFindingId(workspaceId, findingId,
+  decision)` (`server/src/modules/eval/repository.ts`) rewrites every expectation on the finding's
+  case to the new polarity, no-ops when no case exists (mirrors AC-10's own "nothing to refuse,
+  nothing to fetch"), and no-ops again when the polarity already matches (skips a redundant write
+  on a same-decision re-click). `server/src/modules/reviews/findings.ts`'s `actOnFinding` calls it
+  after every accept/dismiss, **best-effort** (`.catch(() => undefined)`) — a sync failure must not
+  fail the decision itself, same discipline `server/INSIGHTS.md` already records for
+  `buildCallersDigest`'s enrichment failures never failing a review.
+- **The cross-module wiring is the actual point worth remembering — it generalises past this one
+  feature.** `modules/reviews` needed to reach `modules/eval`, and `no-cross-module` forbids the
+  direct import either way. `modules/eval` already had the answer for the OPPOSITE direction:
+  `EvalContainer` in `modules/eval/types.ts` states the narrowest structural shape it needs from
+  `reviewRepo`, and `platform/container.ts` satisfies it by construction (a class import stays out
+  of the port; the concrete type is named only in the composition root). Mirrored that exactly for
+  this direction — a new `EvalSync` interface declared IN `modules/reviews/findings.ts` (one
+  method, `syncPolarityByFindingId`), a new `container.evalRepo` getter (`platform/container.ts`,
+  same lazy-singleton shape as `reviewRepo`), and `ReviewService.actOnFinding` passes
+  `this.container.evalRepo` through — no import of `modules/eval/*` from inside `modules/reviews/*`
+  anywhere, `pnpm arch` confirms zero new violations. **When module A needs one method from module
+  B, the port lives in the CALLER's file as the narrowest shape it needs, not as a re-export of the
+  callee's type** — `EvalContainer.reviewRepo` and this new `EvalSync` are the same pattern in both
+  directions, and the next cross-module need should copy this rather than re-derive it.
+- Verified live against a real finding/case pair from the `devdigest/skills-lab` PR #107 harvest
+  (`server/INSIGHTS.md`, 2026-08-25 fixture-PR entry), not just the new unit test: dismissed an
+  accepted finding via the API, confirmed its case's `expected_output[0].polarity` flipped
+  `must_find` → `must_not_flag`, re-accepted it, confirmed it flipped back.
+  `server/test/finding-action-eval-sync.test.ts` (4 tests, hermetic, stubbed
+  `ReviewRepository`/`EvalSync`) and `FindingCard.test.tsx`'s 3 new opacity tests both proven to
+  fail on the pre-fix code first. Full suites: server 1333 tests green, client 1098 tests green,
+  `pnpm typecheck` and `pnpm arch` both clean in `server/`.
+
 ### 2026-08-17
 
 - `specs/SPEC-03-onboarding-tour.md` written and approved: 94 EARS criteria, 24 decisions, eight
