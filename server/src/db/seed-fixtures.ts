@@ -902,6 +902,110 @@ const PNPM_LOCK = `@@ -812,3 +812,3 @@
 +    resolution: {integrity: sha512-VOxJmCcRxKGYzX2ItXwGKGjvvDlbjaP7dgsMOAIn0kfxCLQBK1qXpJa5mMOb0v4pcKPBW7iQTaZfNCZ3sO5FCA==}
      dev: false`;
 
+const PASSWORD_RESET_SERVICE_TS = `@@ -0,0 +1,33 @@
++import { createHash } from 'node:crypto';
++import { db } from '../../db';
++import { sendEmail } from '../notifications/mailer';
++
++const RESET_TOKEN_TTL_MS = 15 * 60 * 1000;
++
++/** Starts a reset: mint a token, store it, email it. Silent on an unknown address. */
++export async function requestPasswordReset(email: string): Promise<void> {
++  const user = await db.users.findByEmail(email);
++  if (!user) return;
++
++  const token = Date.now().toString(36) + Math.random().toString(36).slice(2);
++  await db.passwordResets.insert({
++    userId: user.id,
++    token,
++    expiresAt: new Date(Date.now() + RESET_TOKEN_TTL_MS),
++  });
++
++  await sendEmail(user.email, 'Reset your password', \`Use this code: \${token}\`);
++}
++
++/** Consumes a reset token and sets the new password. */
++export async function completePasswordReset(token: string, newPassword: string): Promise<boolean> {
++  const reset = await db.passwordResets.findByToken(token);
++  if (!reset || reset.expiresAt < new Date()) return false;
++
++  await db.users.update(reset.userId, { passwordHash: hashPassword(newPassword) });
++  return true;
++}
++
++function hashPassword(password: string): string {
++  return createHash('sha256').update(password).digest('hex');
++}`;
+
+const PASSWORD_RESET_ROUTES_TS = `@@ -0,0 +1,21 @@
++import type { Request, Response } from 'express';
++import { db } from '../../db';
++import { requestPasswordReset, completePasswordReset } from './password-reset-service';
++
++export async function postPasswordReset(req: Request, res: Response) {
++  const { email } = req.body;
++  await requestPasswordReset(email);
++  return res.status(202).end();
++}
++
++export async function postPasswordResetComplete(req: Request, res: Response) {
++  const { token, newPassword } = req.body;
++  const ok = await completePasswordReset(token, newPassword);
++  return res.status(ok ? 200 : 400).json({ ok });
++}
++
++// Support asked for a way to look up a pending reset by id for troubleshooting.
++export async function getPasswordReset(req: Request, res: Response) {
++  const reset = await db.passwordResets.findById(req.params.id);
++  return res.status(reset ? 200 : 404).json(reset);
++}`;
+
+const EXPORT_AUDIT_TS = `@@ -0,0 +1,13 @@
++import { readFile } from 'node:fs/promises';
++import { join } from 'node:path';
++import type { Request, Response } from 'express';
++
++const AUDIT_LOG_DIR = '/var/log/payments-api/audit';
++
++/** Ops asked for a way to pull one day's audit log without shelling into the box. */
++export async function getAuditExport(req: Request, res: Response) {
++  const filename = req.query.filename as string;
++  const filePath = join(AUDIT_LOG_DIR, filename);
++  const content = await readFile(filePath, 'utf8');
++  res.type('text/plain').send(content);
++}`;
+
+const PASSWORD_RESET_TEST_TS = `@@ -0,0 +1,29 @@
++import { requestPasswordReset, completePasswordReset } from '../src/modules/auth/password-reset-service';
++import { db } from '../src/db';
++import { sendEmail } from '../src/modules/notifications/mailer';
++
++jest.mock('../src/db');
++jest.mock('../src/modules/notifications/mailer');
++
++describe('password reset', () => {
++  it('does nothing for an unknown email', async () => {
++    (db.users.findByEmail as jest.Mock).mockResolvedValue(null);
++    await requestPasswordReset('nobody@example.com');
++    expect(sendEmail).not.toHaveBeenCalled();
++  });
++
++  it('emails a token for a known user', async () => {
++    (db.users.findByEmail as jest.Mock).mockResolvedValue({ id: 'u1', email: 'a@example.com' });
++    await requestPasswordReset('a@example.com');
++    expect(sendEmail).toHaveBeenCalled();
++  });
++
++  it('rejects an expired token', async () => {
++    (db.passwordResets.findByToken as jest.Mock).mockResolvedValue({
++      userId: 'u1',
++      expiresAt: new Date(Date.now() - 1000),
++    });
++    const ok = await completePasswordReset('stale', 'newpass123');
++    expect(ok).toBe(false);
++  });
++});`;
+
 interface FixturePr {
   number: number;
   title: string;
@@ -1022,6 +1126,42 @@ const FIXTURE_PRS: FixturePr[] = [
       { path: 'src/cart/checkout.ts', additions: 6, deletions: 1, patch: CART_CHECKOUT_TS },
       { path: 'src/routes/index.ts', additions: 2, deletions: 0, patch: ROUTES_INDEX_TS },
       { path: 'pnpm-lock.yaml', additions: 1, deletions: 1, patch: PNPM_LOCK },
+    ],
+  },
+  {
+    number: 107,
+    title: 'Add self-service password reset',
+    branch: 'feat/password-reset',
+    body:
+      "Support's been resetting passwords by hand over Slack. This adds a normal " +
+      'email-a-token flow, plus a lookup endpoint support can use to check a ' +
+      "pending reset without paging an engineer, and an audit-export route ops " +
+      'asked for while they were in the area. Tests cover the happy paths.',
+    files: [
+      {
+        path: 'src/modules/auth/password-reset-service.ts',
+        additions: 33,
+        deletions: 0,
+        patch: PASSWORD_RESET_SERVICE_TS,
+      },
+      {
+        path: 'src/modules/auth/password-reset-routes.ts',
+        additions: 21,
+        deletions: 0,
+        patch: PASSWORD_RESET_ROUTES_TS,
+      },
+      {
+        path: 'src/modules/admin/export-audit.ts',
+        additions: 13,
+        deletions: 0,
+        patch: EXPORT_AUDIT_TS,
+      },
+      {
+        path: 'test/password-reset.test.ts',
+        additions: 29,
+        deletions: 0,
+        patch: PASSWORD_RESET_TEST_TS,
+      },
     ],
   },
 ];

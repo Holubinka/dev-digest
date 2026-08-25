@@ -2586,6 +2586,40 @@ backtick or an early `*/`, not at the line it names.
   do). All `server/scratch-*` diagnostic scripts deleted after use, including the two written this
   round (`scratch-switch-model.py`, plus the isolation scripts from the entry above).
 
+### 2026-08-25 (a fresh skills-lab fixture PR, harvested for 5 new Security Reviewer cases)
+
+- Added PR #107 ("Add self-service password reset") to `devdigest/skills-lab` — 4 new files,
+  `seed-fixtures.ts`'s existing `FIXTURE_PRS` pattern (hand-written `pr_files.patch` text, no real
+  clone needed, `diff-loader`'s fallback reconstructs the diff). 4 bug classes deliberately absent
+  from the existing 12-case corpus: path traversal (`join(AUDIT_LOG_DIR, filename)` with an
+  unsanitized query param — no containment check at all, unlike `SimpleGitClient.writeTarget`'s
+  careful version), weak password hashing (unsalted single-round SHA256), a predictable reset token
+  (`Date.now().toString(36) + Math.random()...`), and an unauthenticated lookup endpoint that leaks
+  a live reset token by id. Line counts for each hunk were generated from real source files by
+  script rather than hand-counted, specifically to not repeat the citation-miscounting mistake this
+  file already has two entries about.
+- Ran Security Reviewer (`claude-haiku-4.5`, live) against it for real — per this fixture set's own
+  rule, no finding is ever seeded, only real model output gets curated. It found all 4 planted bugs
+  cleanly cited, plus a 5th finding worth keeping for a different reason: "Missing authentication on
+  password reset endpoints" lumped the two INTENTIONALLY-public endpoints
+  (`postPasswordReset`/`postPasswordResetComplete` — a self-service reset flow is public by design)
+  together with the one genuinely unauthenticated endpoint it also flagged separately and correctly.
+  This is a live instance of the same overclaim-by-association shape documented earlier this file
+  (the "second finding padding" tendency) — accepted the 4 correct findings, DISMISSED this one as a
+  real, considered call (not fabricated — the model's own suggestion text half-contradicts its own
+  finding, saying `postPasswordResetComplete` needs "no authentication... it's a public endpoint").
+  All 5 turned into eval cases via `POST /findings/:id/eval-case`, matching D11.
+- Each new case's `input_diff` is correctly scoped to just the one file its finding is about (not
+  the whole 4-file PR), but recall-1/precision-0.5ish is still the norm on the 4 must-find cases:
+  `export-audit.ts` alone, isolated, still gets a second, defensible finding ("no auth on an admin
+  export route") most runs — a real secondary concern I did not plant, not a scoring bug. Left as
+  realistic noise rather than narrowing further; TP recall never drops on any of the 4 across
+  repeated runs, which is what actually matters for these cases.
+- Corpus is now 17 cases. Full batch after adding them: 10/17 pass, and the 5 new ones behave
+  exactly as predicted from the isolated per-case runs (all 4 must-find recall=1, the dismissed
+  must-not-flag one fails because the model does occasionally still produce a version of the
+  overclaim) — no surprises, nothing to chase further today.
+
 ### 2026-08-23 (L06 eval pipeline — server, plan 16 package P2)
 
 - Built `modules/eval/` (repository, scoring, diff-fragment, batch-executor, service, routes) plus
