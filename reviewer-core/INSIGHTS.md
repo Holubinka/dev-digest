@@ -253,6 +253,44 @@ fully silent on roughly 1 run in 3-4 regardless of any fix made this session —
 for the first time all session, and this fix applies to every reviewing agent in production, not
 just the one whose eval set happened to surface it.
 
+### `OpenRouter structured output failed schema validation` throws away a genuinely correct finding one attempt short of valid
+
+**Symptom.** Security Reviewer's `ssrf-in-webhook-forwarding…` eval case, previously stable, started
+failing outright — not with a wrong finding, `actualOutput` was `{"error": "OpenRouter structured
+output failed schema validation for Review"}`. 100% reproducing on `claude-haiku-4.5` (3/3 direct
+eval-case runs, plus the batch that first surfaced it).
+
+**Cause.** `parseWithRepair` (`src/llm/structured.ts`) validates raw model text against the Zod
+schema and reprompts on failure; `openrouter.ts`'s loop runs `maxRetries + 1` attempts before giving
+up. Instrumented the loop directly (temporary `console.log` in the parse-attempt branch, gated on an
+env var, removed after) to see what the model actually sent on each attempt for this case:
+
+- Attempt 1: a full markdown security-review report — headers, bullet lists, a "Verdict" section —
+  not JSON at all. Ignored the structured-output contract entirely.
+- Attempt 2 (after reprompt): valid JSON, and the finding itself was CORRECT — right file, right
+  line range, right quote, right rationale (SSRF via `req.body.callback_url` reaching `fetch`
+  unvalidated) — but missing 4 required fields (`score` top-level; `id`, `category`, `confidence` on
+  the finding).
+- Attempt 3 (after another reprompt): added the missing fields, but `category` was a free-text label
+  ("A10 Server-Side Request Forgery") instead of the `bug|security|perf|style|test` enum, and
+  `confidence` was the string `"high"` instead of a number.
+
+Visibly converging — each attempt fixed the previous one's errors and introduced no new ones — and
+`DEFAULT_REVIEW_MAX_RETRIES` (`src/review/run.ts`) was `2`, giving exactly 3 attempts. The loop ran
+out one attempt before it would very likely have succeeded.
+
+**Fix.** Raised `DEFAULT_REVIEW_MAX_RETRIES` to `3` (4 total attempts). Re-ran the same eval case 3
+times after the change: 3/3 clean (`recall: 1, precision: 1, pass: true`), where it had been 3/3
+failed before. No test pinned the old value. Applies to every reviewing agent, the same way the
+grounding and quote-`.describe()` fixes above did — this was never Security-Reviewer-specific or
+SSRF-specific, just the case that happened to sample the failure first.
+
+**Open question, not chased further today:** WHY this model produces a full prose report on attempt
+1 instead of respecting `response_format` at all is unexplained — `require_parameters: true` should
+make OpenRouter refuse the request outright with a non-compliant provider rather than let one
+through silently. Worth a look if this pattern resurfaces on a case that wasn't fixed by one extra
+retry.
+
 ## Session Notes
 
 ### 2026-08-03
