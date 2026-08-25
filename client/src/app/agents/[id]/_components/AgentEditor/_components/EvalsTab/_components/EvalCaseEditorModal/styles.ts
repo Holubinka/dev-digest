@@ -42,6 +42,7 @@ export const s = {
     fontSize: 13,
     color: "var(--text-primary)",
     padding: "3px 0",
+    overflowWrap: "anywhere",
   } satisfies CSSProperties,
   expectedHead: {
     display: "flex",
