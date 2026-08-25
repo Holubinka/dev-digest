@@ -124,6 +124,24 @@ describe("FindingCard — Turn into eval case", () => {
     fireEvent.click(btn);
     expect(onTurn, "a disabled control must not create a case").not.toHaveBeenCalled();
   });
+
+  it("shows the busy label and is inert while the case is being created", () => {
+    const onTurn = vi.fn();
+    renderWithIntl(
+      <FindingCard
+        f={ACCEPTED}
+        defaultExpanded
+        onAction={() => {}}
+        onTurnIntoEvalCase={onTurn}
+        evalCasePending
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Turn into eval case" })).not.toBeInTheDocument();
+    const btn = screen.getByRole("button", { name: "Creating eval case…" });
+    expect(btn).toBeDisabled();
+    fireEvent.click(btn);
+    expect(onTurn, "a busy control must not fire a second create").not.toHaveBeenCalled();
+  });
 });
 
 describe("FindingCard card style — no border shorthand", () => {

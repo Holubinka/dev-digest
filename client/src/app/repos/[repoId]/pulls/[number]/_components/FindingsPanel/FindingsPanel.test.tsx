@@ -122,6 +122,41 @@ describe("FindingsPanel (smoke)", () => {
 });
 
 /**
+ * Both outcomes of `useEvalCaseFromFinding` (a brand-new case, and AC-10's
+ * repeat-click reopening an existing one) land on the same place — the owning
+ * agent's Evals tab, with the case open — because `turnIntoEvalCase`'s
+ * `onSuccess` navigates on `case.owner_id`/`case.id` alone, never on
+ * `created`. jsdom has no App Router, so `next/navigation` is mocked above.
+ */
+describe("FindingsPanel — turn into eval case navigates on success", () => {
+  const DECIDED: FindingRecord = {
+    ...FINDINGS[0]!,
+    id: "f-decided",
+    accepted_at: "2026-05-29T09:14:00.000Z",
+  };
+
+  it("navigates to the owning agent's Evals tab with the case open", () => {
+    renderWithIntl(<FindingsPanel findings={[DECIDED]} prId="pr1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Turn into eval case" }));
+
+    expect(evalCase.mutate).toHaveBeenCalledWith(
+      "f-decided",
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+    const { onSuccess } = evalCase.mutate.mock.calls[0]![1];
+    onSuccess({ case: { id: "case-1", owner_id: "agent-9" } });
+
+    expect(nav.push).toHaveBeenCalledWith("/agents/agent-9?tab=evals&case=case-1");
+  });
+
+  it("does not navigate before the mutation resolves", () => {
+    renderWithIntl(<FindingsPanel findings={[DECIDED]} prId="pr1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Turn into eval case" }));
+    expect(nav.push).not.toHaveBeenCalled();
+  });
+});
+
+/**
  * Arriving from a Smart Diff severity chip: the diff tab hands a finding id up
  * to the page, which puts it in `?finding=` and switches to Agent runs. This is
  * the far end of that trip.
