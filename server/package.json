@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "verify:l03": "vitest run test/smart-diff.test.ts",
+    "verify:l06": "vitest run test/eval-scoring.test.ts test/eval-fragment.test.ts test/eval-batch.test.ts",
     "arch": "depcruise src --config --ignore-known",
     "arch:strict": "depcruise src --config",
     "arch:baseline": "depcruise-baseline src",
