@@ -2620,6 +2620,42 @@ backtick or an early `*/`, not at the line it names.
   must-not-flag one fails because the model does occasionally still produce a version of the
   overclaim) — no surprises, nothing to chase further today.
 
+### 2026-08-25 (a 166-file real PR 400'd every reviewer — the callers digest was unbounded)
+
+- Running any agent on a genuinely large real PR (`Holubinka/dev-digest` #23, 166 files, 20545
+  insertions — the branch this whole session's own work landed on) failed outright:
+  `400 This endpoint's maximum context length is 200000 tokens. However, you requested about
+  275558 tokens`. `reviewer-core`'s map-reduce mode exists exactly for this (chunks per file once a
+  diff exceeds `DEFAULT_MAP_THRESHOLD_LINES`), but **all 5 built-in agents were seeded with
+  `strategy: 'single-pass'` hardcoded**, so map-reduce never engaged for any of them regardless of
+  diff size — fixed by switching Security Reviewer to `strategy: 'auto'` via `PUT /agents/:id`
+  (`agents.strategy` was already a plain settable column; nothing to build).
+- Auto-mode still failed the same way once map-reduce was engaged, at almost the same size
+  (275246 tokens) — meaning the diff-per-chunk was NOT what was blowing the budget.
+  `buildCallersDigest` (`modules/reviews/run-executor.ts`) is the actual cause: it queries
+  `getCallerSignatures(repoId, changedFiles, 10)` with the diff's WHOLE file list (all 166), is
+  built ONCE for the whole diff, and gets embedded UNCHANGED into every map-reduce chunk's prompt —
+  so a 166-file PR pays the full 166-file callers digest on every single one of its 166 per-file
+  calls. `getCallerSignatures`'s own `limit` param only bounds callers PER SYMBOL
+  (`MAX_CALLERS_PER_SYMBOL`); nothing bounded the FILE COUNT feeding it. The doc comment on
+  `buildCallersDigest` claimed the section "stays under ~600 tokens even on heavy PRs" — that math
+  only worked if a PR had one symbol per file, and was never actually a real bound.
+- **Fix:** `MAX_CALLERS_DIGEST_FILES = 40` caps `changedFiles` before it reaches
+  `getCallerSignatures`; the cut is disclosed in the run's Live Log summary line ("N changed file(s)
+  past the 40-file cap were not queried"), matching this repo's existing disclosure convention
+  (`env_vars_truncated`, `package_scan.found`/`shown`). Re-ran the actual PR #23 review after the
+  fix: no more 400, though it then hit two DIFFERENT one-off failures near the end of its ~166-call
+  map-reduce run (a 600s per-call timeout, then a structured-output schema-validation failure on a
+  separate attempt) — each is its own finding (the schema-validation one is
+  `reviewer-core/INSIGHTS.md`'s `DEFAULT_REVIEW_MAX_RETRIES` entry, same day). Succeeded outright on
+  `deepseek/deepseek-v4-flash` (34 min, $0.155, 13 findings, 0 failures across all 166 calls).
+- **The general shape, worth remembering past this one fix:** a value built ONCE per diff and reused
+  unchanged across every map-reduce chunk pays its full cost on EVERY chunk, not once per diff — the
+  cost model for "is this digest cheap enough to attach" has to account for chunk count, not just
+  digest size. Any other per-diff enrichment added to the map-reduce path later (repo map, file
+  rank) should be checked against the same question before assuming a fixed budget is "obviously"
+  fine.
+
 ### 2026-08-23 (L06 eval pipeline — server, plan 16 package P2)
 
 - Built `modules/eval/` (repository, scoring, diff-fragment, batch-executor, service, routes) plus
