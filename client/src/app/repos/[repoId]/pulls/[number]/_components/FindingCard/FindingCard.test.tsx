@@ -77,6 +77,55 @@ describe("FindingCard (smoke, both themes)", () => {
   });
 });
 
+/**
+ * SPEC-05 AC-1 / AC-2 / AC-3. The decision IS the expectation's polarity, so a
+ * finding nobody has judged has nothing to make a case out of — and the button
+ * says so instead of disappearing. The reason has to be in the ACCESSIBLE NAME,
+ * not only in a tooltip: `title` alone is invisible to a screen reader and to
+ * anyone on a touch device, which is most of the people the rule protects.
+ */
+describe("FindingCard — Turn into eval case", () => {
+  const ACCEPTED = { ...FINDING, accepted_at: "2026-05-29T09:14:00.000Z" };
+  const DISMISSED = { ...FINDING, dismissed_at: "2026-05-29T09:14:00.000Z" };
+  const REASON =
+    "Turn into eval case — accept or dismiss this finding first, because the decision is what makes the expectation must-find or must-not-flag";
+
+  it("is enabled on an ACCEPTED finding and reports the click", () => {
+    const onTurn = vi.fn();
+    renderWithIntl(
+      <FindingCard f={ACCEPTED} defaultExpanded onAction={() => {}} onTurnIntoEvalCase={onTurn} />,
+    );
+    const btn = screen.getByRole("button", { name: "Turn into eval case" });
+    expect(btn).toBeEnabled();
+    fireEvent.click(btn);
+    expect(onTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it("is enabled on a DISMISSED finding — noise is asserted as precisely as usefulness", () => {
+    const onTurn = vi.fn();
+    renderWithIntl(
+      <FindingCard f={DISMISSED} defaultExpanded onAction={() => {}} onTurnIntoEvalCase={onTurn} />,
+    );
+    const btn = screen.getByRole("button", { name: "Turn into eval case" });
+    expect(btn).toBeEnabled();
+    fireEvent.click(btn);
+    expect(onTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it("is disabled with the reason in its accessible name when the finding is undecided", () => {
+    const onTurn = vi.fn();
+    renderWithIntl(
+      <FindingCard f={FINDING} defaultExpanded onAction={() => {}} onTurnIntoEvalCase={onTurn} />,
+    );
+    // Queried BY the reason: the assertion fails both when the button is
+    // hidden and when it is inert without saying why.
+    const btn = screen.getByRole("button", { name: REASON });
+    expect(btn).toBeDisabled();
+    fireEvent.click(btn);
+    expect(onTurn, "a disabled control must not create a case").not.toHaveBeenCalled();
+  });
+});
+
 describe("FindingCard card style — no border shorthand", () => {
   /**
    * React warns "Updating a style property during rerender (borderColor) when a

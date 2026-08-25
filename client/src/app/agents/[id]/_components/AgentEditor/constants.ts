@@ -7,11 +7,12 @@ export interface EditorTab {
   icon: IconName;
 }
 
-/** Editor tabs. Evals, Stats and CI arrive with the lessons that fill them. */
+/** Editor tabs. Stats and CI arrive with the lessons that fill them. */
 export const TABS: readonly EditorTab[] = [
   { key: "config", labelKey: "editor.tabs.config", icon: "Settings" },
   { key: "skills", labelKey: "editor.tabs.skills", icon: "Sparkles" },
   { key: "context", labelKey: "editor.tabs.context", icon: "FileText" },
+  { key: "evals", labelKey: "editor.tabs.evals", icon: "FlaskConical" },
 ];
 
 /** What `?tab=` accepts. Derived, so the route cannot drift from the tab bar. */

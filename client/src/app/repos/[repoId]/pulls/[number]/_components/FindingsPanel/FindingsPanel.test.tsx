@@ -6,14 +6,30 @@ import messages from "../../../../../../../../messages/en/prReview.json";
 
 // Hoisted so a test can assert the shortcut did (or did not) fire an action.
 const mutate = vi.hoisted(() => vi.fn());
+// The «Turn into eval case» control lands on the owning agent's Evals tab, so
+// the panel reads the router. jsdom has no App Router mounted.
+const nav = vi.hoisted(() => ({ push: vi.fn() }));
+const evalCase = vi.hoisted(() => ({ mutate: vi.fn() }));
 
 vi.mock("../../../../../../../lib/hooks/reviews", () => ({
   useFindingAction: () => ({ mutate, isPending: false }),
 }));
+vi.mock("../../../../../../../lib/hooks/eval", () => ({
+  useEvalCaseFromFinding: () => ({
+    mutate: evalCase.mutate,
+    isPending: false,
+    variables: undefined,
+  }),
+}));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: nav.push }) }));
 
 import { FindingsPanel } from "./FindingsPanel";
 
-beforeEach(() => mutate.mockReset());
+beforeEach(() => {
+  mutate.mockReset();
+  nav.push.mockReset();
+  evalCase.mutate.mockReset();
+});
 afterEach(cleanup);
 
 const FINDINGS: FindingRecord[] = [
