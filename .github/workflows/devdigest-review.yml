@@ -29,7 +29,7 @@ jobs:
           DEVDIGEST_AGENT: security-reviewer
           DEVDIGEST_REPOSITORY: ${{ github.repository }}
           DEVDIGEST_PR_NUMBER: ${{ github.event.pull_request.number }}
-          DEVDIGEST_IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
+          DEVDIGEST_IS_FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
           DEVDIGEST_POST_AS: github_review
           DEVDIGEST_MAX_DIFF_LINES: '15000'
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
