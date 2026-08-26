@@ -26,7 +26,7 @@ jobs:
       - name: Run DevDigest review
         run: node .devdigest/runner.mjs
         env:
-          DEVDIGEST_AGENT: security-reviewer
+          DEVDIGEST_AGENT: general-reviewer
           DEVDIGEST_REPOSITORY: ${{ github.repository }}
           DEVDIGEST_PR_NUMBER: ${{ github.event.pull_request.number }}
           DEVDIGEST_IS_FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
