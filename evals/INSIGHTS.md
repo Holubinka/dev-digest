@@ -75,6 +75,36 @@ practice the model needs one extra turn to wrap up its answer after acting. `max
 routinely produced a 5-turn session; `maxTurns: 6` is what `workflow/review-workflow.cases.ts`
 uses now.
 
+### CI runs one workflow per tier, and the `paths:` filter is the routing
+
+`.github/workflows/evals-skills.yml`, `evals-agents.yml` and `evals-workflow.yml` are the three
+entry points (2026-08-27, replacing the single `evals.yml`); each is ~30 lines of trigger plus two
+job calls into `evals-quality.yml` (static gate, blocking, `needs:`-ed by every tier) and
+`evals-tier.yml` (`with: { tier: … }`, advisory). To re-run, mute or promote one tier, touch one
+file — that is the whole reason for the split. Adding a tier means a fourth caller, not an edit to
+the other three.
+
+The routing table in the root `AGENTS.md` § *Evals gate what changes* now carries the workflow
+name per row, and `evals/baselines/<tier>.json` is named by the same `tier` input.
+
+### `evals/scripts/ci-detect.mjs` is dead code — nothing calls it
+
+Confirmed 2026-08-27 by grep over `.github/`, `evals/` and `AGENTS.md`: no workflow, script or
+package.json script references it. It was written as a per-artifact change detector (which *skill*
+changed, not just "some skill did"), but the old `evals.yml` did its own inline `git diff` bash
+instead, and the three tier workflows route by `paths:`. Before extending it, decide whether that
+finer granularity is wanted at all — `specs/SPEC-06-eval-harness.md` § *Open questions* Q-1 holds
+the question.
+
+### `evals/workflow/**` used to trigger CI and then run nothing
+
+The old `evals.yml` triggered on `evals/**` but chose tiers with four greps
+(`^\.claude/skills/`, `^\.claude/agents/`, routing docs, `^evals/src/`). A change confined to
+`evals/workflow/*.cases.ts` matched the trigger and none of the greps, so the run did the static
+gate and stopped — the workflow tier never ran on a change to its own cases. The per-tier
+`paths:` lists close it: `evals/workflow/**` is in `evals-workflow.yml`. Worth knowing if you are
+reading a green CI run from before 2026-08-27 as evidence a workflow case passed.
+
 ## Recurring Errors & Fixes
 
 ### `eval:repeat`/`eval:delta` reported a wrong pass rate for workflow cases, with no crash
@@ -175,6 +205,34 @@ fixed `eval:delta`'s cross-file matching bug and created the missing
 compared with visible spread" gap. Could not verify `evals.yml` live — this machine cannot push
 `.github/workflows/**`; a human needs to push it and confirm the first real run.
 
+### 2026-08-27
+
+Acted on a reviewer's two remarks about the L06 harness.
+
+- **Split `.github/workflows/evals.yml` into three.** One workflow per tier plus two reusable
+  workflows — see § *Codebase Patterns* above for the shape, and the root `INSIGHTS.md`
+  § *Tool & Library Notes* for the two GitHub Actions constraints that shaped it. The
+  `Detect what changed` bash step is gone: `paths:` answers the same question before a runner
+  starts. Concurrency is now per tier, so a push cancels only the tier it re-triggers.
+- **Wrote `specs/SPEC-06-eval-harness.md`.** The harness had no spec at all: `SPEC-05`'s **N5**
+  deliberately excludes the root `evals/` package, so the link «acceptance criterion → check →
+  implementation» existed only in case-file comments. 37 EARS criteria over the five areas
+  (static gate, content tier, workflow tier, statistics, backends, CI), each with a row in
+  `## Traceability` naming what verifies it and the `path:line` that implements it.
+- **Named the gaps rather than papering over them** (`## Divergences and gaps`): all nine CI
+  criteria are «implemented, never observed live» — the machine that wrote the workflows could
+  not push `.github/workflows/**` (see the 2026-08-22 note) — and the content tier has no
+  deterministic test, `src/records/stats.test.ts` being the package's only non-model test.
+- Verified locally: `pnpm eval:quality` → 17 skills, 0 failures; `vitest run
+  src/records/stats.test.ts` → 7 passed; `pnpm typecheck` clean. Every `path:line` cited in the
+  spec was re-read against the file — thirteen of the twenty needed correcting, twelve by one to
+  three lines and one (`src/records/record.ts`) by thirty-three. Cite a line, then open it.
+
 ## Open Questions
 
-_Nothing recorded yet._
+- `evals/scripts/ci-detect.mjs`: wire it inside a tier (so `eval:repeat` runs only the skill that
+  actually changed) or delete it as dead code? Both are compatible with the `paths:` routing;
+  `specs/SPEC-06-eval-harness.md` Q-1 carries the same question.
+- When does a model tier become a required check? It needs a committed
+  `evals/baselines/<tier>.json` and a few weeks of visible spread first — i.e. AC-36 has to run
+  live before the question can be answered with data.

@@ -1685,6 +1685,27 @@ become a character class and match a single letter. Verified 2026-08-23 on vites
 writing `scripts/verify-l06.sh`: three filters — the `FindingCard` folder, the `EvalsTab`
 folder and `src/app/evals/` — selected exactly the 8 intended files, and nothing else.
 
+### A job that calls a reusable workflow cannot declare `continue-on-error`
+
+**Symptom.** Splitting `.github/workflows/evals.yml` into per-tier callers on 2026-08-27, the
+advisory model-run job became `uses: ./.github/workflows/evals-tier.yml`, and its
+`continue-on-error: true` had nowhere to go: a `uses:` job accepts only `name`, `uses`, `with`,
+`secrets`, `needs`, `if`, `permissions`, `strategy` and `concurrency`. Nothing else — no `steps`,
+no `runs-on`, and no `continue-on-error`.
+
+**Fix.** Put it on the **called** workflow's own job (`.github/workflows/evals-tier.yml`, job
+`tier`). A called job that fails with `continue-on-error: true` makes the called workflow's run
+conclude successfully, so the caller job is green too — the advisory semantics survive, and now
+they are declared in exactly one place for all three tiers instead of three.
+
+### GitHub Actions supports YAML anchors, but not merge keys
+
+Anchors and aliases (`paths: &eval_paths` … `paths: *eval_paths`) have worked in workflow files
+since 2025-09-18 — this repo relies on it to state a `paths:` list once and reuse it for `push`
+and `pull_request` in each of `.github/workflows/evals-{skills,agents,workflow}.yml`. Merge keys
+(`<<: *base`) were **not** part of that release, so a shared job body still has to be a reusable
+workflow, not an anchor. Local validation is `python3 -c "import yaml; yaml.safe_load(open(f))"` —
+`actionlint` is not installed on this machine.
 
 ## Recurring Errors & Fixes
 

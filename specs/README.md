@@ -56,3 +56,4 @@ the header alone. `Modules` is the same list the spec carries in its `**Modules:
 | [`SPEC-03-onboarding-tour.md`](SPEC-03-onboarding-tour.md) | server, client | Approved 2026-08-17 |
 | [`SPEC-04-onboarding-tour-depth.md`](SPEC-04-onboarding-tour-depth.md) | server, client | Approved 2026-08-18 |
 | [`SPEC-05-eval-pipeline.md`](SPEC-05-eval-pipeline.md) | server, client | Approved 2026-08-22 |
+| [`SPEC-06-eval-harness.md`](SPEC-06-eval-harness.md) | evals, .claude, .github/workflows | Approved 2026-08-27 · written after the harness landed, see its header |
