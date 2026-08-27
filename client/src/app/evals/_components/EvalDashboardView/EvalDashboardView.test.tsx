@@ -213,3 +213,35 @@ describe("EvalDashboardView — Run all agents", () => {
     expect(screen.getByRole("button", { name: "Running…" })).toBeDisabled();
   });
 });
+
+/**
+ * The whole body of the dashboard — cards, batch table, empty states — sits
+ * behind the same branch, so a failed load with no error state is a blank page
+ * carrying a live «Run all agents» button. The error state is what says the
+ * figures are MISSING rather than zero, and Retry is the only way back without
+ * a browser reload.
+ */
+describe("EvalDashboardView — the request failed", () => {
+  it("says the dashboard could not load, draws no cards, and refetches on Retry", () => {
+    const refetch = vi.fn();
+    hooks.useEvalDashboardAll.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      refetch,
+    });
+    renderView();
+
+    expect(screen.getByRole("alert").textContent).toContain("Could not load the eval dashboard.");
+    expect(
+      screen.queryByRole("button", { name: "Open Security Reviewer" }),
+    ).not.toBeInTheDocument();
+    // "No agent has eval cases yet" is a claim about the data, and a failed
+    // request supports no claim about the data at all.
+    expect(screen.queryByText(/No agent has eval cases yet/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No runs yet/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+});

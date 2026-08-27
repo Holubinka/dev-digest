@@ -211,3 +211,29 @@ describe("FindingCard — a decided finding fades its text, not its buttons", ()
     expect(s.actions).not.toHaveProperty("opacity");
   });
 });
+
+/**
+ * `onTurnIntoEvalCase` is optional, and the control is the ONE part of the card
+ * that is conditional on a prop rather than on the finding. Every other mount
+ * of FindingCard omits it, so a card that grew the button unconditionally would
+ * offer to create an eval case with nothing behind the click.
+ */
+describe("FindingCard — no eval-case control without the handler", () => {
+  const ACCEPTED = { ...FINDING, accepted_at: "2026-05-29T09:14:00.000Z" };
+
+  it("omits the button on a DECIDED finding when no handler is given", () => {
+    // Decided on purpose: an undecided finding renders the button disabled, so
+    // this would pass for the wrong reason on `FINDING`.
+    renderWithIntl(<FindingCard f={ACCEPTED} defaultExpanded onAction={() => {}} />);
+
+    expect(screen.queryByRole("button", { name: "Turn into eval case" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /accept or dismiss this finding first/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/Turn into eval case/)).not.toBeInTheDocument();
+
+    // The other two actions are unaffected — the card is not simply collapsed.
+    expect(screen.getByRole("button", { name: "Accept" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
+  });
+});

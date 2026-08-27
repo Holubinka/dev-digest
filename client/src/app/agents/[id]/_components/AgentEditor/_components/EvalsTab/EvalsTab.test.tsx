@@ -311,3 +311,32 @@ describe("EvalsTab — arriving with ?case=", () => {
     expect(screen.getByText("Eval case · stripe-key-leak")).toBeInTheDocument();
   });
 });
+
+/**
+ * The empty-set invitation (AC-16) and a failed request render in the same
+ * slot, and only one of them is true at a time. Falling through to the empty
+ * state on an error tells the reader to create a first case for a set that may
+ * already be full — and hides the fact that anything went wrong.
+ */
+describe("EvalsTab — the case set failed to load", () => {
+  it("says the set could not load, not that it is empty, and refetches on Retry", () => {
+    const refetch = vi.fn();
+    hooks.useEvalCaseSet.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      refetch,
+    });
+    renderTab();
+
+    expect(screen.getByRole("alert").textContent).toContain(
+      "Could not load this agent's eval cases.",
+    );
+    expect(screen.queryByText(/No eval cases yet/)).not.toBeInTheDocument();
+    expect(screen.queryByText("stripe-key-leak")).not.toBeInTheDocument();
+    expect(screen.queryByText(/passing$/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+});

@@ -74,6 +74,9 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+/** Cleared by the `vi.clearAllMocks()` above, like every other spy in here. */
+const onClose = vi.fn();
+
 function renderModal(caseId: string | null = "c1") {
   return render(
     <NextIntlClientProvider locale="en" messages={{ eval: messages }}>
@@ -81,7 +84,7 @@ function renderModal(caseId: string | null = "c1") {
         agentId="ag1"
         agentName="Security Reviewer"
         caseId={caseId}
-        onClose={() => {}}
+        onClose={onClose}
       />
     </NextIntlClientProvider>,
   );
@@ -165,6 +168,9 @@ describe("EvalCaseEditorModal — Run on save", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(hooks.update).toHaveBeenCalledTimes(1));
     expect(hooks.run).not.toHaveBeenCalled();
+    // Saving with the switch off is the end of the task, so the editor closes —
+    // the other half of the same `if`, and the half nothing else asserts.
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
   });
 
   it("saves and then runs THAT case, once the switch is on", async () => {
@@ -174,6 +180,9 @@ describe("EvalCaseEditorModal — Run on save", () => {
     await waitFor(() => expect(hooks.run).toHaveBeenCalledWith("c1"));
     // Order matters: running before the save would measure the old case.
     expect(hooks.update).toHaveBeenCalledTimes(1);
+    // The modal STAYS OPEN — the result is the reason the switch exists, and
+    // closing over it would throw away what the reader turned it on to see.
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("runs the case the save CREATED, not a case id that did not exist yet", async () => {
@@ -202,5 +211,43 @@ describe("EvalCaseEditorModal — Run on save", () => {
     };
     renderModal();
     expect(screen.getByText("Last run failed")).toBeInTheDocument();
+  });
+});
+
+/**
+ * `CaseForm` seeds its whole draft from `existing` with `useState`, so mounting
+ * it before the case has arrived would open an editor full of empty fields over
+ * a case that is not empty — and Save would write that emptiness back. Both
+ * guards exist to keep the form unmounted; nothing asserted either.
+ */
+describe("EvalCaseEditorModal — before the case has arrived", () => {
+  it("shows a loading indicator and does NOT mount the form while the case loads", () => {
+    hooks.useEvalCase.mockReturnValue({ data: undefined, isLoading: true });
+    renderModal("c1");
+
+    expect(screen.getByText(/^Loading/)).toBeInTheDocument();
+    // The dangerous half: no field seeded from nothing, and no way to save it.
+    expect(screen.queryByLabelText("Name")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+  });
+
+  it("says the case could not be loaded when the request came back empty", () => {
+    hooks.useEvalCase.mockReturnValue({ data: undefined, isLoading: false });
+    renderModal("c1");
+
+    expect(screen.getByText("Could not load this eval case.")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Name")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+  });
+
+  it("opens the empty form for a NEW case rather than calling it unloadable", () => {
+    // Same `data: undefined`, opposite meaning: with no `caseId` there is
+    // nothing to load, and the guards must let «New eval case» through.
+    hooks.useEvalCase.mockReturnValue({ data: undefined, isLoading: false });
+    renderModal(null);
+
+    expect(screen.queryByText("Could not load this eval case.")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Name")).toHaveValue("");
   });
 });

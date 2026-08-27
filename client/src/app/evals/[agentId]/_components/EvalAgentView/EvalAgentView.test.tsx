@@ -285,3 +285,37 @@ describe("EvalAgentView — the date range", () => {
     expect(screen.getByText("0 selected")).toBeInTheDocument();
   });
 });
+
+/**
+ * A failed load returns EARLY here — the whole page is replaced, not just the
+ * chart. That is the point worth pinning: the range select would bound a table
+ * that is not there, and Compare would offer to diff two batches out of a list
+ * the request never delivered.
+ */
+describe("EvalAgentView — the request failed", () => {
+  it("replaces the history with a retryable error instead of an empty chart", () => {
+    const refetch = vi.fn();
+    hooks.useEvalAgentDashboard.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      refetch,
+    });
+    renderView();
+
+    // The body only. The ErrorState's `title` here is the BREADCRUMB label
+    // («Eval Dashboard»), which is a finding about the copy rather than a
+    // behaviour to pin — asserting it would give the wrong headline a green tick.
+    expect(screen.getByRole("alert").textContent).toContain(
+      "Could not load the eval dashboard.",
+    );
+
+    expect(screen.queryByRole("button", { name: "Compare" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Date range")).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Run eval" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+});
