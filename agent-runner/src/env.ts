@@ -4,7 +4,7 @@ import { CI_ENV, type RepoRef } from '@devdigest/shared';
 export type PostAs = 'github_review' | 'pr_comment' | 'none';
 
 /** The documented default input ceiling (SPEC-05 § Non-functional requirements). */
-export const DEFAULT_MAX_DIFF_LINES = 15000;
+export const DEFAULT_MAX_DIFF_LINES = 50000;
 
 export interface RunnerEnv {
   agent: string;

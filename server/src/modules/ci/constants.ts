@@ -112,7 +112,7 @@ export const RUNNER_NODE_VERSION = '20';
 /** Job-level `timeout-minutes` (AC-51). */
 export const JOB_TIMEOUT_MINUTES = 15;
 /** The documented input ceiling handed to the runner (AC-67, AC-111). */
-export const MAX_DIFF_LINES = 15_000;
+export const MAX_DIFF_LINES = 50_000;
 
 /** `pull_request` activity types the wizard may choose from (AC-27, AC-35). */
 export const ALLOWED_TRIGGERS = ['opened', 'synchronize', 'reopened'] as const;

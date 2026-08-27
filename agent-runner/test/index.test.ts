@@ -100,7 +100,7 @@ describe('the branch order (AC-52)', () => {
     const artifact = readArtifact(root);
 
     expect(artifact.agent).toBe('security');
-    expect(artifact.max_changed_lines).toBe(15000);
+    expect(artifact.max_changed_lines).toBe(50000);
   });
 
   it('reports the environment before the manifest, so a bad env is not blamed on the bundle', async () => {

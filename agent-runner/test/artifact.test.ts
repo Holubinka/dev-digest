@@ -67,7 +67,7 @@ describe('devdigest-result.json — one per path', () => {
     expect(artifact.critical).toBe(1);
     expect(artifact.agent).toBe('security');
     expect(artifact.changed_lines).toBe(2);
-    expect(artifact.max_changed_lines).toBe(15000);
+    expect(artifact.max_changed_lines).toBe(50000);
     expect(artifact.duration_ms).toBeGreaterThanOrEqual(0);
   });
 
