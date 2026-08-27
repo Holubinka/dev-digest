@@ -77,4 +77,15 @@ describe("MultiAgentLandingView", () => {
     expect(screen.getByText(runs.page.loadFailed.title)).toBeInTheDocument();
     expect(screen.queryByText(runs.page.empty.title)).not.toBeInTheDocument();
   });
+
+  /* The skeleton covers BOTH the read in flight and the redirect already queued.
+     What it must never do is flash the empty state at a repo that has runs — so
+     the assertion is on the absence of that title as much as on the bars. */
+  it("holds a skeleton while the read is in flight, and shows no empty state", () => {
+    latest.value = { data: undefined, isLoading: true, isError: false, refetch: vi.fn() };
+    const { container } = renderView();
+
+    expect(container.querySelectorAll(".skeleton").length).toBeGreaterThan(0);
+    expect(screen.queryByText(runs.page.empty.title)).not.toBeInTheDocument();
+  });
 });
