@@ -2307,6 +2307,32 @@ Related and distinct: `client/INSIGHTS.md` records two occurrences of `next dev 
 taken; this one is about a process that outlives the port it released.
 
 
+### `GITHUB_TOKEN` can approve a PR, but only after a repository checkbox nobody sees
+
+**Symptom.** An exported DevDigest agent that finds **nothing** fails its own run and paints the
+check red, while an agent that finds problems succeeds. `POST /pulls/:n/reviews` answers `422` with
+no readable cause.
+
+**Cause.** `reviewer-core/src/output/to-review.ts:156` maps zero findings to `event: "APPROVE"`, and
+approving is gated by **Settings → Actions → General → Workflow permissions → "Allow GitHub Actions
+to create and approve pull requests"**, which is **off by default**. It is not a workflow
+`permissions:` scope — `pull-requests: write` is already granted and is what lets
+`REQUEST_CHANGES` through — and it is not a token scope either. Measured on 2026-08-27 against
+`Holubinka/dev-digest` PR #25: three runs on one commit with one token — `security-reviewer`
+(1 finding, `REQUEST_CHANGES`) posted at 12:28, while `general-reviewer` and
+`performance-reviewer` (0 findings, `APPROVE`) both got 422 with the *simpler* payload, no
+`comments[]` at all. After the checkbox was enabled, the same runs produced three `APPROVED`
+reviews at 14:06 with no code change.
+
+**Fix.** Enable the checkbox in every repository an agent is exported into. Diagnosing it took an
+hour that one log line would have saved: `agent-runner/src/github.ts` throws away the response body
+on a failed request, and for this endpoint the reason lives only there. Its stated reason — a body
+can echo the request, so a token could reach a log — does not hold for a review-create response;
+`message` and `errors[]` are safe to log and are the whole diagnosis.
+
+**Do not conclude "the Actions bot cannot approve".** That was the wrong reading of the same
+evidence, and it sends you to a GitHub App or a machine account for a setting that takes one click.
+
 ## Session Notes
 
 ### 2026-08-17
