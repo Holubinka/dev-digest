@@ -36,25 +36,55 @@ export function usePrActiveRuns(prId: string | null | undefined) {
 }
 
 // ---- Full run history for a PR (every agent_runs row, any status) ----
-/** All runs for a PR — done, failed (with error), cancelled, running, queued.
-   Survives reload (DB-backed). Polls while anything is still in flight so it
-   self-updates.
 
-   `queued` counts as in flight, the same pair `MultiRunView/helpers.ts` counts:
-   every run of a multi-run is `queued` until the pool promotes it, and that
-   happens only after the shared pre-work — a diff load plus `intentService`,
-   an LLM call that can take tens of seconds. Polling on `running` alone leaves
-   the timeline frozen on rows that are about to change, for that whole
-   window. */
+/** A run that is doing something: its row changes while you watch it. */
+export const RUNS_POLL_RUNNING_MS = 4000;
+/** Nothing is doing anything yet — see `runsPollInterval`. */
+export const RUNS_POLL_QUEUED_MS = 15000;
+
+/**
+ * How often the run history re-reads, at two speeds rather than one.
+ *
+ * `GET /pulls/:id/runs` returns the PR's WHOLE history, and it filters
+ * `agent_runs` by a `pr_id` that carries no index — so every tick of this timer
+ * is a scan of a table that grows for as long as the workspace is used. That
+ * makes the interval a cost, not just a preference.
+ *
+ * A `running` run earns 4 s: its row is changing.
+ *
+ * A `queued` run does not. It was given the same 4 s when this predicate was
+ * widened from `running` alone, and that widening is what a multi-run turns
+ * expensive: at a ceiling of three, seven of ten agents wait through two waves —
+ * tens of seconds during which the only fact a poll can bring back is one
+ * promotion, and nothing on screen is animating from it. Thirteen requests for
+ * that, on a page that already holds an SSE socket per in-flight run.
+ *
+ * The widening is not reverted, because polling on `running` alone froze the
+ * timeline for that whole window (the shared pre-work — a diff load plus an
+ * `intentService` LLM call — happens while every run is still `queued`). It is
+ * slowed to a backstop: the live log on the same page carries the progress, the
+ * terminal transition arrives when the run's stream closes and `onRunDone`
+ * invalidates this key, and 15 s bounds how long a row can read `queued` after
+ * it stopped being true.
+ *
+ * The stream is deliberately NOT made the only signal here. `useRunEvents` is
+ * shared with the trace drawer, whose behaviour AC-81 freezes.
+ */
+export function runsPollInterval(runs: RunSummary[] | undefined): number | false {
+  const inFlight = runs ?? [];
+  if (inFlight.some((r) => r.status === "running")) return RUNS_POLL_RUNNING_MS;
+  if (inFlight.some((r) => r.status === "queued")) return RUNS_POLL_QUEUED_MS;
+  return false;
+}
+
+/** All runs for a PR — done, failed (with error), cancelled, running, queued.
+   Survives reload (DB-backed). */
 export function usePrRuns(prId: string | null | undefined) {
   return useQuery({
     queryKey: ["pr-runs", prId],
     queryFn: () => api.get<RunSummary[]>(`/pulls/${prId}/runs`),
     enabled: !!prId,
-    refetchInterval: (query) =>
-      (query.state.data ?? []).some((r) => r.status === "running" || r.status === "queued")
-        ? 4000
-        : false,
+    refetchInterval: (query) => runsPollInterval(query.state.data),
   });
 }
 

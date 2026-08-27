@@ -8,6 +8,20 @@ Failures and surprises specific to this package. Repo-wide ones live in the root
 
 ## What Works
 
+### Prove a bound by measuring it, before building a cache for it
+
+A round-2 review called `buildConflicts` an "uncached O(n²) pair scan" run on every read of a
+multi-run and asked for a cache keyed on the multi-run id. `SPEC-05 § Non-functional
+requirements` states the bound instead — 10 agents × 50 findings grouped in **250 ms** — so the
+cheaper answer was to write the input the bound names and time it: **1.9 ms** with all 500
+findings in ONE file, the worst shape the quadratic term can take (2026-08-27,
+`test/multi-agent-response-bounds.test.ts`). A cache would have added an invalidation problem to
+a function that is 130× inside its budget, and `AC-97` says the section is never stored.
+
+The test asserts the spec's 250 ms rather than a tight number measured on this machine: it is a
+ceiling, not a benchmark, and a margin tuned to one laptop turns a real regression into a flaky
+failure.
+
 ### Size a derivation change on real inputs with `tsx`, without paying for the endpoint that produces them
 
 A pure transform under `modules/*/helpers.ts` can be run over production-shaped input in one
@@ -1663,6 +1677,25 @@ agent (SPEC-05 column headers) needs a `queued` state that this column cannot cu
 
 
 ## Tool & Library Notes
+
+### A full index on `(workspace_id, agent_id, ran_at)` does not serve a query that filters `status`
+
+Postgres will not use a b-tree whose leading columns match if the extra predicate throws away
+most of what it reads — it costs the scan out and picks a sequential scan instead. Measured
+2026-08-27 on 20 000 `agent_runs`, 1 000 of them `done`, against
+`lastSuccessfulRunPerAgent` (`repository/run.repo.ts`):
+
+| index | plan | buffers |
+|---|---|---|
+| `(workspace_id, agent_id, ran_at desc)` | Seq Scan, `Rows Removed by Filter: 19000` | 267 |
+| the same, `WHERE status = 'done'` | Bitmap Heap Scan on the index | 66 |
+
+The partial index is `agent_runs_ws_agent_done_ran_idx` (migration `0023`). **Its predicate and
+the query's `where` are one thing in two files**: widen the query to a second status, or drop the
+filter, and the index stops being usable — silently, with every test still green. Drizzle
+expresses it as ``index(name).on(cols).where(sql`…`)`` and `drizzle-kit generate` emits the
+`DROP INDEX` + `CREATE INDEX … WHERE` pair on its own; renaming the index is what makes it do so
+rather than silently skipping the change.
 
 ### `execSync` deadlocks a Fastify server you booted in the same process
 

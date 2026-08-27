@@ -7,9 +7,17 @@
  * run, so that is what is asserted here.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, act } from "@testing-library/react";
+import { renderHook, act, waitFor, cleanup } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { RunEvent } from "@devdigest/shared";
-import { useMultiRunColumnEvents } from "./multi-agent";
+
+const post = vi.hoisted(() => vi.fn());
+vi.mock("../api", () => ({
+  api: { post },
+  API_BASE: "http://api.test",
+}));
+
+import { prMultiAgentKey, useMultiRunColumnEvents, useRerunMultiAgentRun } from "./multi-agent";
 
 class FakeEventSource {
   static instances: FakeEventSource[] = [];
@@ -30,10 +38,17 @@ class FakeEventSource {
   close() {
     this.closed = true;
   }
-  /** Server sent a line. */
+  /** Server sent a line. The fields a test does not care about are filled in
+   *  because the hook parses the frame against the `RunEvent` contract — a
+   *  half-written fixture is dropped exactly like a half-written event. */
   emit(event: Partial<RunEvent>) {
-    const ev = { data: JSON.stringify(event) } as MessageEvent;
-    this.onmessage?.(ev);
+    this.emitRaw(
+      JSON.stringify({ runId: "run-a", seq: 1, kind: "info", msg: "", t: "00.01", ...event }),
+    );
+  }
+  /** Server sent something. Anything. */
+  emitRaw(data: string) {
+    this.onmessage?.({ data } as MessageEvent);
   }
   /** Server closed the stream — what EventSource reports as an error. */
   end() {
@@ -76,6 +91,34 @@ describe("useMultiRunColumnEvents", () => {
     expect(result.current["run-b"]).toEqual({
       lastMsg: "calling the model",
       started: false,
+      closed: false,
+    });
+  });
+
+  /**
+   * `liveColumns` (`MultiRunView/helpers.ts`) promotes a column the instant
+   * this flips, so the latch itself has to be pinned at its source: only an
+   * event carrying `data.status === "running"` may set it, and once set a
+   * later line that carries nothing must not clear it (AC-78).
+   */
+  it("latches `started` on an event announcing the run took a slot, and keeps it through a later plain line", () => {
+    const { result } = renderHook(() => useMultiRunColumnEvents(["run-a"]));
+
+    act(() => {
+      FakeEventSource.find("run-a").emit({
+        runId: "run-a",
+        msg: "starting",
+        data: { status: "running" },
+      });
+    });
+    expect(result.current["run-a"]).toEqual({ lastMsg: "starting", started: true, closed: false });
+
+    act(() => {
+      FakeEventSource.find("run-a").emit({ runId: "run-a", msg: "still going" });
+    });
+    expect(result.current["run-a"]).toEqual({
+      lastMsg: "still going",
+      started: true,
       closed: false,
     });
   });
@@ -146,5 +189,76 @@ describe("useMultiRunColumnEvents", () => {
     const { result } = renderHook(() => useMultiRunColumnEvents([]));
     expect(FakeEventSource.instances).toHaveLength(0);
     expect(result.current).toEqual({});
+  });
+
+  /**
+   * The frame is PARSED against `RunEvent`, not asserted into it. `msg` lands in
+   * a column header and `runId` decides which header, so a frame of another
+   * shape has to stop at this boundary — an assertion would have written a
+   * number into the header and a line into a column nobody was looking at.
+   */
+  it("drops a frame that is not a RunEvent", () => {
+    const { result } = renderHook(() => useMultiRunColumnEvents(["run-a"]));
+
+    act(() => {
+      const es = FakeEventSource.find("run-a");
+      es.emitRaw(JSON.stringify({ runId: "run-a", msg: 42, kind: "info", seq: 1, t: "00.01" }));
+      es.emitRaw(JSON.stringify({ runId: "run-a", msg: "no seq, no clock" }));
+      es.emitRaw("keepalive");
+    });
+
+    expect(result.current["run-a"]?.lastMsg).toBeNull();
+
+    act(() => FakeEventSource.find("run-a").emit({ runId: "run-a", msg: "a real one" }));
+    expect(result.current["run-a"]?.lastMsg).toBe("a real one");
+  });
+});
+
+/**
+ * A rerun makes a NEW multi-run for the same PR, so the PR page's "way back to
+ * the comparison" link — read under `prMultiAgentKey` — is wrong the moment this
+ * resolves. `useCreateMultiAgentRun` has always invalidated it; the rerun path
+ * did not, and it is the path that navigates away, so the stale link is what the
+ * reader meets on returning to the PR.
+ */
+describe("useRerunMultiAgentRun", () => {
+  beforeEach(() => post.mockReset().mockResolvedValue({ id: "mr-2", pr_id: "pr-1", runs: [], skipped: [] }));
+  afterEach(cleanup);
+
+  function wrap() {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
+    });
+    const Wrapper = ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    return { client, Wrapper };
+  }
+
+  it("invalidates the PR's multi-agent link", async () => {
+    const { client, Wrapper } = wrap();
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    const { result } = renderHook(() => useRerunMultiAgentRun(), { wrapper: Wrapper });
+
+    await act(async () => {
+      await result.current.mutateAsync({ multiRunId: "mr-1", prId: "pr-1" });
+    });
+
+    expect(post).toHaveBeenCalledWith("/multi-agent-runs/mr-1/rerun");
+    await waitFor(() =>
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: prMultiAgentKey("pr-1") }),
+    );
+  });
+
+  it("invalidates nothing when the PR is not known yet", async () => {
+    const { client, Wrapper } = wrap();
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    const { result } = renderHook(() => useRerunMultiAgentRun(), { wrapper: Wrapper });
+
+    await act(async () => {
+      await result.current.mutateAsync({ multiRunId: "mr-1", prId: null });
+    });
+
+    expect(invalidate).not.toHaveBeenCalled();
   });
 });

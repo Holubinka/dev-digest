@@ -207,6 +207,13 @@ describe("ConflictsSection — the four empty states", () => {
     expect(screen.getByRole("button", { name: "Configure run" })).toBeInTheDocument();
   });
 
+  /**
+   * The middle number spans `running` AND `queued`, so it may not be read in
+   * either state's word: `RUN_STATE_META` calls `running` "reviewing", and this
+   * sentence used to say "still running" over a column headed `queued`. AC-125
+   * wants one state named by one word everywhere, which a count of two states
+   * can only honour by naming neither.
+   */
   it("gives the three numbers when fewer than two runs finished (AC-129, AC-130)", () => {
     renderSection({
       positions: [],
@@ -219,7 +226,8 @@ describe("ConflictsSection — the four empty states", () => {
     });
 
     expect(screen.getByText(messages.conflicts.empty.unfinishedTitle)).toBeInTheDocument();
-    expect(screen.getByText("1 finished · 1 still running · 2 never got there.")).toBeInTheDocument();
+    expect(screen.getByText("1 finished · 1 still going · 2 never got there.")).toBeInTheDocument();
+    expect(screen.queryByText(/still running/)).not.toBeInTheDocument();
     // One run is still going, so the re-run is not offered yet (AC-131).
     expect(screen.queryByRole("button", { name: "Run again" })).not.toBeInTheDocument();
   });

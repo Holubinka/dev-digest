@@ -95,6 +95,20 @@ export function RunReviewDropdown({
         ? t("runReview.runOne")
         : t("runReview.runMany", { count: selected.length });
 
+  /* The catch reports nothing and closes nothing, which is the same bargain
+     `CreateAgentModal` and `ImportSkillDrawer` strike: the `MutationCache` in
+     `lib/providers.tsx` already toasts a failed mutation with the server's own
+     reason, and a second message here would be that sentence twice.
+
+     It is NOT the inline `role="alert"` block `ConfigureRunView` renders. That
+     screen stays on screen to hold it; this panel is already shut by the line
+     above (the tick list has to close on a press, or the reader is left looking
+     at checkboxes for a run that started), so an alert inside it would render
+     into something nobody can see.
+
+     What the catch is for is the rejection itself. `onClick` cannot await this,
+     so a rejected `mutateAsync` escapes as an unhandled promise rejection —
+     which is exactly why `ConfigureRunView` reaches for `mutate` instead. */
   const kick = async () => {
     if (selected.length === 0) return;
     onRunStart?.();
@@ -102,6 +116,8 @@ export function RunReviewDropdown({
     try {
       const res = await run.mutateAsync({ prId, agentIds: selected });
       onRunsStarted?.({ multiRunId: res.id, runIds: res.runs.map((r) => r.run_id) });
+    } catch {
+      /* toasted globally; `onRunSettled` below still lets the parent stand down */
     } finally {
       onRunSettled?.();
     }

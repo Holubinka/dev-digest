@@ -218,11 +218,19 @@ export class MultiRunService {
         { concurrency: DEFAULT_MULTI_RUN_CONCURRENCY },
       )
       // `executeRuns` resolves once EVERY job has settled — a per-agent failure
-      // is caught inside its own job, and a pre-work failure goes through
-      // `failAll` and returns — so this is the moment AC-155 names: the last run
-      // of the multi-run reached a terminal state. Stamping it here rather than
-      // deriving it later is what makes the summary a measurement (AC-41) and
-      // what keeps it still when a run is deleted (AC-159).
+      // is caught inside its own job, and every pre-work step runs under one
+      // guard that ends in `failAll` and returns — so this is the moment AC-155
+      // names: the last run of the multi-run reached a terminal state. Stamping
+      // it here rather than deriving it later is what makes the summary a
+      // measurement (AC-41) and what keeps it still when a run is deleted
+      // (AC-159).
+      //
+      // That guard lives in `executeRuns` and not in the `.catch` below, which
+      // is why the `.catch` may remain a log: by the time a rejection reaches
+      // here, either the runs were already failed with a reason, or the process
+      // broke somewhere no reason can be written from — and inventing one for
+      // rows that may still be executing is worse than leaving them to the
+      // reaper.
       .then(() => this.repo.markMultiRunFinished(multiRunId))
       .finally(() => EXECUTING_HERE.delete(multiRunId))
       .catch((err) => {

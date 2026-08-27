@@ -179,6 +179,14 @@ export function visiblePositions(positions: Conflict[], onlyConflicts: boolean):
  * `running` counts `queued` too: from the reader's side both mean "still going",
  * and the state each column shows separately is what tells them apart. `never`
  * is `failed` + `cancelled` — runs that ended without an opinion.
+ *
+ * WHICH IS WHY THE SENTENCE MAY NOT BORROW A STATE'S WORD. `conflicts.empty
+ * .unfinishedBody` used to read "N still running", and `RUN_STATE_META` above
+ * gives `running` the word "reviewing" — so "2 still running" sat above one
+ * column headed `reviewing` and one headed `queued`, naming a state that was on
+ * neither. AC-125 wants one state to be one word everywhere; a number that spans
+ * two states has to be read in a word that is not either of them, and "still
+ * going" is the one this comment had already chosen for the concept.
  */
 export interface RunCounts {
   agents: number;

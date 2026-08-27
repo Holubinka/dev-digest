@@ -158,6 +158,33 @@ describe("RunReviewDropdown — choosing the set of agents", () => {
     });
   });
 
+  /**
+   * A REFUSED run is toasted by the `MutationCache` in `lib/providers.tsx`, so
+   * this component reports nothing of its own — but it must still hand the
+   * rejection somewhere. `onClick` cannot await `kick`, so without the catch the
+   * failure leaves the page as an unhandled promise rejection and the parent
+   * never learns the request settled: its spinner would run forever.
+   */
+  it("stands the parent down when the run is refused, and lets nothing go unhandled", async () => {
+    const unhandled: unknown[] = [];
+    const collect = (err: unknown) => unhandled.push(err);
+    process.on("unhandledRejection", collect);
+    create.mutateAsync.mockRejectedValue(new Error("no credit left"));
+
+    const onRunsStarted = vi.fn();
+    const onRunSettled = vi.fn();
+    renderPicker({ onRunsStarted, onRunSettled });
+    open();
+
+    fireEvent.click(screen.getByText("Run multi-agent review (2)"));
+    await vi.waitFor(() => expect(onRunSettled).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    process.off("unhandledRejection", collect);
+
+    expect(unhandled).toEqual([]);
+    expect(onRunsStarted).not.toHaveBeenCalled();
+  });
+
   /** Kept verbatim from the old body: a merged PR is still reviewable, with a
       non-blocking warning and a dimmed trigger (AC-5). */
   it("keeps the merged warning and the dimmed trigger", () => {

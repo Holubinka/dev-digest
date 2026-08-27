@@ -23,7 +23,7 @@
       "oneAgentTitle": "Nothing to compare with",
       "oneAgentBody": "Only one agent ran on this pull request. Choose more of them in Configure run and their findings will line up side by side here.",
       "unfinishedTitle": "Nothing to compare yet",
-      "unfinishedBody": "{done} finished · {running} still running · {unfinished} never got there.",
+      "unfinishedBody": "{done} finished · {running} still going · {unfinished} never got there.",
       "nothingFoundTitle": "They found nothing",
       "nothingFoundBody": "Every agent that finished flagged nothing on this pull request, so there is nothing to line up.",
       "agreedTitle": "They agreed everywhere",

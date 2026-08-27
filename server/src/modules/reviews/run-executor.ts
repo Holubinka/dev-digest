@@ -155,77 +155,98 @@ export class ReviewRunExecutor {
     // mark the rows failed and persist the buffered log so it survives a reload.
     const failAll = async (msg: string) => {
       for (const { runId, agent } of jobs) {
-        await this.repo
-          .completeAgentRun(runId, {
-            status: 'failed',
-            durationMs: 0,
-            tokensIn: 0,
-            tokensOut: 0,
-            findingsCount: 0,
-            grounding: '0/0 passed',
-            error: msg,
-          })
-          .catch(() => undefined);
-        await this.repo
-          .saveRunTrace(runId, this.traceFromBuffer(runId, pull, agent, '0/0 passed'))
-          .catch(() => undefined);
-        this.container.runBus.complete(runId);
+        await this.failRunRow(runId, pull, agent, msg);
       }
     };
 
-    let diff: UnifiedDiff;
+    /*
+     * ONE GUARD OVER EVERY PRE-WORK STEP, and the reason it is a `try` around
+     * the whole region rather than a `catch` per step: a multi-run's rows are
+     * written `queued` BEFORE this method is called (`multi-run.repo.ts`
+     * `createMultiRun`), so anything that throws between here and the pool
+     * leaves ten rows nobody will ever move — the page shows columns that never
+     * progress until the reaper closes them, hours later. AC-38 is the opposite:
+     * a failed pre-work marks EVERY run of the multi-run failed with the same
+     * reason.
+     *
+     * Only the diff load was guarded when this was written, which was enough
+     * only by accident of which steps existed: `intentService.derive` answers
+     * `{ok:false}` instead of throwing, and `buildRepoIntelContext` has no
+     * `try` of its own — its three children each have one, so today it happens
+     * not to reject. Neither fact is a property a future step inherits, and
+     * `MultiRunService.launch`'s `.catch` only logs.
+     */
+    let ctx: BatchContext;
     try {
-      diff = await runLog.step('Loading PR diff', () => loadDiff(this.container, this.repo, workspaceId, pull, repo), {
-        kind: 'tool',
-      });
+      let diff: UnifiedDiff;
+      try {
+        diff = await runLog.step('Loading PR diff', () => loadDiff(this.container, this.repo, workspaceId, pull, repo), {
+          kind: 'tool',
+        });
+      } catch (err) {
+        // Rethrown, not handled: the step names itself in the reason the failed
+        // rows carry, and the guard below is the only place that fails them.
+        throw new Error(`Failed to load PR diff: ${(err as Error).message}`);
+      }
+      runLog.info(`Diff ready — ${diff.files.length} changed file(s); starting ${jobs.length} agent run(s)`);
+
+      // Intent is PRE-WORK: derived ONCE for every queued agent, streamed into
+      // each run's Live Log by the fanned-out logger, and cached on the PR. The
+      // deriver arrives as `container.intentService` — modules/reviews may not
+      // import modules/intent (`no-cross-module`), and the rendered section rides
+      // on the result so nothing here needs one. A failure degrades the prompt to
+      // exactly today's shape; it never fails a run.
+      let intentSection: string | undefined;
+      const derived = await runLog.step(
+        'Deriving PR intent',
+        () =>
+          this.container.intentService.derive({
+            workspaceId,
+            prId: pull.id,
+            onEvent: (kind, msg) => runLog.event(kind, msg),
+          }),
+        { kind: 'tool' },
+      );
+      if (derived.ok) {
+        intentSection = derived.section;
+        runLog.info(
+          `Intent ready — ${derived.record.confidence} confidence from ` +
+            `${derived.record.evidence.join(', ')}; ${derived.tokensIn}+${derived.tokensOut} tokens, ` +
+            `${derived.costUsd == null ? 'cost unknown' : `$${derived.costUsd.toFixed(4)}`}`,
+        );
+      } else {
+        runLog.info(`Intent unavailable — ${derived.reason}; reviewing without it`);
+      }
+
+      // Repo-intel is PRE-WORK too, for the same reason the diff is: it is keyed
+      // on the PR, not on the agent, so N agents were making 3N identical index
+      // queries and could disagree if the indexer wrote between two runs. Skipped
+      // entirely when no queued agent wants it — one agent asking is enough,
+      // since a second one opting out selects `NO_REPO_INTEL` rather than
+      // re-querying.
+      const repoIntel = jobs.some((j) => j.agent.repoIntel)
+        ? await this.buildRepoIntelContext(pull.repoId, diff, runLog)
+        : NO_REPO_INTEL;
+
+      ctx = { workspaceId, pull, repo, diff, intentSection, repoIntel };
     } catch (err) {
-      runLog.error(`Failed to load PR diff: ${(err as Error).message}`);
-      await failAll(`Failed to load PR diff: ${(err as Error).message}`);
+      const reason = (err as Error).message;
+      runLog.error(reason);
+      await failAll(reason);
       return;
     }
-    runLog.info(`Diff ready — ${diff.files.length} changed file(s); starting ${jobs.length} agent run(s)`);
 
-    // Intent is PRE-WORK: derived ONCE for every queued agent, streamed into
-    // each run's Live Log by the fanned-out logger, and cached on the PR. The
-    // deriver arrives as `container.intentService` — modules/reviews may not
-    // import modules/intent (`no-cross-module`), and the rendered section rides
-    // on the result so nothing here needs one. A failure degrades the prompt to
-    // exactly today's shape; it never fails a run.
-    let intentSection: string | undefined;
-    const derived = await runLog.step(
-      'Deriving PR intent',
-      () =>
-        this.container.intentService.derive({
-          workspaceId,
-          prId: pull.id,
-          onEvent: (kind, msg) => runLog.event(kind, msg),
-        }),
-      { kind: 'tool' },
-    );
-    if (derived.ok) {
-      intentSection = derived.section;
-      runLog.info(
-        `Intent ready — ${derived.record.confidence} confidence from ` +
-          `${derived.record.evidence.join(', ')}; ${derived.tokensIn}+${derived.tokensOut} tokens, ` +
-          `${derived.costUsd == null ? 'cost unknown' : `$${derived.costUsd.toFixed(4)}`}`,
-      );
-    } else {
-      runLog.info(`Intent unavailable — ${derived.reason}; reviewing without it`);
-    }
-
-    // Repo-intel is PRE-WORK too, for the same reason the diff is: it is keyed
-    // on the PR, not on the agent, so N agents were making 3N identical index
-    // queries and could disagree if the indexer wrote between two runs. Skipped
-    // entirely when no queued agent wants it — one agent asking is enough,
-    // since a second one opting out selects `NO_REPO_INTEL` rather than
-    // re-querying.
-    const repoIntel = jobs.some((j) => j.agent.repoIntel)
-      ? await this.buildRepoIntelContext(pull.repoId, diff, runLog)
-      : NO_REPO_INTEL;
-
-    const ctx: BatchContext = { workspaceId, pull, repo, diff, intentSection, repoIntel };
     await runWithConcurrency(jobs, opts.concurrency ?? 1, (job) =>
-      this.runJob(job, ctx, runLog, logger),
+      // `runJob` owns its own `try` (AC-36) and this `.catch` is what happens
+      // when that guard is the one that broke: `runWithConcurrency` never
+      // rejects, so without this line an unexpected throw would leave no trace
+      // anywhere — see the contract note on the pool in `helpers.ts`.
+      this.runJob(job, ctx, runLog, logger).catch((err: unknown) => {
+        logger?.error(
+          { runId: job.runId, agent: job.agent.name, prId: pull.id, err: (err as Error).message },
+          'review: agent job threw outside its own guard',
+        );
+      }),
     );
   }
 
@@ -246,6 +267,14 @@ export class ReviewRunExecutor {
       { runId, agent: agent.name, provider: agent.provider, model: agent.model, prId: ctx.pull.id },
       `review: agent "${agent.name}" started (${agent.provider}/${agent.model})`,
     );
+    /**
+     * Whether the row reached `running`, which is the same question as "does
+     * anything else own this row's failure?". Everything below the claim
+     * persists its own failure through `runOneAgent`; the claim itself does not,
+     * so a throwing UPDATE would otherwise leave the row `queued` with the job
+     * gone — the per-agent version of the orphan the pre-work guard closes.
+     */
+    let running = false;
     try {
       // A multi-run's rows are written `queued` and only become `running` when a
       // slot opens (AC-33, AC-34), so this claim is also the LAST CHECKPOINT
@@ -265,6 +294,7 @@ export class ReviewRunExecutor {
         );
         return;
       }
+      running = true;
       /* THE ONLY EVENT ON THE BUS THAT REPORTS A STATE, and it is here rather
          than one line up because only a claim that RETURNED TRUE means the row
          is now `running` — beside the call it would also fire for the run that
@@ -303,13 +333,51 @@ export class ReviewRunExecutor {
       );
     } catch (err) {
       // runOneAgent already persisted the failure/cancel (status + error +
-      // trace) and completed the bus; here we only log at the run level.
+      // trace) and completed the bus; here we only log at the run level — unless
+      // the run never got that far, in which case this is the only writer left.
+      if (!running) {
+        await this.failRunRow(runId, ctx.pull, agent, `Failed to start the run: ${(err as Error).message}`);
+      }
       const cancelled = err instanceof RunCancelledError;
       logger?.[cancelled ? 'info' : 'error'](
         { runId, agent: agent.name, err: (err as Error).message, durationMs: Date.now() - agentStart },
         `review: agent "${agent.name}" ${cancelled ? 'cancelled' : 'failed'}`,
       );
     }
+  }
+
+  /**
+   * Mark ONE run failed with a reason, persist whatever its log buffer holds,
+   * and close its stream — the whole of what a run that never reached the engine
+   * still owes the reader.
+   *
+   * Both writes swallow their own rejection ON PURPOSE: this runs on the failure
+   * path, and a repository that is refusing writes must not stop the remaining
+   * runs from being marked, nor the bus from being completed. The stream is what
+   * a watching page is waiting on, and leaving it open is what turns a failed run
+   * into a spinner that never stops.
+   */
+  private async failRunRow(
+    runId: string,
+    pull: ReviewPull,
+    agent: ReviewAgent,
+    msg: string,
+  ): Promise<void> {
+    await this.repo
+      .completeAgentRun(runId, {
+        status: 'failed',
+        durationMs: 0,
+        tokensIn: 0,
+        tokensOut: 0,
+        findingsCount: 0,
+        grounding: '0/0 passed',
+        error: msg,
+      })
+      .catch(() => undefined);
+    await this.repo
+      .saveRunTrace(runId, this.traceFromBuffer(runId, pull, agent, '0/0 passed'))
+      .catch(() => undefined);
+    this.container.runBus.complete(runId);
   }
 
   /**

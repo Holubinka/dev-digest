@@ -211,10 +211,17 @@ export async function startAgentRun(db: Db, runId: string): Promise<boolean> {
  * only input (AC-17…AC-23).
  *
  * `DISTINCT ON (agent_id) … ORDER BY agent_id, ran_at DESC` is one index step
- * per agent over `agent_runs_ws_agent_ran_idx`, rather than the aggregate +
+ * per agent over `agent_runs_ws_agent_done_ran_idx`, rather than the aggregate +
  * self-join a `GROUP BY` would need. An agent with no `done` run is simply
  * absent from the result: the screen renders `—` for it and leaves it out of
  * both sums, and a zero row here is exactly the "0.0s / $0.00" AC-23 forbids.
+ *
+ * `status = 'done'` IS THE INDEX'S OWN PREDICATE (`db/schema/runs.ts`), so this
+ * filter must stay exactly as written: drop it, or widen it to a second status,
+ * and Postgres cannot use the partial index at all. Measured on 20 000 runs of
+ * which 1 000 were `done` — with the index unpartitioned the planner chose a
+ * sequential scan and discarded 19 000 rows (267 buffers); with the predicate it
+ * reads 66.
  */
 export async function lastSuccessfulRunPerAgent(
   db: Db,

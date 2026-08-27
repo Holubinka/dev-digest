@@ -141,7 +141,7 @@ export function MultiRunView({ repoId, multiRunId }: { repoId: string; multiRunI
 
   const runAgain = async () => {
     try {
-      const created = await rerun.mutateAsync(multiRunId);
+      const created = await rerun.mutateAsync({ multiRunId, prId: multiRun?.pr_id ?? null });
       // AC-117: the skipped agents are named. It has to be a toast rather than a
       // line on this page, because the next thing that happens is leaving it.
       if (created.skipped.length > 0) {

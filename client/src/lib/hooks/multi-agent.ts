@@ -10,12 +10,12 @@ import React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { openRunEventSource } from "../run-event-source";
+import { RunEvent } from "@devdigest/shared";
 import type {
   LastSuccessfulRun,
   MultiAgentRun,
   MultiAgentRunCreated,
   MultiAgentRunRef,
-  RunEvent,
 } from "@devdigest/shared";
 
 /** Query key of the "which multi-run does this PR point at" read (R54). */
@@ -43,16 +43,33 @@ export function useCreateMultiAgentRun() {
   });
 }
 
+export interface RerunMultiAgentRunInput {
+  multiRunId: string;
+  /** The PR the stored set belongs to; `null` while the multi-run read is in
+   *  flight, in which case there is no link on any PR page to refresh yet. */
+  prId: string | null;
+}
+
 /**
  * POST /multi-agent-runs/:id/rerun — the same agent set on the same PR, as a NEW
  * multi-run (AC-114…AC-116). The set is resolved server-side from the stored
  * one, which is why this route takes no body: a client-named set is governed by
  * AC-28 and would have to refuse the whole request over one deleted agent.
+ *
+ * `prId` is carried only to invalidate the PR page's link, for the same reason
+ * `useCreateMultiAgentRun` does: a rerun makes a NEW multi-run for that PR, and
+ * a page that already read `prMultiAgentKey` would keep pointing at the one this
+ * rerun replaced. The rerun navigates away from the results page, so the stale
+ * answer is exactly what the reader meets on coming back.
  */
 export function useRerunMultiAgentRun() {
+  const qc = useQueryClient();
   return useMutation({
-    mutationFn: (multiRunId: string) =>
+    mutationFn: ({ multiRunId }: RerunMultiAgentRunInput) =>
       api.post<MultiAgentRunCreated>(`/multi-agent-runs/${multiRunId}/rerun`),
+    onSuccess: (_created, { prId }) => {
+      if (prId) qc.invalidateQueries({ queryKey: prMultiAgentKey(prId) });
+    },
   });
 }
 
@@ -94,12 +111,21 @@ export function useLatestMultiAgentRun(repoId: string | null | undefined) {
  * visit to the same PR tomorrow would show no way back to a comparison that
  * exists. `MultiAgentRunRef` and not `MultiAgentRun` because the page draws one
  * anchor from it — the full shape would pull every finding to render a link.
+ *
+ * `when` is what keeps this off a PR page load that will never draw the anchor.
+ * The row is cheap and the request is not serial — it goes out beside the other
+ * reads keyed on `prId`, not before them — but it is one more connection on a
+ * page that already opens an SSE stream per in-flight run against an origin a
+ * browser gives six of them (`MAX_LIVE_COLUMN_STREAMS` below is the same budget,
+ * spent from the other end). Most PR page loads land on a tab with nowhere to
+ * put the link, and its answer is not needed until the reader asks for the tab
+ * that has.
  */
-export function useLatestMultiAgentRunForPull(prId: string | null | undefined) {
+export function useLatestMultiAgentRunForPull(prId: string | null | undefined, when = true) {
   return useQuery({
     queryKey: prMultiAgentKey(prId),
     queryFn: () => api.get<MultiAgentRunRef | null>(`/pulls/${prId}/multi-agent`),
-    enabled: !!prId,
+    enabled: !!prId && when,
   });
 }
 
@@ -221,7 +247,12 @@ export function useMultiRunColumnEvents(
 
       const onMsg = (ev: MessageEvent) => {
         try {
-          const parsed = JSON.parse(ev.data) as RunEvent;
+          // Parsed against the contract, not asserted into it: `msg` reaches a
+          // column header and `runId` decides which column that is, so a frame
+          // of another shape must be dropped at this boundary rather than
+          // rendered. `data` stays `unknown` by contract — `announcesStart`
+          // above is what reads one field of it.
+          const parsed = RunEvent.parse(JSON.parse(ev.data));
           // The event says which run it belongs to; the socket it arrived on is
           // only a hint. They agree today, and attribution by the payload is
           // what keeps a shared bus from painting a line in the wrong column.
@@ -237,7 +268,8 @@ export function useMultiRunColumnEvents(
             },
           }));
         } catch {
-          /* keepalive frames and dataless native errors are not events */
+          /* keepalive frames, dataless native errors and anything that is not a
+             `RunEvent` are not events */
         }
       };
       const es = openRunEventSource(runId, onMsg);

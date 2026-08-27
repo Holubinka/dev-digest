@@ -241,6 +241,45 @@ export function columnStatus(raw: string | null): AgentColumnStatus {
 }
 
 /**
+ * Longest model-written rationale or suggested fix a multi-run response carries
+ * per finding; the rest is elided and SAID to be elided.
+ *
+ * `SPEC-05 § Non-functional requirements` bounds the body at 2 MB over 10 agents
+ * × 50 findings and names which dimension gives way: "різати текст обґрунтувань,
+ * а не кількість знахідок" — cut the rationale text, never the count, because
+ * showing part of a list in silence is what AC-177 forbids. The same paragraph
+ * puts the EXPECTED rationale at ~2 KB, so the cap is twice that: ordinary model
+ * output is never touched, and a model that answers with a megabyte cannot make
+ * the body grow with it.
+ *
+ * What this bounds is each FIELD, not the whole response. At the stated load the
+ * body is ≈1 MB and the cap never fires; a pathological run of 500 findings that
+ * every one of them hits still exceeds 2 MB, and pulling it under would mean
+ * dropping findings — the one thing the requirement rules out.
+ */
+export const MULTI_RUN_TEXT_CHARS = 4_000;
+
+/**
+ * And the title, which is short by nature and load-bearing by accident: it is
+ * the input to the position grouping (`conflicts.ts`), whose pair scan is
+ * quadratic in findings per file and linear in title tokens. An unbounded title
+ * is therefore not only body size, it is the 250 ms grouping budget.
+ */
+export const MULTI_RUN_TITLE_CHARS = 300;
+
+/**
+ * Cut a string to `max` CODE POINTS, not UTF-16 units: `String.slice` counts
+ * units, so a boundary inside an astral character leaves an orphaned surrogate
+ * in the JSON response. The suffix is the "and say that it was cut" half of the
+ * requirement — a bare `…` is indistinguishable from a `…` the model wrote.
+ */
+export function clampModelText(text: string, max: number): string {
+  const chars = [...text];
+  if (chars.length <= max) return text;
+  return `${chars.slice(0, max).join('')}… [truncated, ${chars.length - max} more characters]`;
+}
+
+/**
  * One item of a multi-run → the column the results page draws (AC-47…AC-52).
  *
  * `agent_id` is read off the RUN, not off the item: `agent_runs.agent_id` is
@@ -248,6 +287,13 @@ export function columnStatus(raw: string | null): AgentColumnStatus {
  * which is the fact `agent_deleted` states in words. `agent_name` comes off the
  * ITEM, where it was snapshotted at creation — that is the only reason a deleted
  * agent's column can still be named (AC-118).
+ *
+ * THE ONE PLACE the multi-run's model-written text is clamped, and it has to
+ * stay the one place: `MultiRunService.get` builds the conflict takes from these
+ * columns rather than from a second read, so a rationale cut here is cut in the
+ * take that quotes it too (AC-71). Clamping in `findingRowToDto` instead would
+ * reach the PR page, whose findings are one review's worth and are not what the
+ * multi-run's ceiling is about.
  */
 export function toAgentColumn(detail: MultiRunItemDetail): AgentColumn {
   const { item, run, agentExists, review, findings } = detail;
@@ -265,7 +311,16 @@ export function toAgentColumn(detail: MultiRunItemDetail): AgentColumn {
     summary: review?.summary ?? null,
     duration_ms: run?.durationMs ?? null,
     cost_usd: run?.costUsd ?? null,
-    findings: findings.map(findingRowToDto),
+    findings: findings.map((row) => {
+      const dto = findingRowToDto(row);
+      return {
+        ...dto,
+        title: clampModelText(dto.title, MULTI_RUN_TITLE_CHARS),
+        rationale: clampModelText(dto.rationale, MULTI_RUN_TEXT_CHARS),
+        suggestion:
+          dto.suggestion == null ? dto.suggestion : clampModelText(dto.suggestion, MULTI_RUN_TEXT_CHARS),
+      };
+    }),
   };
 }
 
@@ -332,6 +387,15 @@ export const toMultiAgentRunRef = (row: {
  * failure to leave the pool draining, and a rejection escaping a worker would
  * abandon every item that worker had not yet pulled. Persisting that failure is
  * the callback's own business — it already knows what a failure means.
+ *
+ * THE SWALLOW STAYS AND IT IS NOT ALLOWED TO BE SILENT. Reviewed on 2026-08-27
+ * and kept: never-reject is the property the pool exists for, and this file is
+ * the Core ring — pure over its arguments, holding no logger it could report to,
+ * which is exactly why the swallow cannot be turned into a log HERE. What that
+ * costs is real: a bug escaping `runJob`'s own guard would vanish without a
+ * line anywhere, and an `agent_runs` row left `queued` with it. So every caller
+ * attaches its own `.catch` to `fn` before handing it over — `run-executor.ts`
+ * `executeRuns` does, and a new caller that forgets is choosing silence.
  */
 export async function runWithConcurrency<T>(
   items: readonly T[],

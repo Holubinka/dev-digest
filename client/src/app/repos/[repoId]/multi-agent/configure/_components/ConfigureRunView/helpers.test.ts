@@ -82,6 +82,59 @@ describe("estimateRun", () => {
     expect(est.costUsd).toBe(0.5);
     expect(est.missingCost).toBe(0);
   });
+
+  /* Every case above chooses at most 2 agents against the default concurrency
+     of 3, so none of them ever forms a second wave. This is the one that does:
+     4 chosen agents at concurrency 3 form two waves, [a,b,c] and [d], and the
+     duration must be the SUM of the two waves' maxima — 9000 + 6000 — not a
+     single max over all four (which the old one-wave formula would give) and
+     not a plain sum over all four (AC-152, AC-153). */
+  it("sums the maximum of EACH wave once the chosen count exceeds concurrency (AC-152, AC-153)", () => {
+    const rows = [
+      row({ agent_id: "a", duration_ms: 9000, cost_usd: 0.01 }),
+      row({ agent_id: "b", duration_ms: 8000, cost_usd: 0.01 }),
+      row({ agent_id: "c", duration_ms: 7000, cost_usd: 0.01 }),
+      row({ agent_id: "d", duration_ms: 6000, cost_usd: 0.01 }),
+    ];
+
+    const est = estimateRun(["a", "b", "c", "d"], rows, 3);
+
+    expect(est.durationMs).toBe(15000); // 9000 (wave 1 max) + 6000 (wave 2 max)
+    expect(est.costUsd).toBeCloseTo(0.04, 10);
+  });
+
+  /* The boundary the wave test above depends on: choosing exactly `concurrency`
+     agents must still form a single wave and equal the old one-wave formula. */
+  it("stays a single wave — and equals the plain maximum — when the chosen count fits within concurrency", () => {
+    const rows = [
+      row({ agent_id: "a", duration_ms: 9000 }),
+      row({ agent_id: "b", duration_ms: 5000 }),
+      row({ agent_id: "c", duration_ms: 1000 }),
+    ];
+
+    const est = estimateRun(["a", "b", "c"], rows, 3);
+
+    expect(est.durationMs).toBe(9000);
+  });
+
+  /* A custom concurrency of 2 over 5 agents forms three waves: [10,8]→10,
+     [6,4]→6, [2]→2. Neither "max over all" (10000) nor "sum over all"
+     (30000) would produce this number, which is what pins the wave-forming
+     loop rather than one of the two simpler wrong implementations it could
+     collapse into. */
+  it("forms as many waves as the chosen count requires under a non-default concurrency", () => {
+    const rows = [
+      row({ agent_id: "a", duration_ms: 10000 }),
+      row({ agent_id: "b", duration_ms: 8000 }),
+      row({ agent_id: "c", duration_ms: 6000 }),
+      row({ agent_id: "d", duration_ms: 4000 }),
+      row({ agent_id: "e", duration_ms: 2000 }),
+    ];
+
+    const est = estimateRun(["a", "b", "c", "d", "e"], rows, 2);
+
+    expect(est.durationMs).toBe(18000);
+  });
 });
 
 const agent = (over: Partial<AgentListItem> & { id: string }): AgentListItem =>

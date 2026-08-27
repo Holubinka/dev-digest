@@ -88,6 +88,8 @@ export default function PRDetailPage() {
     if (prId) qc.invalidateQueries({ queryKey: ["smart-diff", prId] });
   };
 
+  const tab = search.get("tab") ?? "overview";
+
   // The way back to this PR's multi-agent comparison, from TWO sources.
   //
   // The freshly created id wins while it is there: the server was asked before
@@ -100,14 +102,17 @@ export default function PRDetailPage() {
   // It is NOT a query parameter. The shareable address is the multi-run's own
   // URL, and keeping it out of the URL is what leaves `onRunStart` with the
   // single `setParams` call the comment below at :90-94 is about.
+  //
+  // The server read is asked for only on the tab that draws the anchor. Nothing
+  // else on this page consumes it, and the just-started id below covers the
+  // launch path — `onRunStart` opens that tab anyway.
   const [justStartedMultiRunId, setJustStartedMultiRunId] = React.useState<string | null>(null);
-  const { data: latestMultiRun } = useLatestMultiAgentRunForPull(prId);
+  const { data: latestMultiRun } = useLatestMultiAgentRunForPull(prId, tab === "findings");
   const multiRunId = justStartedMultiRunId ?? latestMultiRun?.id ?? null;
   const multiRunHref = multiRunId
     ? `/repos/${repoId}/multi-agent/${encodeURIComponent(multiRunId)}`
     : null;
 
-  const tab = search.get("tab") ?? "overview";
   const traceRunId = search.get("trace");
   // Several keys at once, because one router.replace per key races: each builds
   // its params from the same stale `search`, so the last write wins and the

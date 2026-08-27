@@ -1009,6 +1009,27 @@ shape: when a text is conditioned on the INPUT (how many agents were chosen), te
 the OUTPUT of a grouping pass over it. `emptyReason`'s `agents <= 1` branch is still there and now
 covers only `agents === 0`.
 
+### `JSON.parse(x) as T` on an SSE frame let three test fixtures describe frames the server never sends
+
+**Symptom.** `useMultiRunColumnEvents` read its SSE payload as `JSON.parse(ev.data) as RunEvent`
+(`lib/hooks/multi-agent.ts`). Every fixture in `multi-agent.test.tsx` emitted `{ runId, msg, kind }`
+— no `seq`, no `t`. Both halves passed, and both were wrong: `platform/sse.ts:52-56` stamps every
+published event with `runId, seq, kind, msg, t`, so no frame on the wire has ever looked like the
+fixtures.
+
+**Cause.** A type assertion is the one boundary check that also silences the test. With nothing
+parsing, a fixture cannot be wrong — it only has to satisfy `Partial<RunEvent>`, which is every
+object.
+
+**Fix.** 2026-08-27: `RunEvent.parse(JSON.parse(ev.data))`, the schema imported as a **value** from
+`@devdigest/shared` (it is exported from `contracts/trace.ts`, not from `contracts/observability.ts`
+where the rest of the multi-agent wire lives). Switching the cast for the parse turned three green
+tests red, which is what proved the fixtures had been fiction. Note the shape of a fixture helper
+that survives this: fill the contract's required fields by default and keep an `emitRaw(data:
+string)` beside it for the frames a test wants malformed. The only non-event frame on this stream is
+`retry: 3000` (verified with `curl -N http://localhost:3001/runs/<id>/events`), and it carries no
+`data:`, so `EventSource` never dispatches it to the handler at all.
+
 
 ## Codebase Patterns
 
@@ -1725,6 +1746,48 @@ fixes and what lets `estimateRun`'s wave tie-break stay deterministic (AC-152, d
 nothing on screen and nothing either suite asserts, but it does change the order of `agentIds` in
 the `POST /multi-agent-runs` body after an untick-then-retick. When merging two "identical" copies,
 diff what each one returns, not what each one computes.
+
+### A failed mutation is already on screen — the component only owes the rejection a home
+
+`lib/providers.tsx:41-43` gives the `QueryClient` a `MutationCache.onError` that toasts every
+failed mutation with the server's own message. So "this component does not surface mutation errors"
+is usually false as stated, and a second message would be the same sentence twice —
+`CreateAgentModal`, `ImportSkillDrawer` and `CreateSkillFromConventionsModal` all say so in a
+comment over a bare `catch`.
+
+What the component does owe is somewhere for the rejection to go, because `onClick` cannot await an
+async handler. Two shapes, and which one you want depends on whether the surface survives the
+press:
+
+- **`mutate` with an `onSuccess` callback** — `ConfigureRunView` (`ConfigureRunView.tsx:108-119`).
+  The screen stays, so it can also render an inline `role="alert"` from `create.isError`.
+- **`mutateAsync` in `try/catch/finally`** — `RunReviewDropdown` (2026-08-27). The panel calls
+  `setOpen(false)` before awaiting, because a tick list has to shut on a press; an inline alert
+  would render into a closed panel and be seen by nobody. The `finally` is load-bearing separately:
+  it is what fires `onRunSettled`, so the parent's spinner stands down on a refusal.
+
+Before adding an alert block "to match the other screen", check whether the surface is still
+mounted when the mutation settles.
+
+### `refetchInterval` widened to cover `queued` bought a fixed 4 s tick for a window a minute long
+
+`usePrRuns` polled `GET /pulls/:id/runs` every 4 s while any run was `running` **or** `queued`
+(`lib/hooks/reviews.ts`). The widening was right — the shared pre-work of a multi-run (diff load
+plus an `intentService` LLM call) happens while every run is still `queued`, and polling on
+`running` alone froze the run-history timeline for all of it. The cost was not: at a ceiling of 3,
+seven of ten agents wait through two waves, and the route reads the PR's **whole** history filtered
+on a `pr_id` that carries no index. ~13 scans of a growing table to learn about one promotion.
+
+2026-08-27: the predicate is a named function, `runsPollInterval`, with two speeds — 4 s while
+something is `running`, 15 s while the only in-flight rows are `queued`, `false` otherwise. It is
+unit-tested directly (`lib/hooks/reviews.test.ts`) because a `refetchInterval` closure is
+untestable in place and no screen shows that the number is wrong.
+
+The general shape: an interval predicate that answers a boolean is a predicate that has to pick one
+number for every reason a query could be live. When one of those reasons is "waiting", give it its
+own number rather than the urgent one. And before reaching for SSE instead: `useRunEvents` is shared
+with the trace drawer, whose behaviour `SPEC-05 § AC-81` freezes — the multi-run page needed its own
+hook (`useMultiRunColumnEvents`) for exactly that reason.
 
 ## Tool & Library Notes
 

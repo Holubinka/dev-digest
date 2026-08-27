@@ -8,6 +8,7 @@ import {
   doublePrecision,
   index,
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 import { workspaces } from './core';
 import { agents } from './agents';
 import { pullRequests } from './pulls';
@@ -54,11 +55,17 @@ export const agentRuns = pgTable(
     // scan of every run the workspace ever made. `ran_at desc` is part of the
     // key, not an afterthought: the read wants the newest row per agent, and an
     // index that stops at the equality columns still sorts.
-    byAgentTime: index('agent_runs_ws_agent_ran_idx').on(
-      t.workspaceId,
-      t.agentId,
-      t.ranAt.desc(),
-    ),
+    //
+    // PARTIAL on `status = 'done'`, which is the whole point of the predicate
+    // being here rather than only in the query: a full index makes Postgres walk
+    // every run of the workspace — failed, cancelled, queued — and discard all
+    // but the `done` ones, so the scan grows with the workspace's history
+    // instead of with its agent count. `lastSuccessfulRunPerAgent` is the only
+    // reader and it always filters on that value, so no other query loses an
+    // index by narrowing this one.
+    byAgentTime: index('agent_runs_ws_agent_done_ran_idx')
+      .on(t.workspaceId, t.agentId, t.ranAt.desc())
+      .where(sql`${t.status} = 'done'`),
   }),
 );
 

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { AgentColumn, ConflictTake } from "@devdigest/shared";
-import { emptyReason, isConflict, runCounts, runStateKey, visiblePositions } from "./helpers";
+import type { ColumnStreamState } from "@/lib/hooks/multi-agent";
+import { emptyReason, isConflict, liveColumns, runCounts, runStateKey, visiblePositions } from "./helpers";
 
 const take = (verdict: ConflictTake["verdict"], runId: string = verdict): ConflictTake => ({
   run_id: runId,
@@ -95,6 +96,64 @@ describe("visiblePositions", () => {
 
   it("keeps only the conflicts with the toggle on (AC-76, AC-127)", () => {
     expect(visiblePositions([conflicting, lonely], true)).toEqual([conflicting]);
+  });
+});
+
+describe("liveColumns", () => {
+  const stream = (started: boolean): ColumnStreamState => ({
+    lastMsg: null,
+    started,
+    closed: false,
+  });
+
+  it("promotes a queued column whose stream announced it took a slot (AC-78)", () => {
+    const columns = [column("queued", "r1")];
+
+    const next = liveColumns(columns, { r1: stream(true) });
+
+    expect(next[0]?.status).toBe("running");
+  });
+
+  it("leaves a queued column alone when its stream has not announced a start", () => {
+    const columns = [column("queued", "r1")];
+
+    const next = liveColumns(columns, { r1: stream(false) });
+
+    expect(next[0]?.status).toBe("queued");
+  });
+
+  it("leaves a queued column alone when it has no stream at all (AC-148)", () => {
+    const columns = [column("queued", "r1")];
+
+    const next = liveColumns(columns, {});
+
+    expect(next[0]?.status).toBe("queued");
+  });
+
+  it("never touches a running, done, failed or cancelled column, even with a started stream", () => {
+    for (const status of ["running", "done", "failed", "cancelled"] as const) {
+      const columns = [column(status, "r1")];
+      const next = liveColumns(columns, { r1: stream(true) });
+      expect(next[0]?.status).toBe(status);
+    }
+  });
+
+  it("returns the SAME array reference when nothing is promoted", () => {
+    const columns = [column("done", "r1"), column("queued", "r2")];
+
+    const next = liveColumns(columns, { r2: stream(false) });
+
+    expect(next).toBe(columns);
+  });
+
+  it("returns a new array when something is promoted, reusing the untouched sibling column", () => {
+    const columns = [column("queued", "r1"), column("done", "r2")];
+
+    const next = liveColumns(columns, { r1: stream(true) });
+
+    expect(next).not.toBe(columns);
+    expect(next[0]?.status).toBe("running");
+    expect(next[1]).toBe(columns[1]);
   });
 });
 
