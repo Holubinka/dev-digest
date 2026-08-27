@@ -188,17 +188,35 @@ workflow cases:
 
 ### Wiring it into GitHub Actions (per-PR)
 
-Already wired: `.github/workflows/evals.yml` (root `AGENTS.md` § *Evals gate what changes* has the
-routing table). Two jobs —
+Already wired, **one workflow per tier** (root `AGENTS.md` § *Evals gate what changes* has the
+routing table):
 
-- **`quality`** — `pnpm eval:quality`, no model, no secret, runs on every PR including forks.
-  **Blocking.**
-- **`model-run`** — brings the LiteLLM proxy up, detects which of `.claude/skills/**`,
-  `.claude/agents/**`, or `CLAUDE.md`/`AGENTS.md` routing actually changed (plain `git diff`, no
-  extra action), and runs only the matching `eval:repeat <pattern> -n 2` tier(s) against a cheap
-  OpenRouter model. Diffs the run against a committed baseline in `evals/baselines/` when one
-  exists (see that folder's README) and publishes both to the job summary. **Advisory, never
-  blocking** (`continue-on-error: true`) — promote it once the team trusts it.
+| Workflow | Triggered by | Runs |
+|---|---|---|
+| `.github/workflows/evals-skills.yml` | `.claude/skills/**`, `evals/skills/**` | `eval:repeat skills` |
+| `.github/workflows/evals-agents.yml` | `.claude/agents/**`, `evals/agents/**` | `eval:repeat agents` |
+| `.github/workflows/evals-workflow.yml` | `CLAUDE.md`, `AGENTS.md`, `*/AGENTS.md`, `evals/workflow/**` | `eval:repeat workflow` |
+
+A change under `evals/src/**` is in all three `paths:` lists — a grader change is a change to every
+tier, and each tier then warns about its own baseline.
+
+Three files rather than one because a tier is re-run, muted or promoted to a required check on its
+own; with a single `evals.yml`, doing any of that to one tier edited the file the other two live
+in. The `paths:` filter of each file **is** the routing: GitHub decides whether a tier is relevant
+before a runner starts, where the single file re-derived the same answer from a `git diff` parsed
+at runtime.
+
+The split duplicates no YAML — all three callers are ~30 lines of trigger plus two job calls into
+the same pair of reusable workflows:
+
+- **`evals-quality.yml`** (`workflow_call`) — `pnpm eval:quality`, no model, no secret, runs on
+  every PR including forks. **Blocking**, and every tier `needs:` it before spending a model token.
+- **`evals-tier.yml`** (`workflow_call`, input `tier`) — brings the LiteLLM proxy up, restores
+  `evals/baselines/<tier>.json` if one is committed (see that folder's README), runs
+  `eval:repeat <tier> -n 2` against a cheap OpenRouter model, publishes the run and its baseline
+  diff to the job summary, tears the proxy down. **Advisory, never blocking**
+  (`continue-on-error: true`, declared on the reusable job — a job that calls a reusable workflow
+  cannot declare it) — promote it once the team trusts it, in one place for all three tiers.
 
 The engine underneath is the same either way: bring the proxy up as a step, wait for it, run the
 tier, tear it down.
@@ -622,7 +640,8 @@ in this codebase today, or says plainly that nothing does yet.
   that symmetry when adding a new benchmark case.
 - **Changing the grader and continuing to compare against the previous baseline.** This is why
   `evals/baselines/` is a committed, human-updated folder rather than an auto-regenerated one, and
-  why `.github/workflows/evals.yml`'s model-run job warns explicitly when `evals/src/**` changed.
+  why `.github/workflows/evals-tier.yml` warns explicitly when `evals/src/**` changed — and why
+  `evals/src/**` sits in all three tier workflows' `paths:`, so every affected baseline is named.
   Root `AGENTS.md`'s eval routing table: *eval case or grader → recalibrate the baseline*.
 - **Testing a skill only in isolation, never checking triggering in the real workflow.** The
   content tier (`skillTask`) and the systemic tier (`workflowTask`) are deliberately two different
@@ -639,13 +658,13 @@ in this codebase today, or says plainly that nothing does yet.
 
 **CI & security**
 
-- **Making an unstable model eval a hard gate on day one.** `.github/workflows/evals.yml`'s
-  `model-run` job carries `continue-on-error: true` and is not a required check — only the static,
-  no-model `quality` job blocks. Promoting it is a later, deliberate decision.
-- **Giving the eval job write permissions it doesn't need.** Both jobs in `evals.yml` declare
+- **Making an unstable model eval a hard gate on day one.** `.github/workflows/evals-tier.yml`
+  carries `continue-on-error: true` and no tier is a required check — only the static, no-model
+  `evals-quality.yml` blocks. Promoting a tier is a later, deliberate decision.
+- **Giving the eval job write permissions it doesn't need.** Every eval workflow declares
   `permissions: contents: read` and nothing else — the report goes to `$GITHUB_STEP_SUMMARY`,
-  never a PR comment via the API, specifically so neither job ever needs `pull-requests: write`.
-- **Passing secrets into the workflow for a fork PR.** `evals.yml` triggers on plain
+  never a PR comment via the API, specifically so no job ever needs `pull-requests: write`.
+- **Passing secrets into the workflow for a fork PR.** All three tier workflows trigger on plain
   `pull_request` — never `pull_request_target` — so GitHub does not forward
   `OPENROUTER_API_KEY` to a fork build at all. The job double-checks the secret is actually
   present and skips itself cleanly instead of failing on an auth error. Do not switch this
@@ -655,10 +674,11 @@ in this codebase today, or says plainly that nothing does yet.
   base repo's secrets/token; this repo doesn't use it here for exactly that reason. A job that
   ever needs to build fork PR code *and* use a secret needs the two-workflow
   `pull_request` + reviewed `workflow_run` pattern, not this shortcut.
-- **Not setting a budget, timeout, and concurrency limit.** `evals.yml`: `timeout-minutes` on both
-  jobs, `concurrency: { group: evals-${{ github.ref }}, cancel-in-progress: true }`, and the
-  model-run job's own budget control is routing — it runs only the tier(s) whose paths actually
-  changed. `eval:repeat` itself also hard-caps `-n` at 2 (`src/repeat.ts`).
+- **Not setting a budget, timeout, and concurrency limit.** `timeout-minutes` on both reusable
+  jobs, one concurrency group **per tier** (`evals-skills-${{ github.ref }}` and so on, so a push
+  cancels the tier it re-triggers and not the other two), and the budget control is the routing
+  itself — a tier runs only when its own `paths:` matched. `eval:repeat` hard-caps `-n` at 2
+  (`src/repeat.ts`).
 - **Using a prompt-level hook as a deterministic guard for a critical operation.** The push gate
   (root `AGENTS.md` § *A push is gated*) is a real `PreToolUse` shell script
   (`scripts/pr-self-review/gate.sh`) that mechanically refuses the tool call — not an instruction

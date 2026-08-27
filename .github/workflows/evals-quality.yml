@@ -1,0 +1,40 @@
+# Static quality gate for the harness evals — SKILL.md frontmatter, structure and internal links,
+# plus the activation-coverage anti-pattern check (a skill with only positive activation cases and
+# no near-miss negative). No model, no secret, seconds to run: it works on a fork PR and it is the
+# only eval check that blocks a merge.
+#
+# Reusable, called by all three tier workflows (evals-skills, evals-agents, evals-workflow) so a
+# tier never spends a model token on a harness that is already broken — the ordering the single
+# evals.yml used to express with `needs: quality`. The gate is defined here once.
+name: evals · static quality gate
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: static quality gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: evals
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: evals/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm eval:quality

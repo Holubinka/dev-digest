@@ -20,9 +20,11 @@ One file per pattern, named after the pattern it covers:
 - `agents.json` — baseline for `pnpm eval:repeat agents -n 2`
 - `workflow.json` — baseline for `pnpm eval:repeat workflow -n 2`
 
-`.github/workflows/evals.yml` copies `baselines/<name>.json` to
-`results/repeat-baseline-<name>.json` before running, then diffs the PR's own run
-(`repeat-candidate-<name>.json`) against it with `pnpm eval:delta baseline-<name> candidate-<name>`.
+`.github/workflows/evals-tier.yml` copies `baselines/<tier>.json` to
+`results/repeat-baseline-<tier>.json` before running, then diffs the PR's own run
+(`repeat-candidate-<tier>.json`) against it with `pnpm eval:delta baseline-<tier> candidate-<tier>`.
+The tier name comes from the caller (`evals-skills.yml`, `evals-agents.yml`, `evals-workflow.yml`),
+so the three files above are exactly the three baselines CI can restore.
 A pattern with no committed baseline here just gets its raw results published — no diff, and no
 CI failure either (this tier never blocks a merge; see root `AGENTS.md` § *Evals gate what
 changes*).

@@ -74,18 +74,27 @@ cd evals && pnpm eval:delta <baseline> <candidate>       # before vs after, per-
 cd evals && pnpm eval:benchmark <pattern> -n 5            # with vs without the artifact (lift)
 ```
 
-| Change | Minimum check |
-|---|---|
-| `.claude/skills/**` | `eval:quality` + the matching skill eval |
-| `.claude/agents/**` | the agent eval + the relevant workflow case |
-| `CLAUDE.md` / routing rules | `eval:workflow` |
-| An eval case or a grader (`evals/src/**`) | recalibrate: `eval:repeat --label`, commit the JSON under `evals/baselines/` |
+| Change | Minimum check | CI workflow |
+|---|---|---|
+| `.claude/skills/**` | `eval:quality` + the matching skill eval | `evals-skills.yml` |
+| `.claude/agents/**` | the agent eval + the relevant workflow case | `evals-agents.yml` |
+| `CLAUDE.md` / routing rules | `eval:workflow` | `evals-workflow.yml` |
+| An eval case or a grader (`evals/src/**`) | recalibrate: `eval:repeat --label`, commit the JSON under `evals/baselines/` | all three |
 
-CI (`.github/workflows/evals.yml`) blocks a PR on `eval:quality` only. The model-run tier runs the
-subset above that actually changed, publishes a report and a baseline diff to the job summary, and
-does not block — it has no secret on a fork PR by construction (`pull_request`, never
-`pull_request_target`) and skips itself there. Full detail, and the anti-patterns a new case,
-grader or CI step must not reintroduce: `evals/README.md`.
+**One workflow per tier**, and the `paths:` filter of each is the routing — the table above, said
+again in a form GitHub enforces before a runner starts. A tier is re-run, muted or promoted to
+required on its own, without touching the other two. All three call the same two reusable
+workflows, so the split duplicates no YAML:
+
+- `evals-quality.yml` — `eval:quality`, no model, no secret, runs on a fork PR. **The only check
+  that blocks a merge**, and every tier waits on it before spending a model token.
+- `evals-tier.yml` — the model run for one tier (`with: { tier: skills | agents | workflow }`).
+  Advisory: it carries `continue-on-error`, publishes a report and a baseline diff to the job
+  summary, and has no secret on a fork PR by construction (`pull_request`, never
+  `pull_request_target`) — it checks for one and skips itself cleanly there.
+
+Full detail, and the anti-patterns a new case, grader or CI step must not reintroduce:
+`evals/README.md`.
 
 ## What a session costs
 
