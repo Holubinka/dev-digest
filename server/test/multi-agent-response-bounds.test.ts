@@ -41,7 +41,10 @@ const findingRow = (over: Partial<FindingRow> & { id: string }): FindingRow => (
   ...over,
 });
 
-const detail = (findings: FindingRow[]): MultiRunItemDetail => ({
+const detail = (
+  findings: FindingRow[],
+  over: { summary?: string; error?: string } = {},
+): MultiRunItemDetail => ({
   item: {
     runId: 'run-1',
     multiRunId: 'mr-1',
@@ -58,9 +61,14 @@ const detail = (findings: FindingRow[]): MultiRunItemDetail => ({
     durationMs: 1000,
     costUsd: 0.01,
     score: 80,
+    error: over.error ?? null,
   } as unknown as AgentRunRow,
   agentExists: true,
-  review: { id: 'rev-1', verdict: 'request_changes', summary: 'ok' } as MultiRunItemDetail['review'],
+  review: {
+    id: 'rev-1',
+    verdict: 'request_changes',
+    summary: over.summary ?? 'ok',
+  } as MultiRunItemDetail['review'],
   findings,
 });
 
@@ -130,6 +138,31 @@ describe('a multi-run column bounds every model-written field', () => {
     );
 
     expect(position!.takes[0]!.note).toContain('[truncated, 7 more characters]');
+  });
+
+  /**
+   * `summary` and `error` sit on the same object literal as the clamped
+   * findings and are just as model-written. `summary` is the join of one
+   * partial PER CHANGED FILE (`reviewer-core/src/review/reduce.ts:53`), so it
+   * grows with a file count the PR author picks; `error` is a raw provider
+   * message. Ten of each ride one response.
+   */
+  it('clamps the column summary and the run error too, not only the findings', () => {
+    const column = toAgentColumn(
+      detail([findingRow({ id: 'f-1' })], {
+        summary: 'S'.repeat(MULTI_RUN_TEXT_CHARS + 40),
+        error: 'E'.repeat(MULTI_RUN_TEXT_CHARS + 11),
+      }),
+    );
+
+    expect(column.summary).toContain('[truncated, 40 more characters]');
+    expect(column.error).toContain('[truncated, 11 more characters]');
+  });
+
+  it('leaves a short summary and a null error exactly as they were', () => {
+    const column = toAgentColumn(detail([findingRow({ id: 'f-1' })]));
+    expect(column.summary).toBe('ok');
+    expect(column.error).toBeNull();
   });
 });
 

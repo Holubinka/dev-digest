@@ -305,10 +305,14 @@ export function toAgentColumn(detail: MultiRunItemDetail): AgentColumn {
     provider: run?.provider ?? null,
     model: run?.model ?? null,
     status: columnStatus(run?.status ?? null),
-    error: run?.error ?? null,
+    // Clamped for the same reason the findings are: this is a raw provider or
+    // diff-loader message, and ten of them ride one response.
+    error: run?.error == null ? null : clampModelText(run.error, MULTI_RUN_TEXT_CHARS),
     verdict: review?.verdict ?? null,
     score: run?.score ?? null,
-    summary: review?.summary ?? null,
+    // `reduceReviews` joins one partial PER CHANGED FILE, so this grows with a
+    // file count the PR author picks — the same unbounded shape as a rationale.
+    summary: review?.summary == null ? null : clampModelText(review.summary, MULTI_RUN_TEXT_CHARS),
     duration_ms: run?.durationMs ?? null,
     cost_usd: run?.costUsd ?? null,
     findings: findings.map((row) => {
