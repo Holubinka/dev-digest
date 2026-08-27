@@ -6,7 +6,6 @@ import type {
   CiInstallationListItem,
   CiRun,
 } from '@devdigest/shared';
-import type { Container } from '../../platform/container.js';
 import type { PinoLike } from '../../platform/run-logger.js';
 import { ValidationError } from '../../platform/errors.js';
 import {
@@ -29,7 +28,14 @@ import {
 } from './helpers.js';
 import { CiIngestExecutor } from './ingest-executor.js';
 import { CiRepository } from './repository.js';
-import type { GeneratedBundle, IngestOutcome, PollError } from './types.js';
+import type {
+  CiContainer,
+  CiRefreshPage,
+  CiRunsPage,
+  GeneratedBundle,
+  IngestOutcome,
+  PollError,
+} from './types.js';
 
 /**
  * Export to CI — the use cases behind the five routes.
@@ -45,16 +51,7 @@ import type { GeneratedBundle, IngestOutcome, PollError } from './types.js';
  * value") a property of the code's SHAPE rather than of a test.
  */
 
-/** `GET /ci/runs` — the page's rows and the last poll that actually returned. */
-export interface CiRunsPage {
-  runs: CiRun[];
-  last_polled_at: string | null;
-}
-
-/** `POST /ci/runs/refresh` — the same, plus the repositories that would not answer. */
-export interface CiRefreshPage extends CiRunsPage {
-  errors: PollError[];
-}
+export type { CiRefreshPage, CiRunsPage } from './types.js';
 
 const NO_INGEST: IngestOutcome = { errors: [], polled: 0, accepted: 0, rejected: 0 };
 
@@ -95,7 +92,7 @@ export class CiService {
   private readonly ingests = new Map<string, IngestOutcome>();
 
   constructor(
-    private container: Container,
+    private container: CiContainer,
     private repo: CiRepository = new CiRepository(container.db),
   ) {}
 

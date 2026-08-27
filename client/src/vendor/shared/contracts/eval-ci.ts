@@ -453,6 +453,22 @@ export const CI_ENV = {
   githubToken: 'GITHUB_TOKEN',
 } as const;
 
+/**
+ * Where an export writes inside a target repository.
+ *
+ * Beside `CI_ENV` and for the same reason: `modules/ci/generate/bundle.ts`
+ * WRITES these paths and `agent-runner/src/inputs.ts` READS them, across a
+ * package boundary no gate spans. While each side spelled them itself, a
+ * rename shipped a bundle the runner could not open with everything green on
+ * both sides. `server/src/modules/_shared/bundle-paths.ts` re-exports them for
+ * the two server slices that also share them.
+ */
+export const CI_BUNDLE = {
+  root: '.devdigest',
+  agents: 'agents',
+  skills: 'skills',
+} as const;
+
 /** Request body for `POST /pulls/:id/conformance`. */
 export const ConformanceInput = z.object({
   /** Spec path/id to compare against; if omitted, the first available spec. */

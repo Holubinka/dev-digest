@@ -37,6 +37,8 @@ import type { BlastReader } from '../modules/blast/types.js';
 import { BlastService } from '../modules/blast/service.js';
 import { BlastRepository } from '../modules/blast/repository.js';
 import type { BriefReader } from '../modules/brief/types.js';
+import type { CiReader } from '../modules/ci/types.js';
+import { CiService } from '../modules/ci/service.js';
 import { BriefService } from '../modules/brief/service.js';
 import { BriefRepository } from '../modules/brief/repository.js';
 import type { OnboardingGenerator, OnboardingReader } from '../modules/onboarding/types.js';
@@ -98,6 +100,8 @@ export interface ContainerOverrides {
   blast?: BlastReader;
   /** Risk Brief (10) — injectable for the same reason every other service here is. */
   brief?: BriefReader;
+  /** Export to CI (16) — same reason, and its routes' tests inject canned rows. */
+  ci?: CiReader;
   /** Onboarding Tour (11) — the routes' own tests inject a canned page and record. */
   onboarding?: OnboardingReader;
   /**
@@ -150,6 +154,7 @@ export class Container {
   private _intentService?: IntentDeriver;
   private _blastService?: BlastReader;
   private _briefService?: BriefReader;
+  private _ciService?: CiReader;
   private _onboardingService?: OnboardingReader;
   private _onboardingGenerator?: OnboardingGenerator;
   private _projectContext?: ProjectContextResolver;
@@ -293,6 +298,21 @@ export class Container {
   get briefService(): BriefReader {
     if (this.overrides.brief) return this.overrides.brief;
     return (this._briefService ??= new BriefService(this, new BriefRepository(this.db)));
+  }
+
+  /**
+   * Export to CI (16). MEMOISED, for the reason `briefService` is: `CiService`
+   * carries the `ingests` map that hands `POST /ci/runs/refresh` its `errors[]`,
+   * and while the route plugin constructed its own instance that handoff was
+   * held by REGISTRATION COUNT rather than by construction — a second
+   * `app.register` would have re-registered the ingest job with a new
+   * instance's closure while the old one read its own empty map and reported
+   * zero poll errors. `INSIGHTS.md` records the identical shape for
+   * `BriefService.inFlight`, and no gate can see it.
+   */
+  get ciService(): CiReader {
+    if (this.overrides.ci) return this.overrides.ci;
+    return (this._ciService ??= new CiService(this));
   }
 
   /**

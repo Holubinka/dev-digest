@@ -1,3 +1,5 @@
+import { CI_BUNDLE } from '@devdigest/shared';
+
 /**
  * Where an export to CI writes inside a target repository — one fact, two slices.
  *
@@ -23,13 +25,13 @@
  * because that is the whole durability story: a document created here is
  * untracked, and untracked is what `git reset --hard` in `sync()` leaves alone.
  */
-export const DEVDIGEST_ROOT = '.devdigest';
+export const DEVDIGEST_ROOT = CI_BUNDLE.root;
 
 /** One manifest per exported agent — `.devdigest/agents/<slug>.yaml`. */
-export const BUNDLE_AGENTS_DIR = 'agents';
+export const BUNDLE_AGENTS_DIR = CI_BUNDLE.agents;
 
 /** One document per bound skill — `.devdigest/skills/<slug>.md`. */
-export const BUNDLE_SKILLS_DIR = 'skills';
+export const BUNDLE_SKILLS_DIR = CI_BUNDLE.skills;
 
 /**
  * The subfolders of the root that ARE the exported bundle.

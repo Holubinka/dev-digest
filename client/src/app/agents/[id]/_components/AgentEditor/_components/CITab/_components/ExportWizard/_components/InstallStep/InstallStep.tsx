@@ -5,7 +5,7 @@
 import React from "react";
 import { useTranslations } from "next-intl";
 import { Badge, Icon } from "@devdigest/ui";
-import { CI_SECRET_KEY } from "../../constants";
+import { CI_ENV } from "@devdigest/shared";
 import type { InstallAction } from "../../reducer";
 import { s } from "./styles";
 
@@ -46,7 +46,7 @@ export function InstallStep({
             {t("exportWizard.successPr")}
           </a>
           <p style={s.secretNote}>
-            {t("exportWizard.secretNote", { key: CI_SECRET_KEY, repo })}
+            {t("exportWizard.secretNote", { key: CI_ENV.openRouterKey, repo })}
           </p>
         </div>
       </div>

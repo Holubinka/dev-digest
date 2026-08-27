@@ -6,7 +6,6 @@ import { getContext } from '../_shared/context.js';
 import { IdParams } from '../_shared/schemas.js';
 import { NotFoundError } from '../../platform/errors.js';
 import { ALLOWED_TRIGGERS } from './constants.js';
-import { CiService } from './service.js';
 
 /**
  * Export to CI (16).
@@ -60,7 +59,7 @@ const RefreshBody = z.object({ force: z.boolean().default(false) });
 
 export default async function ciRoutes(appBase: FastifyInstance) {
   const app = appBase.withTypeProvider<ZodTypeProvider>();
-  const service = new CiService(app.container);
+  const service = app.container.ciService;
   service.registerIngestJobHandler(app.log);
 
   app.post(

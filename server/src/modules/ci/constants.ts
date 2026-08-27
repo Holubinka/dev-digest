@@ -118,6 +118,17 @@ export const MAX_DIFF_LINES = 15_000;
 export const ALLOWED_TRIGGERS = ['opened', 'synchronize', 'reopened'] as const;
 
 /** Artifact ceilings (AC-71). Archive first, then what it inflates to. */
+/**
+ * Length cap for the artifact's free-text fields on their way into Postgres.
+ *
+ * `CiResultArtifact.agent` and `.version` are `z.string()` with no bound, read
+ * out of a repository DevDigest does not control. The archive caps above bound
+ * the FILE, not the field: a 500 000-character `agent` fits in a 686-byte
+ * archive. Generous enough that no honest runner is truncated — our own slug is
+ * a few dozen characters — and small enough that a row stays a row.
+ */
+export const MAX_ARTIFACT_TEXT = 256;
+
 export const MAX_ARCHIVE_BYTES = 1_048_576;
 export const MAX_UNZIPPED_BYTES = 4_194_304;
 

@@ -1,10 +1,10 @@
 import { closeSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import { AgentManifest } from '@devdigest/shared';
+import { AgentManifest, CI_BUNDLE } from '@devdigest/shared';
 
 /** Where the generated bundle lives inside the target repository's checkout. */
-export const BUNDLE_DIR = '.devdigest';
+export const BUNDLE_DIR = CI_BUNDLE.root;
 
 /** `.devdigest/memory.jsonl` ceilings (SPEC-05 § Non-functional requirements). */
 export const MEMORY_MAX_BYTES = 64 * 1024;
@@ -70,7 +70,7 @@ export function readCapped(file: string, maxBytes: number): { text: string; trun
  * exits non-zero without calling a model (AC-58).
  */
 export function readManifest(root: string, slug: string): AgentManifest {
-  const file = resolveBundlePath(root, 'agents', slug, '.yaml');
+  const file = resolveBundlePath(root, CI_BUNDLE.agents, slug, '.yaml');
   let text: string;
   try {
     text = readCapped(file, MANIFEST_MAX_BYTES).text;
@@ -109,7 +109,7 @@ export function readSkillBodies(root: string, slugs: string[]): SkillsRead {
   for (const slug of slugs) {
     let file: string;
     try {
-      file = resolveBundlePath(root, 'skills', slug, '.md');
+      file = resolveBundlePath(root, CI_BUNDLE.skills, slug, '.md');
     } catch {
       notes.push(`skill skipped — "${safeLabel(slug)}" is not a usable slug`);
       continue;

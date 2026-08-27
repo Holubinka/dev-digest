@@ -74,8 +74,5 @@ export const STEP_LABEL_KEYS = [
  */
 export const PREVIEW_MAX_BYTES = 64 * 1024;
 
-/** The one secret the wizard cannot set for you (AC-45). */
-export const CI_SECRET_KEY = "OPENROUTER_API_KEY";
-
 /** The base branch used when the selected repo reports none. */
 export const FALLBACK_BASE = "main";

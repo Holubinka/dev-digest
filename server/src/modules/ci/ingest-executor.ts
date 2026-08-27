@@ -3,9 +3,7 @@ import {
   type GitHubClient,
   type RepoRef,
   type WorkflowRunRef,
-  type Verdict,
 } from '@devdigest/shared';
-import type { Container } from '../../platform/container.js';
 import type { PinoLike } from '../../platform/run-logger.js';
 import { ValidationError } from '../../platform/errors.js';
 import {
@@ -18,7 +16,7 @@ import {
 import { agentSlug as agentSlugFor } from './generate/slug.js';
 import { parseRepoRef, readArtifactJson, runStatusFromArtifact } from './helpers.js';
 import type { CiRepository } from './repository.js';
-import type { IngestOutcome, InstallationTarget, PollError } from './types.js';
+import type { CiContainer, IngestOutcome, InstallationTarget, PollError } from './types.js';
 
 /**
  * Pull-based ingest: poll Actions, read `devdigest-result`, write `ci_runs`.
@@ -73,7 +71,7 @@ function toDate(value: string | null): Date | null {
 
 export class CiIngestExecutor {
   constructor(
-    private container: Container,
+    private container: CiContainer,
     private repo: CiRepository,
     private log: PinoLike,
   ) {}
@@ -228,13 +226,13 @@ export class CiIngestExecutor {
       ranAt,
       status: state.status,
       findingsCount: result.findings_count,
-      costUsd: result.cost_usd,
+      costUsd: money(result.cost_usd),
       githubUrl: run.html_url,
       agent: result.agent,
       durationMs: result.duration_ms ?? null,
       headSha: run.head_sha,
       bundleVersion: result.version ?? null,
-      verdict: (result.verdict as Verdict | undefined) ?? null,
+      verdict: result.verdict ?? null,
     });
 
     // Only when the statement INSERTED. A second poll over the same run updates
@@ -249,10 +247,25 @@ export class CiIngestExecutor {
         ranAt,
         status: state.status,
         findingsCount: result.findings_count,
-        costUsd: result.cost_usd,
+        costUsd: money(result.cost_usd),
         durationMs: result.duration_ms ?? null,
       });
     }
     return true;
   }
+}
+
+/**
+ * A cost from the artifact, or null.
+ *
+ * `CiResultArtifact.cost_usd` is `z.number().nullable()`, and Zod's `number`
+ * rejects only `NaN` — `1e999` parses to `Infinity` and Postgres
+ * `double precision` accepts it. `pulls/routes.ts` sums this column for the PR
+ * list's total, so one artifact from a repository DevDigest does not control
+ * would poison a workspace's recorded spend permanently, and the sum would then
+ * serialise as `null` through `JSON.stringify`. The sibling integer fields were
+ * bounded for exactly this reason; this one was left out.
+ */
+function money(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }

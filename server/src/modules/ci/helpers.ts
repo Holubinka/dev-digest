@@ -7,7 +7,7 @@ import {
   type CiRun,
   type CiRunStatus,
   type CiUnconfirmedReason,
-  type Verdict,
+  Verdict,
 } from '@devdigest/shared';
 import { ValidationError } from '../../platform/errors.js';
 import { MAX_UNZIPPED_BYTES, workflowPathFor } from './constants.js';
@@ -124,7 +124,7 @@ export function toCiRun(row: CiRunRowLike): CiRun {
     workflow_run_id: row.workflowRunId,
     head_sha: row.headSha,
     bundle_version: row.bundleVersion,
-    verdict: row.verdict as Verdict | null,
+    verdict: Verdict.safeParse(row.verdict).data ?? null,
   };
 }
 

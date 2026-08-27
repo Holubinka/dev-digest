@@ -2,6 +2,8 @@ import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { Db } from '../../db/client.js';
 import * as t from '../../db/schema.js';
 import type { CiTarget } from '@devdigest/shared';
+import { stripNul } from '../../db/text.js';
+import { MAX_ARTIFACT_TEXT } from './constants.js';
 import type { CiRunRowLike } from './helpers.js';
 import type {
   CiAgentRunWrite,
@@ -30,6 +32,28 @@ export interface UpsertInstallation {
 /** `true` however the driver spelled it — postgres.js and pg differ on booleans. */
 function isTrue(value: unknown): boolean {
   return value === true || value === 't' || value === 'true';
+}
+
+/**
+ * A free-text field from the artifact, made safe for a `text` column.
+ *
+ * NUL first, because Postgres refuses the whole statement on one — and here
+ * that refusal is not a `ValidationError`, so `ingest-executor` rethrows it,
+ * the run loop aborts before `recordPoll`, and every later refresh re-reads the
+ * same artifact and fails identically. One artifact would wedge that
+ * repository's ingest for good. Every other module that writes untrusted text
+ * already carries this (`brief/repository.ts`, `reviews/repository/*`); this
+ * one was the fifth path and the only one without it.
+ *
+ * Then the length, by CODE POINT, because a `slice` counts UTF-16 units and
+ * splits a surrogate pair — the trap `server/INSIGHTS.md` § *Cut by code point*
+ * records.
+ */
+function fromArtifact(value: string | null): string | null {
+  if (value === null) return null;
+  const clean = stripNul(value);
+  const points = [...clean];
+  return points.length <= MAX_ARTIFACT_TEXT ? clean : points.slice(0, MAX_ARTIFACT_TEXT).join('');
 }
 
 export class CiRepository {
@@ -208,7 +232,7 @@ export class CiRepository {
       .set({
         lastPolledAt: at,
         workflowPresent: seen.workflowPresent,
-        observedAgent: seen.observedAgent,
+        observedAgent: fromArtifact(seen.observedAgent),
       })
       .where(eq(t.ciInstallations.id, installationId));
   }
@@ -293,10 +317,10 @@ export class CiRepository {
       costUsd: write.costUsd,
       githubUrl: write.githubUrl,
       source: 'ci',
-      agent: write.agent,
+      agent: fromArtifact(write.agent),
       durationMs: write.durationMs,
       headSha: write.headSha,
-      bundleVersion: write.bundleVersion,
+      bundleVersion: fromArtifact(write.bundleVersion),
       verdict: write.verdict,
     };
     const [row] = await this.db

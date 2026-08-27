@@ -15,7 +15,7 @@ import { useUpdateAgent } from "@/lib/hooks/agents";
 import { useCiInstallations } from "@/lib/hooks/ci";
 import { relativeTime } from "@/lib/relative-time";
 import type { CiInstallationListItem } from "@/lib/types";
-import { ExportWizard } from "../ExportWizard";
+import { ExportWizard } from "./_components/ExportWizard";
 import {
   FAIL_ON_OPTIONS,
   RUN_STATUS_COLOR,
@@ -82,14 +82,21 @@ function InstallationRow({
   // The status is a stored enum value, rendered as the text it is (AC-77) —
   // an unrecognised one still reaches the reader, muted rather than dropped.
   const status = install.last_run_status;
-  const tone = (status ? RUN_STATUS_COLOR[status] : undefined) ?? {
+  // `Object.hasOwn`, never a bare index: the value is a free string off the
+  // wire, and `RUN_STATUS_COLOR["toString"]` returns an inherited function —
+  // truthy, so the `??` below would never fire and `tone.color` would arrive
+  // at `<Badge>` undefined. client/INSIGHTS.md records this fixed in four
+  // places on 2026-08-02.
+  const known = status !== null && status !== undefined && Object.hasOwn(RUN_STATUS_COLOR, status);
+  const tone = (known ? RUN_STATUS_COLOR[status] : undefined) ?? {
     color: "var(--text-muted)",
     bg: "var(--bg-hover)",
   };
 
   // AC-147, AC-148, AC-149: a row DevDigest cannot vouch for says so on its own
   // face, next to the last run it did see.
-  const unconfirmed = install.unconfirmed_reason && UNCONFIRMED_BADGE[install.unconfirmed_reason];
+  const reason = install.unconfirmed_reason;
+  const unconfirmed = reason && Object.hasOwn(UNCONFIRMED_BADGE, reason) ? UNCONFIRMED_BADGE[reason] : undefined;
 
   return (
     <div style={s.row}>
@@ -108,7 +115,7 @@ function InstallationRow({
         )}
         {status ? (
           <Badge color={tone.color} bg={tone.bg} dot>
-            {status in RUN_STATUS_COLOR ? t(`runs.status.${status}`) : status}
+            {known ? t(`runs.status.${status}`) : status}
           </Badge>
         ) : (
           <span style={s.rowTime}>{t("ciTab.noRuns")}</span>

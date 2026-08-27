@@ -1,4 +1,18 @@
-import type { CiFile, CiTarget, Verdict } from '@devdigest/shared';
+import type {
+  CiExport,
+  CiExportInput,
+  CiFile,
+  CiInstallationListItem,
+  CiRun,
+  CiTarget,
+  Verdict,
+} from '@devdigest/shared';
+import type { GitHubClient, RunnerBundle } from '../../vendor/shared/adapters.js';
+import type { Db } from '../../db/client.js';
+import type { AgentRow } from '../../db/rows.js';
+import type { LinkedSkillLike } from '../_shared/attached-skills.js';
+import type { JobRunner } from '../../platform/jobs.js';
+import type { PinoLike } from '../../platform/run-logger.js';
 
 /**
  * Module-local shapes. Rows do not leave `modules/ci/**` — `helpers.ts` maps
@@ -113,4 +127,65 @@ export interface GeneratedBundle {
   agentSlug: string;
   /** Paths the publishing commit removes alongside the files it writes (AC-146). */
   removals: string[];
+}
+
+/**
+ * What the composition root holds, and the routes consume.
+ *
+ * Structural, like `BriefReader` — the container must not import `CiService`.
+ * It exists because `CiService` carries `ingests`, the map that gives
+ * `POST /ci/runs/refresh` its `errors[]`: while the routes constructed their own
+ * instance, that handoff was held by registration count rather than by
+ * construction, and a second `app.register` would have re-registered the ingest
+ * job with a new instance's closure while the old one read its own empty map
+ * and reported zero poll errors. `server/INSIGHTS.md` records the identical
+ * shape for `BriefService.inFlight`.
+ */
+/** `GET /ci/runs` — the page's rows and the last poll that actually returned. */
+export interface CiRunsPage {
+  runs: CiRun[];
+  last_polled_at: string | null;
+}
+
+/** `POST /ci/runs/refresh` — the same, plus the repositories that would not answer. */
+export interface CiRefreshPage extends CiRunsPage {
+  errors: PollError[];
+}
+
+/**
+ * Just enough of the container for this slice, declared structurally.
+ *
+ * The concrete `Container` cannot be named here: the composition root imports
+ * `CiService` to memoise it, so a type import back the other way closes a
+ * `no-circular` cycle — dependency-cruiser follows type-only imports
+ * (`tsPreCompilationDeps`). `BriefContainer` is the same move for the same
+ * reason.
+ */
+export interface CiContainer {
+  readonly db: Db;
+  readonly jobs: JobRunner;
+  /**
+   * Only the two reads this slice makes, named structurally: `no-cross-module`
+   * forbids `modules/ci` naming `modules/agents`' repository type, and reaching
+   * it through the container is the sanctioned escape — but the escape does not
+   * extend to importing the class.
+   */
+  readonly agentsRepo: {
+    getById(workspaceId: string, id: string): Promise<AgentRow | undefined>;
+    linkedSkills(agentId: string): Promise<LinkedSkillLike[]>;
+  };
+  readonly runnerBundle: RunnerBundle;
+  github(): Promise<GitHubClient>;
+}
+
+export interface CiReader {
+  registerIngestJobHandler(log: PinoLike): void;
+  installations(
+    workspaceId: string,
+    agentId: string,
+  ): Promise<CiInstallationListItem[] | undefined>;
+  export(workspaceId: string, agentId: string, input: CiExportInput): Promise<CiExport | undefined>;
+  zip(workspaceId: string, agentId: string, input: CiExportInput): Promise<Uint8Array | undefined>;
+  runs(workspaceId: string): Promise<CiRunsPage>;
+  refresh(workspaceId: string, force: boolean): Promise<CiRefreshPage>;
 }
