@@ -58,8 +58,14 @@ that change worse, not safer.
 2. **`rg` the nouns of the plan.** This repo carries scaffolding for lessons that have not
    landed — tables that migrate but stay empty, contracts nobody constructs, registry entries
    with zero callers. One grep separates "how would this work" from the far cheaper "what is
-   already wired". Hand what it found to every agent you dispatch, so none of them pays to
-   rediscover it.
+   already wired". **Paste the output** into every agent you dispatch — the matched lines, not
+   your summary of them — so none of them pays to rediscover it. Measured on Export to CI:
+   the brief that pasted its evidence bought its first write after 4 scout calls; the brief
+   that described the same class of thing took 39.
+3. **Check the ports.** 3000 and 3001 are frequently another worktree's dev servers, and an
+   agent that assumes otherwise gets someone else's page or an `EADDRINUSE` on a hard-coded
+   port — two agents lost turns to exactly that. `lsof -i :3000 -i :3001`, then put one line in
+   every dispatch: *"3001 is another checkout — bring your own API up on 3002."*
 
 ## 3. Stage 1 — build
 
@@ -70,6 +76,31 @@ section closes with. Packages that neither block the other go in **one message**
 run concurrently. Give each agent its package id and nothing else — its own `### PN` block carries
 the contract it may assume, and the planner repeated it there precisely so no agent has to read
 another's steps.
+
+**At most two `judgement` packages in flight.** Three heavy implementers at once is what hit the
+session limit on Export to CI: the kill cost 89M in restarts against 52M of work done, and
+recovering from it plus repairing what it produced came to **45 % of the whole run's tokens
+against 26 % for building the feature**. Two concurrent is slower in wall-clock and strictly
+cheaper than three plus three restarts. Dispatch a package the plan marks `mechanical` at a lower
+tier — a constant plus a guard does not need the top one.
+
+**A spec being amended is not a spec to build against.** If `spec-creator` is still writing, wait
+for it. Four minutes of overlap on this branch let an implementer read criteria that were rewritten
+underneath it, and the criterion it missed had to be added by the next agent.
+
+### If an agent is killed mid-package
+
+Its work is on disk and its context is gone. Do **not** hand-write a survey of the tree and label
+it "a guide, not the truth" — the successor then re-verifies every line of it, and you have paid
+twice. The restart brief is:
+
+- the killed agent's `.reviews/<branch>/progress-<PN>.md`, quoted;
+- pasted `git status --short`, `ls` of the new directories, and the `grep -n` that shows the state
+  you are claiming — output, not prose;
+- **two timestamps: when that state was captured, and what you know has happened since.** A paste
+  is true when taken; two of five items in this branch's resume brief had already been fixed by
+  someone else;
+- whether the list of remaining work is exhaustive or only what is known.
 
 ## 4. Stage 2 — run it
 

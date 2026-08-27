@@ -64,7 +64,7 @@ Walk it element by element and answer each with *matches / differs / absent*:
 it is theirs to make.
 
 The dispatch side of this — never describe a mockup to an agent, hand it over — is
-`.claude/agents/README.md` § *Four habits that outrank every agent here*, along with the run where
+`.claude/agents/README.md` § *Five habits that outrank every agent here*, along with the run where
 skipping it cost a whole feature's shape.
 
 ## i18n

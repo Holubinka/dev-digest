@@ -159,6 +159,10 @@ domains_for() { # path -> the Track B roster, or empty when the file is checklis
   case "$1" in
     client/src/*.ts|client/src/*.tsx|client/*.test.ts|client/*.test.tsx) ;;
     server/src/*|reviewer-core/src/*)                                   ;;
+    # `agent-runner/src/*` is the code that runs inside a THIRD PARTY's Actions
+    # with their token — the last source in this repo that should reach no
+    # reviewer. It routed nowhere until 2026-08-27.
+    agent-runner/src/*)                                                 ;;
     # `contracts` was the sixth domain and could never fire here: there are no
     # `*.schema.ts` files, and every `contracts/` directory sits under
     # `*/vendor/shared/`, which flag_for diverts before routing. The arm stays
@@ -210,6 +214,7 @@ while IFS= read -r path; do
     client/*)        packages="$(printf '%s' "$packages" | jq '. + ["client"]')" ;;
     server/*)        packages="$(printf '%s' "$packages" | jq '. + ["server"]')" ;;
     reviewer-core/*) packages="$(printf '%s' "$packages" | jq '. + ["reviewer-core"]')" ;;
+    agent-runner/*)  packages="$(printf '%s' "$packages" | jq '. + ["agent-runner"]')" ;;
   esac
 
   reason="$(skip_reason "$path")"

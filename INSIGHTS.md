@@ -218,6 +218,23 @@ it. The cost is one more run; the alternative is a permanent change made from a 
 
 ## What Doesn't Work
 
+### A unit suite that runs `src/` proves nothing about the `dist/` artifact you actually ship
+
+`agent-runner`'s 63 tests were green, its typecheck was clean, and `dist/runner.mjs` was built,
+banner-correct and comfortably under the size ceiling — and the file died on its own first line with
+`Dynamic require of "stream" is not supported` (2026-08-26). Vitest resolves `src/**` through its own
+`resolve.alias`, so the suite never loaded the bundle; every gate the package had was measuring a
+different artifact from the one the feature delivers.
+
+This bites exactly when the deliverable *is* a build output — a bundled CLI, a committed
+`runner.mjs`, anything a user runs rather than imports. The tell is that no test file mentions
+`dist/`. The check that closed it is in `agent-runner/scripts/build.mjs`: after the size gate, spawn
+the built file in a `mkdtemp` directory with no `node_modules` and assert it exits 0 and writes what
+it promises. It costs ~300 ms and it is the only thing in the package that reads the artifact.
+
+Verify the same way whenever a plan's gates name `npm test` and `npm run build` as separate rows:
+passing both still leaves "does the output run" unasked.
+
 ### Committing a documentation layer by path while the files it references stay untracked
 
 **Symptom.** The repo on `origin` carries docs describing things it does not contain. The
@@ -856,6 +873,214 @@ between passes: half the later findings were about code that did not exist when 
 And when a defect's shape repeats twice, stop patching instances and change the shape of the
 check — the third instance is already written, it just has not been found yet.
 
+### A brief that calls its own facts "a guide, not the truth" buys back the work it was saving
+
+On 2026-08-26 the Export-to-CI run had three implementers killed mid-package by a session limit.
+Restarting them meant hand-writing a brief describing what the previous agent had already left on
+disk. Each inventory was accurate, and each restart re-verified it anyway.
+
+Asked afterwards what its brief lacked, the P3 restart said the inventory was *accurate on every
+point* and that its 45 pre-write scout calls therefore went to *how* rather than *what* — and then
+that it checked the inventory with two commands regardless, **because the brief called itself "a
+guide, not the truth"**. The disclaimer was written to stop an agent trusting a stale list; it
+instructed the agent to redo the survey the disclaimer's author had already done.
+
+**What to do instead.** Paste the command and its output into the brief, with the date:
+`ls server/src/modules/ci/`, `grep -n "ci" server/src/modules/index.ts`, `git status --short`. In
+the restart agent's own words — a verified fact with its evidence reads in one turn and is not
+verified twice, while a list carrying a disclaimer is guaranteed to be re-read. If a fact really is
+uncertain, say which one and why; a blanket hedge over an accurate list is the expensive case.
+
+**Second occurrence, 2026-08-27, and this time it was measured against a control.** Two
+`spec-creator` agents ran hours apart in the same session on the same kind of task. The brief for
+the first **pasted** its evidence — the `devdigest-result.json` artifact and the `"fork": true`
+response from the GitHub API. The brief for the second **described** the problem in prose and gave
+paths to look at.
+
+| | evidence pasted | evidence described |
+|---|---|---|
+| scout calls before first write | **4** | **39** |
+| cache read | 1M | 14M |
+
+Asked what those 39 bought, the second agent put the mechanism in one sentence: for the first agent
+the artifact *was* the evidence and only had to be quoted, while a prose description meant the
+evidence had to be **reproduced first and then confirmed to be where the brief claimed it was**. It
+also named a cost the numbers hide: because this repository's citations drift, it re-grepped every
+`path:line` before writing it down — which disappears if references arrive as
+`file:line — the line of code`.
+
+### A fix brief that names a category instead of a fact makes the agent re-derive the mapping
+
+Same run. Fix round 1 cost 263 turns and 49.7M cache-read — more than any agent that built a
+package from nothing (P1: 184 turns, 21.0M). One entry read "bound the numeric fields in the
+contract" and named none of them.
+
+The agent had to open `server/src/db/schema/ci.ts` to learn that `findings_count` and `duration_ms`
+land in `integer`, `workflow_run_id` in `bigint`, and `cost_usd` in `doublePrecision` — and that
+the last needs no bound at all. Its verdict: without the schema open, the word "bound" has no
+meaning. One line in the brief carried all four facts.
+
+The same agent named the general shape, which is `AGENTS.md` § *What a session costs* rediscovered
+from the inside: it read whole files where two facts were needed, and every such file was then paid
+for again on every later turn — that, not the edits, is what made a fix round cost more than the
+build it was fixing.
+
+
+### A lesson filed in a retrospective report does not reach the next brief
+
+**Symptom.** The same waste recurs one day later, in a different agent, for the same reason — after
+it was correctly diagnosed, written down, and agreed with.
+
+**Cause.** On 2026-08-26 a retrospective recorded, in `.retro/<branch>/optimizations.md`: *"Put the
+gate commands in the brief with the known workaround already applied —
+`pnpm exec vitest run .it.test --fileParallelism=false`. Three minutes × three runs was spent
+rediscovering a documented flake."* Both briefs written the next day said, in full: `server`:
+`pnpm arch`, `pnpm typecheck`, unit, **integration**. The implementer then burned three full
+parallel integration runs before finding the same `server/INSIGHTS.md` entry the previous agent had
+found the same way.
+
+The report was read and agreed with by its own author, who then wrote the next brief without it.
+**A retrospective report is a record, not a mechanism** — nothing opens it at the moment a brief is
+being written.
+
+**Fix.** When a retrospective produces something that should change the *next* brief, put it where
+the brief-writer already looks: this file, or a brief template. Leave in the report only what is
+about that run. A concrete instance worth carrying: name gate commands in full, with any documented
+workaround already applied, rather than by category.
+
+**Applied 2026-08-27.** The lessons this run produced were routed to the artefact that is
+already open when the thing they govern happens, not only to this file: the integration command
+carries `--fileParallelism=false` in `AGENTS.md` § *Commands* and `TESTING.md` § *Conventions*;
+"paste the evidence", "name the fact", "say whether the list is exhaustive" and the visibility
+chain went into the plan skeleton in `.claude/agents/implementation-planner.md` and into
+`.claude/skills/implement/fix-rounds.md` § *The brief*; the receiving side went into
+`.claude/agents/implementer.md` and `spec-creator.md`. `run-retrospective` § 3 step 6 now carries
+the routing table, so the next retrospective is asked where a lesson lands, not only what it is.
+
+### An enumerated list in a brief reads as the whole of the work
+
+**Symptom.** An agent finishes every item it was given and reports done, while a requirement that
+was in scope goes unbuilt — and finding it costs more than any listed item.
+
+**Cause.** A resume brief on 2026-08-27 listed five outstanding items. `AC-145` was in the original
+brief but not among the five, so the agent had to read the brief, the specification and the client
+step to establish that a numbered list was not the boundary. In its own words: *"перелік із п'яти
+читається як вичерпний"* — a list of five reads as exhaustive.
+
+**Fix.** Say which it is. Either "these five and nothing else" or "these five are what is known;
+the original brief still governs". One clause, and it decides whether the agent treats the list as a
+boundary or as a starting point.
+
+### A resume brief needs two timestamps: when the state was read, and what happened after
+
+**Symptom.** A resumed agent trusts a pasted snapshot — correctly — and still spends turns on items
+that were true when captured and had been overtaken by the time it read them.
+
+**Cause.** On 2026-08-27 a resume brief carried real command output (grep with line numbers,
+`diff -rq`, the text of a TypeScript error). The agent confirmed it repeated none of it: *"жодного
+grep-а з нього не повторив, `diff -rq` прийняв як є"* — 29 scout calls for a change spanning five
+packages. But two of the five items had moved: the `TS2322` no longer reproduced because the
+fixture already carried the field, and "the two tests it was about to write" were already on disk
+and green. The snapshot was true; the work had passed it.
+
+**Fix.** Date the capture, and say separately what is known to have been *done* since — state and
+completion are different claims and pasting only settles the first.
+
+
+### Three heavy implementers at once cost more in restarts than the work the kill destroyed
+
+**Symptom.** A session limit terminates several `xhigh` implementers mid-package. Nothing is lost
+on disk, and the run still becomes far more expensive than it would have been with fewer agents.
+
+**Cause.** Measured on Export to CI, 2026-08-26: three implementers were killed together having
+produced **52M** of cache-read between them. The three restarts cost **89M** — almost all of it
+re-establishing what the killed agents already knew. Across the whole run, building the feature was
+**26 %** of the tokens while recovering from the interruption and repairing what it produced was
+**45 %**. The restarts were expensive for a second, avoidable reason: the successors were handed a
+hand-written inventory labelled "a guide, not the truth", so each one re-verified every line of it
+— and the P3 restart confirmed the inventory had been accurate on every point.
+
+**Fix.** Two concurrent heavy packages, not three — slower in wall-clock and strictly cheaper than
+three plus three restarts. And have every implementer append `.reviews/<branch>/progress-<PN>.md`
+as each step lands (gitignored, same `worktreeHash` reason as the fix briefs), carrying pasted
+`git status --short` and gate output rather than prose. A killed agent then leaves a restart brief
+that writes itself, and its successor reads one file instead of surveying a tree. Compare the
+second phase of the same branch: one implementer killed at 151 turns / 22M, and the resume needed
+no re-survey at all.
+
+### The top effort tier on every dispatch is paid on every dispatch, and two of twenty needed it
+
+**Symptom.** A run's most expensive agents are not the ones doing the hardest work.
+
+**Cause.** On Export to CI 18 of 20 agents ran at `xhigh`. P4 — a two-file predicate plus a
+`continue` in a loop — spent **112 turns and 10M** at that tier. Meanwhile `/code-review` ran at
+`high` and returned the single most valuable finding of the run (Preview opening the manifest
+instead of the workflow), which it found without ever opening the 650 KB design PNG that six other
+agents did open.
+
+**Fix.** Choose the tier per dispatch, and let the plan say which is which — the work-package block
+in `.claude/agents/implementation-planner.md` now carries a `**Weight:** mechanical | judgement`
+line for exactly this. Reserve the top tier for where a plausible wrong answer is expensive and
+silent: contracts, schema, ingest, anything that writes into a third-party repository. A constant
+plus a guard, or client wiring that copies a sibling screen, does not need it.
+
+### A filter that guards what becomes an instruction must live where every consumer reaches it
+
+**Symptom.** The same agent applies a skill in one surface and ignores it in another, and every
+test is green because each surface is tested against its own assembly path.
+
+**Cause.** `attachedSkills` — the two filters that drop a globally disabled skill and a body the
+injection detector flagged — lived in `modules/reviews/helpers.ts`. `no-cross-module` forbids
+`modules/ci` importing it, so the CI export wrote `linked.map(...)` instead and published **both**
+kinds of refused body into a target repository's `.devdigest/skills/`, where the runner then
+applied them. The studio ignored the same skills. 1 479 tests passed over it: the export path was
+tested with agents that had no skills bound, and the reviews path was tested with the filter.
+
+**Fix.** The rule moved to `server/src/modules/_shared/attached-skills.ts` and both slices import
+it; `reviews/helpers.ts` re-exports so nothing else changed. The general form: when a rule decides
+what may become an instruction, a second consumer that cannot import it will not restate it — it
+will skip it. `_shared/` is the escape `no-cross-module`'s own message names, and
+`_shared/bundle-paths.ts` was already the same move for the same pair of slices.
+
+**Check before shipping a second consumer of an agent's configuration:** `grep -n` for every
+filter the first consumer applies between the repository read and the prompt, and prove the new
+one applies them with a test that binds a refused skill.
+
+### Truncating twice re-introduces the surrogate split that each truncation avoids
+
+**Symptom.** A string cut correctly by code point, then cut again, ends in a lone high surrogate —
+which Postgres `text` refuses on ingest, far from where it was produced.
+
+**Cause.** `agent-runner`'s `reasonText` was `summaryLine(text).slice(0, 500)`. `summaryLine`
+already cuts at 500 **code points** and appends an ellipsis, so its result is 501 code points and,
+for anything astral, well over 500 UTF-16 units — and `String.slice` counts units. Reproduced with
+201 ASCII plus 400 `\u{1F525}`: the last unit is `0xd83d`, unpaired. Both halves were written by
+someone who knew the rule; `text.ts` in that very package cites this file's *Cut by code point*
+entry. Composition is what defeated it.
+
+**Fix.** `truncate(summaryLine(text), MAX)`, and a test that asserts a UTF-8 round trip rather than
+a length — `Buffer.from(s,'utf8').toString('utf8') === s` — because a lone surrogate survives
+`.length` and comes back as U+FFFD. Where two size caps sit on one value, ask which one is
+authoritative rather than applying both.
+
+### A new package joins no gate by default, and nothing says so
+
+**Symptom.** A package has tests, a typecheck and a build, all green locally, and none of them has
+ever run on a push. The gap is invisible because every command works when you type it.
+
+**Cause.** Gate membership in this repo is three hand-maintained lists — a row in
+`scripts/pr-self-review/gates.sh`, an arm in `scripts/pr-self-review/scope.sh` (both the `packages`
+case and the Track B routing case), and a workflow under `.github/workflows/`. `agent-runner`
+shipped with 74 tests, a typecheck, and a build carrying the bundle **smoke check** — the only
+thing that catches a bundle which cannot start — and appeared in none of the three. It also
+resolves `@devdigest/shared`, `@devdigest/reviewer-core` and `server/src/adapters/git/diff-parser.ts`
+through aliases in three files, while `server/.dependency-cruiser.cjs` scans only `server/src`: a
+move of that file would have broken the runner and passed every gate in the repository.
+
+**Fix.** When a package is added, add all three at once, and give the workflow a `paths:` entry for
+every directory it aliases into — not only its own. `grep -rn "<package>" scripts/pr-self-review
+.github/workflows` returning nothing is the check.
+
 ## Codebase Patterns
 
 ### The two `docker-compose.yml` files are byte-identical duplicates
@@ -1306,6 +1531,48 @@ hide it** — the doctrine is already written down in SPEC-02 (AC-25, AC-26, AC-
 stale data with a marker) and the marker must survive being read without colour (AC-4), which
 in the list is the word `earlier` beside the ring rather than a dimmer ring.
 
+### A work package's `## Contract` must name every field that package added to a shared surface
+
+The most expensive defect of the 2026-08-26 Export-to-CI run was not a bug anyone wrote. Package P3
+needed to accept a hand-edited workflow, found that `CiExportInput` (owned and closed by P1) had no
+field for it, and added `workflow` to its own Fastify route schema — a reasonable local call, made
+deliberately, and reported. But **P3's `## Contract` block, which is the only thing the plan hands
+to the packages that come after it, never mentioned the field.**
+
+P5 therefore built a wizard that collects hand edits, shows the user a confirmation dialog warning
+those edits will be lost, and then sends a request body with no `workflow` key. The edits were
+discarded in silence and the generated workflow committed instead. `AC-31`, `AC-32` and `AC-55`
+became unreachable from the only client that exists, and the server-side half — schema, override
+plumbing, YAML refusal, integration test — was dead code.
+
+**Why every gate missed it.** Both halves are correct in isolation: the server accepts and validates
+a field, the client sends a valid body. Typecheck, lint, 1 426 server tests, 1 030 client tests, the
+architecture reviewer and `plan-verifier` all passed. Only `/code-review`, reading across the two
+packages at once, saw that no sender existed.
+
+**What to do instead.** When a package adds anything to a surface a sibling consumes — a request
+field, an enum member, a response key — that addition belongs in its `## Contract` block before it
+belongs in the code, even when the field lives only in that package's own schema. A divergence note
+in the implementer's report does not reach the next agent; the plan's contract block is what does.
+
+### A zod `schema.body` refusal reaches the reader as "Request validation failed" and nothing else
+
+**Symptom.** `.min(1, '.github/workflows/devdigest-review.yml cannot be empty')` on a request field
+answers 422 — with `error.message` set to the constant `Request validation failed`. The sentence
+naming the file is two levels down in `error.details[].message`, and the wizard shows
+`Install failed: Request validation failed`. Verified by curl against a real API 2026-08-26.
+
+**Cause.** `server/src/app.ts:126-136` maps every `hasZodFastifySchemaValidationErrors` failure to
+one fixed message and puts the issues in `details`; `client/src/lib/api.ts:53` lifts only
+`body.error.message` into `ApiError.message`, which is what every screen renders.
+
+**What to do.** A refusal that must NAME something *and* be read by a person cannot live in
+`schema.body` alone. Put the name in the field's own zod message (an API client and the tests see
+it), or refuse in the service with `ValidationError`, whose message survives whole —
+`modules/ci/service.ts:265` is the AC-55 example, and
+`… is not valid YAML — line 4: a tab is used for indentation` is what the reader gets from it. Doing
+both is fine; just know which of the two the screen is actually showing.
+
 ## Tool & Library Notes
 
 ### GitHub's "Download ZIP" flattens the `CLAUDE.md` symlinks into 9-byte text files
@@ -1615,6 +1882,24 @@ was over-long.
 **Cause.** `—`, `…`, `≈` and `→` are three bytes each, and `awk` in this environment counts bytes,
 not characters. The prose in this repository uses all four heavily.
 **Fix.** Measure width with `python3 -c "print(len(line))"`, never with `awk`, in any file here.
+
+
+### Subagent transcripts expire, so the "ask the agents" half of a retrospective has a shelf life
+
+`run-retrospective` §3 step 4 depends on resuming finished subagents with `SendMessage` to ask what
+their brief should have carried — the one thing no log contains. On 2026-08-26 two of four such
+questions failed with `No transcript found for agent ID: …`, for agents dispatched **earlier the
+same day**; the two that succeeded were from the most recent few hours.
+
+Two consequences worth knowing before planning a run. Resume is also how a coordinator continues an
+agent cheaply rather than dispatching a fresh one that re-reads everything — in this run two such
+attempts failed and cost a full re-dispatch each (`spec-creator` amendment: 119 turns / 18.1M;
+planner update: 87 turns / 6.8M). And a retrospective deferred to "after the PR" will find the
+deterministic half intact — `scripts/run-retrospective/stats.sh` reads the `.output` files — and the
+interview half already gone.
+
+**Fix.** Run the retrospective close to the run, and when an agent's answer matters, ask it before
+starting the next wave rather than at the end.
 
 
 ## Recurring Errors & Fixes
@@ -1941,6 +2226,86 @@ own structure — and everything after that reference was replaced.
 long enough to hold self-references, prefer `Edit` over a rewriting script. Worth noting that the
 `spec-creator` write-gate refused a `cat >>` append during the same session and forced the agent back
 to `Edit` — the gate was right, and the script was the way around it.
+
+### esbuild `--format=esm --platform=node` emits a bundle that throws `Dynamic require of "x"`
+
+**Symptom.** `node dist/runner.mjs` exits 1 on its first line with
+`Error: Dynamic require of "stream" is not supported`, from a minified `__require` shim near the top
+of the file. Nothing in the package's own code is on the stack. Seen 2026-08-26 building
+`agent-runner` (esbuild 0.28, entry `src/main.ts`, bundling `openai`).
+**Cause.** esbuild converts a CJS dependency's `require()` into an import only where it can hoist it.
+For the rest it emits `__require`, which resolves the ambient `require` at runtime — and an ESM
+module has none, so the shim throws. `openai`'s transitive CJS deps do this for `stream`, `http`,
+`https`, `zlib`, `util`, `buffer`, `url`, `punycode`, `process`, `worker_threads` and the optional
+`encoding`. `platform: 'node'` does **not** prevent it.
+**Fix.** Restore `require` in the banner, after any comment the output is contractually required to
+start with:
+
+```js
+banner: { js: `// … your header …\n` +
+  `import { createRequire as __ddCreateRequire } from "node:module";\n` +
+  `const require = __ddCreateRequire(import.meta.url);` }
+```
+
+All the names above are Node builtins, so `createRequire` resolves them with no `node_modules`
+present; `encoding` is node-fetch's optional peer and is already inside a `try/catch`. To see the
+list for a given bundle before trusting it, read the shim's minified name off the stack trace and
+grep for its call sites — `Le("stream")` in that build. Do not reach for `format: 'cjs'`: a
+`.mjs` deliverable has to be ESM.
+
+### An emptied string field passes an `optional()` zod check, a `??` fallback and a line scanner — all three
+
+**Symptom.** The export wizard's workflow textarea, selected-all and deleted, published a
+**zero-byte** `.github/workflows/devdigest-review.yml` into a target repository. GitHub reports an
+invalid workflow and no review ever runs. Every gate stayed green. Found by review 2026-08-26, one
+round after the `workflow` override path was written.
+
+**Cause.** Three checks stood in front of it and none of them had been asked about emptiness.
+`CiExportInput.workflow` was `z.string().max(MAX_CI_WORKFLOW_CHARS).optional()` — a ceiling with no
+floor, and `.optional()` says "may be absent", never "if present, non-empty".
+`modules/ci/generate/bundle.ts:111` picks the override with `??`, which falls back on `undefined`
+and passes `''` straight through. `findYamlProblem('')` (`modules/ci/helpers.ts:286`) split to
+`['']`, `continue`d over the blank line and returned `null` — an empty document IS legal YAML, and
+the scanner was answering "is this YAML" rather than "is this a workflow".
+
+**Fix.** A floor beside every ceiling: `.min(1, msg).regex(/\S/, msg)` on the contract field
+(2026-08-26), mirrored into `client/src/vendor/shared/` in the same change, plus
+`text.trim() === ''` as the FIRST check in `findYamlProblem`. Whitespace-only counts as empty and is
+refused, never trimmed — a string this repo rewrites is a string this repo repaired, and this one is
+about to be executed by GitHub. When a request field ends up as a FILE, ask the three questions
+separately: can it be absent, can it be empty, can it be blank.
+
+### A freed port does not mean a stopped process — `tsx watch` outlives the server it started
+
+**Symptom.** A subagent reports its work finished and its transcript stops growing, but the task
+stays `running` indefinitely and the UI shows the agent as still working. On 2026-08-26 a background
+Bash task that started an API for end-to-end verification stayed open for **5 h 45 min** after the
+verification was done, and a second one for 28 minutes.
+
+**Cause.** `pnpm dev` in `server/` is `tsx watch src/server.ts`, and `watch` never exits by design —
+it keeps running to rebuild on file changes. Killing whatever holds the port stops the HTTP listener
+and frees the port, but the watcher parent survives and the Bash call never returns. The task
+therefore never completes.
+
+The trap is that the obvious check passes: `lsof -ti:3002` returns nothing, the log's last line reads
+`SIGTERM received — shutting down`, and `curl` fails to connect. **Both the coordinator and the
+subagent independently concluded they had cleaned up, and both were wrong in the same way** — they
+verified the port, not the process.
+
+**Fix.** After stopping a dev server started for verification, check for the process, not the port:
+
+```sh
+ps -ax -o pid,etime,command | grep -F "$PWD" | grep -E "tsx watch|next dev|pnpm dev" | grep -v grep
+```
+
+Kill what it lists. Better, avoid the watcher entirely for a throwaway verification server — run the
+entry point directly (`node_modules/.bin/tsx src/server.ts`, no `watch`) so the process exits when
+killed and the Bash task closes with it.
+
+Related and distinct: `client/INSIGHTS.md` records two occurrences of `next dev -p 3000` in
+`package.json` silently colliding with another worktree's server. That one is about which port is
+taken; this one is about a process that outlives the port it released.
+
 
 ## Session Notes
 

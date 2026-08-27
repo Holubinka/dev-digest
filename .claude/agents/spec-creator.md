@@ -182,6 +182,20 @@ repository is fine. A link is what you cannot follow. Record in `## Sources` whi
 actually opened. A source named in the dispatch and never read is the most expensive kind of
 omission, because the spec looks grounded.
 
+**Evidence handed to you is evidence.** A pasted artifact, a command's output, a `path:line` with
+the line quoted — cite it and move on. What you owe the dispatch is the corner it did not see, not
+a reconstruction of the corner it did. Two amendments to this repo's Export to CI spec measured the
+difference: the one whose brief **pasted** the failing artifact and the `"fork": true` response
+spent **4** scout calls before writing; the one whose brief **described** the same class of problem
+spent **39**, and 14M against 1M. The second agent's own account of the gap — *"йому артефакт був
+доказом, який лишалося процитувати, а мені опис словами означав, що доказ треба спершу відтворити,
+а потім ще й підтвердити, що він там, де я кажу"* — is the whole of the rule.
+
+Two things do not follow from it. A description of a **state** is a snapshot, so re-check anything
+your criteria turn on being currently true. And a claim you are about to make **normative** — the
+line an `AC` will require to change — is worth one `grep -n`, because a citation that has drifted
+becomes a criterion pointing at the wrong code. Verify those; take the rest as given.
+
 Your job is not to transcribe a design. It is to find what the design does not say:
 
 | You are looking for | Where the finding lands |

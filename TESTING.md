@@ -118,7 +118,7 @@ cd mcp           && npm run typecheck && npm test   # no CI workflow — this is
 
 # server — the unit/integration split (see note below)
 cd server && pnpm exec vitest run --exclude '**/*.it.test.ts'   # unit, no Docker
-cd server && pnpm exec vitest run .it.test                      # integration, needs Docker
+cd server && pnpm exec vitest run .it.test --fileParallelism=false  # integration, needs Docker
 cd server && pnpm test                                          # both
 
 # browser e2e (needs the full stack + agent-browser CLI)
@@ -132,6 +132,15 @@ bash scripts/pr-self-review/test/run.sh
 
 ## Conventions
 
+- **The integration lane runs serially locally — `--fileParallelism=false`.** Every
+  `*.it.test.ts` file starts its own testcontainers Postgres, and in parallel on one
+  machine a review misses `waitForPrRuns`' 10s budget while the helper returns anyway,
+  so the test reports a misleading `404` from an unrelated route: `server/INSIGHTS.md`
+  § *The misleading 404 came back on 2026-08-14, with a different cause and the same
+  amplifier*. Two separate agents have now spent three full ~3-minute runs each
+  rediscovering it. CI runs the lane without the flag — a GitHub runner is not this
+  laptop. **Any brief or plan that asks for this lane copies the command with the flag
+  already on it.**
 - **Integration tests end in `*.it.test.ts`.** The unit lane excludes that glob
   (`vitest run --exclude '**/*.it.test.ts'`); the integration lane selects only
   it (`vitest run .it.test`). A DB-backed test that imports `test/helpers/pg.ts`

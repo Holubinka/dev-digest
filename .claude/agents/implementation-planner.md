@@ -339,8 +339,12 @@ not a suggestion. An acceptance criterion left out of the plan is named here **b
 `AC-N`**, with the reason — that is what makes the omission reviewable instead of invisible.
 
 ## What already exists
-The code that already does part of this, as `path:line`. If the answer is nothing,
-say so — it is a finding either way.
+The code that already does part of this, as `path:line` **with the line itself quoted** —
+`server/src/db/schema/ci.ts:62 — findingsCount: integer('findings_count')`. A
+path sends the implementer to look; a path plus its line is a fact it can cite. Measured on
+Export to CI: two briefs of the same shape, hours apart, one pasting its evidence and one
+describing it — **4 scout calls before the first write against 39**, 1M cache-read against
+14M. If the answer is nothing, say so — it is a finding either way.
 
 ## Constraints
 Each rule this change must respect, with the file that mandates it. Ring boundaries,
@@ -364,17 +368,34 @@ without asking you a question is not finished.
 ## Work packages    ← multi-agent, replacing ## Steps
 One `### P1 — <title>` block per package, each carrying:
 **Agent:** implementer | test-writer · **Depends on:** — | P1
+**Weight:** mechanical | judgement — what tier this package is worth dispatching at.
+`mechanical` is a bounded change against a pattern that already exists: a constant plus a
+guard, client wiring that copies a sibling screen. `judgement` is where a plausible wrong
+answer is expensive and silent: contracts, schema, ingest, anything that writes into a
+third-party repository. On Export to CI 18 of 20 agents ran at the top tier, and one of
+them spent 112 turns and 10M on a two-file predicate plus a `continue`.
 **Owns:** the exact files this package alone may write. No two packages own the same file.
 **Contract:** what the other packages may assume once it is done — the type, the route,
 the props. Repeat it in every package that consumes it; each agent starts cold.
-**Steps:** numbered as above, each citing its R#.
+**Steps:** numbered as above, each citing its R#. Say whether the list is the whole of the
+package or only the part that is known — a list of five reads as a boundary, and an
+implementer that has to discover otherwise pays for the discovery.
 Close the section with the dispatch order and the points where one package must land
-before the next is dispatched.
+before the next is dispatched. **Two heavy packages in flight at once, not three:** three
+concurrent `judgement` implementers is what reached the session limit on Export to CI, and
+the three restarts cost 89M against the 52M of work they had done.
 
 ## Tests
-Which suite, which files are new or changed, and the exact command. Say plainly whether
-integration (`*.it.test.ts`) or e2e is in scope — the implementer runs them only if
-this section asks.
+Which suite, which files are new or changed, and the exact command **with any documented
+workaround already applied** — the integration lane is
+`cd server && pnpm exec vitest run .it.test --fileParallelism=false` (TESTING.md
+§ *Conventions*), never the bare form. Say plainly whether integration (`*.it.test.ts`) or
+e2e is in scope — the implementer runs them only if this section asks.
+
+Name the test files that **already** cover this path, and flag any mock that cannot fail: a
+hook mock holding `isError: false` as a literal makes every error-path assertion in that file
+vacuous, and an implementer that finds this mid-test rewrites the mock instead of writing the
+test.
 
 ## Gates
 The exact Track A commands the touched modules must pass, copied verbatim from
@@ -382,8 +403,10 @@ The exact Track A commands the touched modules must pass, copied verbatim from
 
 ## Risks (from INSIGHTS.md)
 What already cost someone time in this area, quoted from the relevant `INSIGHTS.md`,
-and what this plan does about it. `_None found._` is a valid answer, but only after
-you looked.
+**cited by its `§ heading` and with the cure already written out** — not as "see
+`server/INSIGHTS.md`". A pointer to a 2 500-line file costs several turns to follow;
+a heading plus the fix costs one line to read. `_None found._` is a valid answer, but
+only after you looked.
 
 ## Alternatives rejected
 The implementation approach not taken and the reason — not the product decision, which
@@ -392,6 +415,15 @@ belongs to the spec. This is what stops the same debate reopening during impleme
 ## Verification
 Observable and checkable, ending in one end-to-end run through the real entry point.
 Each line names the `R#` it proves. This is what `plan-verifier` grades against.
+
+Where a line's acceptance depends on what a **user sees** — an error message, a state, a
+count — trace the chain that carries it, `path:line → path:line`, and say who renders the
+last hop. `server/src/app.ts:128-136` flattens every `schema.body` failure to the constant
+`Request validation failed` and `client/src/lib/api.ts:56` copies only that into
+`ApiError.message`, so a message written into a Zod `.min(1, …)` survives solely inside
+`details`, which no screen renders. An agent that is not told this reconstructs it from
+four files, a private API on port 3002 and five `curl` calls before it can even decide how
+many legs the fix needs.
 
 ## Open questions
 **A gate, not a note.** `/implement` stops before stage 1, having dispatched nothing,

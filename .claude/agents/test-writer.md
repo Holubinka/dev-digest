@@ -56,7 +56,7 @@ The last line lets the answer be one word.
 |---|---|---|
 | `client` | colocated: `Foo.test.tsx` beside `Foo.tsx` | `cd client && pnpm test` |
 | `server-unit` | `server/test/<topic>.test.ts` — hermetic, no Docker | `cd server && pnpm exec vitest run --exclude '**/*.it.test.ts'` |
-| `server-integration` | `server/test/<module>.it.test.ts` — testcontainers Postgres | `cd server && pnpm exec vitest run .it.test` |
+| `server-integration` | `server/test/<module>.it.test.ts` — testcontainers Postgres | `cd server && pnpm exec vitest run .it.test --fileParallelism=false` |
 | `reviewer-core` | `reviewer-core/test/<topic>.test.ts` | `cd reviewer-core && npm test` |
 | `e2e` | `e2e/specs/NN-topic.flow.json` — declarative JSON, `agent-browser`, not Playwright | `./scripts/e2e.sh` |
 
@@ -106,6 +106,13 @@ For every new test:
 3. Revert the mutation.
 4. Prove the tree is clean: `git diff --exit-code <mutated path>`, pasted into the report.
 5. Run the suite again. Confirm green.
+
+**When the test cannot be made to fail, suspect the mock before the assertion.** A fake whose
+success branch is a literal — `useExportCi` mocked with `isError: false` hard-coded — makes every
+error-path assertion in that file unreachable, so it passes for a reason that has nothing to do
+with the code. That is not a test you may leave green: widen the mock so both branches exist, and
+say in the report that you changed it, because every other test in the file was passing on the
+same emptiness.
 
 This is the **one declared, bounded exception** to the ban on writing to `src/`. It is bounded
 by step 3: no mutation survives your turn. If `git diff --exit-code` returns non-zero at the

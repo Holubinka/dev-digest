@@ -74,15 +74,41 @@ every row survived.
 What survives all three filters — `introduced`, `critical` or `major`, fixable inside the plan's
 boundary — becomes the file. One entry per finding:
 
-- `path:line`;
+- `path:line`, **with the line itself pasted** — a path sends the agent to look, a path plus its
+  line is a fact it can cite;
 - the rule it violates, named: a section of `onion-architecture` or `frontend-architecture`, a
   line in an `AGENTS.md`, a documented contract;
 - what the reviewer said, quoted rather than summarised;
 - the shape that would satisfy it — the shape, not a diff. `architecture-reviewer` returns one for
   every finding above `note`, so this is usually a copy.
 
-The header names the plan the branch was executing. Then dispatch **one `implementer` against the
-brief path**. It opens only that plan's `## Out of scope`, `## Constraints` and `## Gates` — the
+**Name the fact, never the category.** Not *"bound the numeric fields"* but *"`findings_count` and
+`duration_ms` are `integer`, `workflow_run_id` is `bigint`, `cost_usd` is `doublePrecision` and
+needs no bound."* The agent that received the first version said it plainly: without
+`db/schema/ci.ts` in front of it, the word *bound* means nothing, so it opened the schema, then the
+contract, then the migration — and fix round 1 came to 263 turns and 49.7M, more than the package
+that had created all three from nothing.
+
+Then, above the findings, the three things a fix brief has no section for and always needs:
+
+- **the gate commands, with the documented workaround already applied** —
+  `cd server && pnpm exec vitest run .it.test --fileParallelism=false`, not "integration". Writing
+  the bare word cost this branch three full parallel runs on one round and three more on the next,
+  a day apart, both agents ending at the same `server/INSIGHTS.md` entry;
+- **what already exists** — the same section the plan carries, because the brief has no plan to
+  inherit it from: the test files that already cover this path, and a warning about any mock that
+  cannot fail (`isError: false` as a literal is a rewrite discovered mid-test);
+- **the visibility chain, `path:line → path:line`**, whenever the finding's acceptance depends on
+  what a user *sees*. "The refusal names the file" is not actionable while
+  `server/src/app.ts:128-136` flattens every `schema.body` failure to `Request validation failed`
+  and `client/src/lib/api.ts:56` copies only that across. Establishing that alone took one agent
+  four files, an API on port 3002 and five `curl` calls.
+
+The header names the plan the branch was executing, and says whether the finding list is the whole
+of the round or only the part that is known — a numbered list reads as a boundary.
+
+Then dispatch **one `implementer` against the brief path**.
+It opens only that plan's `## Out of scope`, `## Constraints` and `## Gates` — the
 steps are done, and re-reading them is what would make a fix round cost as much as the build did —
 and it runs the touched modules' gates before reporting.
 
@@ -115,3 +141,5 @@ round's work.
 | "Nothing survived triage, the review must have been shallow" | An empty round is the ordinary outcome |
 | "I'll put the brief in `/tmp` next to the repo" | `/tmp` is fine; anywhere tracked in the tree is not — it moves `worktreeHash` |
 | "Round 2 should re-review everything, to be safe" | It re-reviews what round 1 touched; the rest did not change |
+| "The finding says what to do, the agent can find the code" | § *The brief* — a category costs the agent the schema, the contract and the migration; the fact costs one line |
+| "I'll just write `integration` for the gate" | § *The brief* — six wasted ~3-minute runs across two rounds, same flake, same entry |

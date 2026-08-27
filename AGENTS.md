@@ -24,7 +24,7 @@ Node ≥ 22 · Vitest 2 everywhere. Docker runs Postgres only; API and web run o
 
 cd server && pnpm db:migrate    # REQUIRED after clone — the server does not migrate on boot
 cd server && pnpm exec vitest run --exclude '**/*.it.test.ts'   # unit (hermetic)
-cd server && pnpm exec vitest run .it.test                      # integration (testcontainers Postgres)
+cd server && pnpm exec vitest run .it.test --fileParallelism=false  # integration — the flag is required locally, see TESTING.md
 
 cd client && pnpm lint          # ESLint — client/ only; no other package has one
 ```
