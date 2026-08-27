@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
+import { ApiError } from "@/lib/api";
 import runs from "@/../messages/en/runs.json";
 import prReview from "@/../messages/en/prReview.json";
 
@@ -23,7 +24,7 @@ const data = vi.hoisted(() => ({
   pulls: [] as unknown[],
   agents: [] as unknown[],
   lastRuns: [] as unknown[],
-  create: { mutate: vi.fn(), isPending: false, isError: false, error: null },
+  create: { mutate: vi.fn(), isPending: false, isError: false, error: null as Error | null },
 }));
 vi.mock("@/lib/hooks/core", () => ({ usePulls: () => ({ data: data.pulls }) }));
 vi.mock("@/lib/hooks/agents", () => ({ useAgents: () => ({ data: data.agents }) }));
@@ -74,6 +75,8 @@ beforeEach(() => {
     { agent_id: "a1", duration_ms: 8200, cost_usd: 0.06, ran_at: "2026-08-26T10:00:00.000Z" },
     { agent_id: "a2", duration_ms: 7400, cost_usd: null, ran_at: "2026-08-26T10:00:00.000Z" },
   ];
+  data.create.isError = false;
+  data.create.error = null;
   data.create.mutate.mockReset();
   // The mutation calls back with what the server created; the view is what turns
   // that into the address of the new comparison.
@@ -228,5 +231,16 @@ describe("ConfigureRunView — step 2", () => {
     expect(screen.getByText(runs.page.configure.noAgents.title)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Go to Agents" }));
     expect(nav.push).toHaveBeenCalledWith("/agents");
+  });
+
+  it("says why the run was refused, in the server's own words", () => {
+    // `create.isError` is the only place this screen can report a refusal: the
+    // CTA re-enables and nothing else on the page changes, so a reader who is
+    // not told stands there re-clicking a button that already failed.
+    data.create.isError = true;
+    data.create.error = new ApiError("no credit left", 402);
+    renderView();
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Couldn't start the run: no credit left");
   });
 });
