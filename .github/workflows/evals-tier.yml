@@ -130,6 +130,11 @@ jobs:
             echo '`pnpm eval:repeat ${{ inputs.tier }} -n 2 --label ${{ inputs.tier }}`, then commit the JSON.'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # Through the wrapper, not `docker compose down` directly: compose interpolates the
+      # `environment:` block even on `down`, so the raw command hits
+      # `${OPENROUTER_API_KEY:?...}` and fails after the tier has already passed. The first live
+      # run (2026-08-27) failed exactly here on all three tiers. litellm-proxy.sh substitutes a
+      # placeholder for the teardown, which is the whole reason it exists.
       - name: Tear down the proxy
         if: always() && steps.secret.outputs.ok == 'true'
-        run: docker compose -f proxy/docker-compose.yml down
+        run: pnpm proxy:down

@@ -184,6 +184,26 @@ records" result as a flaky model call, check whether the crash duration is even 
 real session — see `results/outputs/<run>/<slug>.md` (won't exist) or just re-run with
 `--reporter=verbose` instead of the quiet `eval:repeat` wrapper to see the real stack trace.
 
+### `docker compose down` on the eval proxy fails with an OPENROUTER_API_KEY interpolation error
+
+**Symptom.** 2026-08-27, the first live CI run of all three tier workflows: every step green —
+including `Run the tier`, which really did run on OpenRouter — and only `Tear down the proxy` red
+with `error while interpolating services.litellm.environment.OPENROUTER_API_KEY: required
+variable OPENROUTER_API_KEY is missing a value`. The workflow still concluded `success`, because
+`continue-on-error` sits on the model-run job, so nothing surfaced it except the step list.
+
+**Cause.** `proxy/docker-compose.yml` declares
+`OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY in the environment}`, and
+compose interpolates the whole `environment:` block **even on `down`**, where the value is never
+used. The teardown step passed no `env:` — only the `Start` step did.
+
+**Fix.** Run `pnpm proxy:down`, never `docker compose ... down` directly.
+`scripts/litellm-proxy.sh` substitutes `OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-unused}"` for
+exactly this, and its `down)` branch carries the comment saying why. The same trap catches a
+developer locally: `docker compose -f evals/proxy/docker-compose.yml up` fails identically unless
+the key is exported, because only the wrapper reads it from `~/.devdigest/secrets.json`. Use
+`pnpm proxy:up` / `pnpm proxy:down` and the question never comes up.
+
 ## Session Notes
 
 ### 2026-08-22
