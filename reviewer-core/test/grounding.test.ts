@@ -255,3 +255,67 @@ describe('groundFindings — cost follows the diff, not the declared range', () 
     expect(ms).toBeLessThan(250);
   });
 });
+
+describe('groundFindings — the no-newline marker is not a line', () => {
+  /**
+   * `git diff` emits `\ No newline at end of file` after the last line of a
+   * side that lacks a trailing newline. It is a marker, not content: it occupies
+   * no new-side line, so every line after it in the same file keeps its number.
+   * Counting it shifts the whole line map by one, and a quote then heals onto
+   * the wrong line — silently, because the text still matches somewhere.
+   */
+  const NO_NEWLINE_DIFF: UnifiedDiff = {
+    raw: [
+      'diff --git a/src/a.ts b/src/a.ts',
+      '--- a/src/a.ts',
+      '+++ b/src/a.ts',
+      '@@ -1,2 +1,4 @@',
+      ' alpha',
+      '-beta',
+      '\\ No newline at end of file',
+      '+beta',
+      '+gamma',
+      '+delta',
+      '',
+    ].join('\n'),
+    files: [
+      {
+        path: 'src/a.ts',
+        additions: 3,
+        deletions: 1,
+        hunks: [
+          {
+            file: 'src/a.ts',
+            oldStart: 1,
+            oldLines: 2,
+            newStart: 1,
+            newLines: 4,
+            newLineNumbers: [1, 2, 3, 4],
+          },
+        ],
+      },
+    ],
+  };
+
+  it('heals a quote onto the line it is really on, counting no line for the marker', () => {
+    // `delta` is the 4th new-side line: alpha=1, beta=2, gamma=3, delta=4.
+    // Count the marker and every line after it slides to 3, 4, 5 — the quote
+    // then heals onto 5, a line the hunk does not even cover.
+    const res = groundFindings(
+      [f({ file: 'src/a.ts', start_line: 1, end_line: 1, quote: 'delta' })],
+      NO_NEWLINE_DIFF,
+    );
+    expect(res.dropped).toHaveLength(0);
+    expect(res.kept).toHaveLength(1);
+    expect(res.kept[0]!.start_line).toBe(4);
+  });
+
+  it('the marker text itself is never matchable — it is not part of the file', () => {
+    const res = groundFindings(
+      [f({ file: 'src/a.ts', start_line: 1, end_line: 1, quote: 'No newline at end of file' })],
+      NO_NEWLINE_DIFF,
+    );
+    expect(res.kept).toHaveLength(0);
+    expect(res.dropped).toHaveLength(1);
+  });
+});

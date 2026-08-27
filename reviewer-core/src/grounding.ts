@@ -94,6 +94,12 @@ function buildLineText(raw: string, file: string): Map<number, string> {
     }
     if (!inFile) continue;
     if (line.startsWith('-') && !line.startsWith('---')) continue; // removed: no new-side line
+    // `\ No newline at end of file` is a marker, not content. It occupies no
+    // new-side line, so counting it slides every later line in the file by one
+    // and a quote then heals onto the wrong number — silently, because the text
+    // still matches somewhere. Guarding every `\`-prefixed line rather than the
+    // one known string keeps this true if the format ever grows another marker.
+    if (line.startsWith('\\')) continue;
     const content = line.startsWith('+') || line.startsWith(' ') ? line.slice(1) : line;
     text.set(cursor, content);
     cursor++;
