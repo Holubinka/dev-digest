@@ -83,6 +83,21 @@ Generally: when an acceptance criterion names a delivered count, run the candida
 data before touching the constant. The two-number version of this change would have shipped
 twenty rejected chains and no new ones.
 
+### A throwaway tsconfig typechecks a test file that no gate reads
+
+`server/tsconfig.json` excludes `test/`, so a type error in a new test is invisible to
+`pnpm typecheck` and to vitest alike (recorded under *Tool & Library Notes*). One extra file gives
+the check back for the file being written:
+
+```jsonc
+// server/tsconfig.p4check.json — created, run, deleted in the same command
+{ "extends": "./tsconfig.json", "include": ["src/**/*.ts", "test/<the-new-file>.test.ts"] }
+```
+
+`pnpm exec tsc --noEmit -p tsconfig.p4check.json` costs about 4 s over the whole package, and
+deleting it in the same command is what keeps it from reaching a commit. Used on 2026-08-26 for
+`test/context-bundle-exclusion.test.ts`.
+
 ## What Doesn't Work
 
 ### Testing a guard by calling its classifier directly can pass while the guard is wide open
@@ -816,6 +831,94 @@ that grounding would actually keep — stopped the overflow, so the assertion th
 `setup_commands` still ground — the list that used to vanish wholesale once the ceiling was
 reached inside the task loop. When a bound test fails after a fix, read whether it was measuring
 the bound or the thing overflowing it before touching the number.
+
+### An exclusion enforced in the scan is not a property of the prompt — `repo_docs` has two writers
+
+**Symptom.** `.devdigest/skills/*.md` was excluded in `scan-executor.ts:78` and every test was
+green, yet a document under that path could still be assembled into `## Project context`.
+**Cause.** The scan is not the only writer of `repo_docs`. `ContextService.persistWrite` →
+`upsertDoc` (`modules/context/service.ts`) inserts a row for every document created, uploaded or
+saved through `POST /repos/:id/context/docs`, and `writeZone` (`helpers.ts`) allowed any path under
+`.devdigest/`. That row is in `scannedPaths`, which is the ONLY membership check the run path makes
+(`readCandidate`), so the document was read and rendered until the next rescan — and a rescan makes
+it vanish with nothing said. Rows written before the exclusion existed behave the same way.
+**Fix.** Enforce a rule about the prompt in `readCandidate`, where the prompt is assembled, and
+enforce it a second time at the write gate so the user gets a 400 instead of a document that
+disappears later. Verified 2026-08-26: `POST /repos/:id/context/docs` with
+`.devdigest/skills/evil.md` answers `400 invalid_path` against a running API, and each gate is
+load-bearing — deleting the `readCandidate` line turns 3 cases of
+`test/context-bundle-exclusion.test.ts` red, deleting the `writeZone` line turns 7.
+Generally: when a criterion says "no X reaches Y", find every writer of the table between X and Y
+before deciding one gate is enough — `grep -n "upsertDoc\|replaceDocs" src/modules/context` is the
+whole list for this one.
+
+### A YAML scanner that gates an install has to be tested against VALID YAML first
+
+**Symptom.** `findYamlProblem` (`src/modules/ci/helpers.ts`) refused the manifest the module had
+just generated: `skills:\n  - secret-leaks` came back as *line 7 — expected a "key: value" pair*.
+On the install path (`CiService.refuseBrokenWorkflow`) that is a 422 refusing a workflow that is
+perfectly valid, which is the one thing the scanner's own comment says it must not do.
+**Cause.** It strips a leading `- ` and then applies the same "a line among mappings must be a
+pair" rule to what is left. A sequence ITEM is usually a plain scalar, and
+`types:\n      - opened` — the block form of the generated workflow's own trigger list — is
+exactly that shape. The generator happens to emit the FLOW form (`types: [opened, synchronize]`),
+so nothing in the module ever produced the failing shape until a test rendered a manifest whose
+agent had a skill bound.
+**Fix.** `if (sawMapping && offset === 0)`: `offset > 0` means a `- ` was consumed, so the line is
+a sequence entry, not a stray scalar. Found 2026-08-26 by `test/ci-generate.test.ts`; the
+regression case is the block-form list in `test/ci-helpers.test.ts` → "accepts the shapes a
+workflow is actually written in". Generally: a validator whose failure BLOCKS a user action needs
+its ACCEPTING cases tested before its rejecting ones, and a generator's own output is not a
+sample of what a person types.
+
+### An unbounded `z.number().int()` in front of an `integer` column wedges a whole repository
+
+**Symptom.** `CiResultArtifact.findings_count` was `z.number().int()` with no bound while
+`ci_runs.findings_count` is a Postgres `integer`. One artifact carrying `3_000_000_000` made
+`POST /ci/runs/refresh` answer `errors: [{ reason: 'value "3000000000" is out of range for type
+integer' }]`, ingest **zero** rows for that repository — including the healthy runs behind the bad
+one — and leave `ci_installations.last_polled_at` NULL. Every later refresh hit the same stored
+run and failed identically, so the repository never ingested again. Reproduced end to end over
+real HTTP on 2026-08-26.
+
+**Cause.** The blast radius, not the throw. `ingest-executor.ts:84` catches per run and rethrows
+anything that is not a `ValidationError` — which is right, and which makes a **driver** error
+escape to the outer per-repository catch. That catch means "the Actions API would not answer", so
+it records a failed poll and deliberately does not stamp. A row Postgres refuses therefore reads
+as a repository that was unreachable.
+
+**Fix.** Bound the contract at the same edge every other malformed field is refused at:
+`z.number().int().min(0).max(2_147_483_647)` in `vendor/shared/contracts/eval-ci.ts`, mirrored to
+the client copy. Then it is one rejected run and the poll carries on. **Before adding a numeric
+field to a contract that feeds a column, check the column's type** — `integer` is ±2147483647,
+and `bigint` is what `ci_runs.workflow_run_id` needed for the same reason.
+
+The second half is the fake: `test/ci-ingest.test.ts`'s `fakeRepo` now throws `integer out of
+range` for a value outside int4, exactly as the driver does. A fake that accepts what the column
+refuses cannot fail on this defect, which is why no test caught it.
+
+### Two slices that must agree on a string drift past `pnpm arch` and past `tsc`
+
+**Symptom.** `modules/ci` wrote `.devdigest/agents/` and `.devdigest/skills/` from its own
+literals; `modules/context` excluded those two folders from the scan from a second, independent
+set (`EXCLUDED_DEVDIGEST_SUBROOTS`). Renaming a subfolder on either side compiled, typechecked and
+passed `pnpm arch` — and silently reopened the AC-106/AC-107 loop where a review reads the
+reviewing agent's own skill back as project context.
+
+**Cause.** `no-cross-module` forbids the two slices importing each other, so "keep them in step"
+had no mechanism behind it. Nothing in the toolchain compares two string literals in two files for
+agreement, and both modules' tests hard-coded the same strings, so the tests moved with whichever
+side was edited.
+
+**Fix.** `modules/_shared/bundle-paths.ts`, read by both — the third instance of the move
+`_shared/budget.ts` and `_shared/repo-paths.ts` already made, and the remedy
+`.dependency-cruiser.cjs:149` names in its own message. Point the TESTS at it too, or they keep
+asserting the old literals. And add one test that compares the two slices rather than either
+against a constant: `test/context-bundle-exclusion.test.ts` → "what `ci` writes is what `context`
+refuses" feeds real `buildBundle` output through `isExcludedBundlePath`, identifying the manifest
+and the skill document by extension rather than by folder. Filtering those by folder would make
+the test pass for a generator that had moved out of it, which is the drift itself.
+
 
 ## Codebase Patterns
 
@@ -1566,6 +1669,54 @@ generation port is deliberately unable to read the index state at all
 (`generation-types.ts:36-43`), and a number handed over is not a port: it costs one field, while
 widening the port would cost the property that this feature can never index.
 
+### A refusal thrown inside `withRetry` must be a `ValidationError`, never an `ExternalServiceError`
+
+`withRetry`'s `defaultIsRetryable` (`platform/resilience.ts:34-43`) reads `err.statusCode` and
+retries anything `>= 500`. `ExternalServiceError` carries 502 (`platform/errors.ts:31-35`), so a
+deliberate refusal thrown inside the retry wrapper is attempted three more times before it
+surfaces — for `GitHubClient.downloadArtifact` that would mean re-requesting an artifact the size
+cap has already rejected. `ValidationError` carries 422 and stops at the first throw, which is why
+`adapters/github/octokit.ts` refuses an over-sized or expired artifact with that one. The taxonomy
+is doing double duty here: it picks the HTTP status AND decides whether the call is retried.
+
+### A unique index over columns a populated table does not have needs Postgres' NULLS DISTINCT
+
+`ci_runs` held rows before `(repo, workflow_run_id)` became unique (migration `0021`), and both
+columns are NULL on every one of them. Postgres' default treats two NULLs as distinct, so the
+index applies to a populated table without inventing values; drizzle's `.nullsNotDistinct()` —
+which `postgresql-table-design` recommends as the general default — would have made every
+pre-existing row collide with every other and the migration would have failed at `CREATE UNIQUE
+INDEX`. Verified on 2026-08-26 by inserting two pre-migration rows first, migrating, and watching
+both survive while `('owner/name', 42)` twice was still refused. The general rule inverts as soon
+as the column is nullable in rows that already exist.
+
+
+### A `JobRunner` kind whose result the request needs hands it back through a map keyed by `jobId`
+
+`JobHandler` is `(payload, ctx) => Promise<void>` (`src/platform/jobs.ts:16`) and `enqueue`
+returns `{ id, done }`, where `done` only says the handler finished. `POST /ci/runs/refresh` has
+to answer with one `errors[]` entry per repository whose poll failed (AC-83), so `CiService`
+registers the handler with a `Map<jobId, IngestOutcome>` that the handler writes and the awaiting
+caller reads and deletes (`src/modules/ci/service.ts`). Copy this when a route needs a VALUE out
+of a job rather than only its success — the alternative, reading it back off the `jobs` row, means
+serialising an outcome into columns that do not exist. It works only because the handler closure
+and the caller are the same service instance, which is what registering from `routes.ts`
+guarantees, the way `context/service.ts:79` already does.
+
+### A route may narrow the shared contract at the edge; it may not widen the contract file
+
+`modules/ci/routes.ts` declares `schema.body` as `CiExportInput.extend({…})` rather than
+`CiExportInput`, and each of the three narrowings is the edge's job rather than the service's.
+`target` becomes `z.literal('gha')`, so a request naming CircleCI is refused with the FIELD named
+(AC-15) instead of generating a bundle for a target that has no generator. `triggers` becomes an
+allowlist, because its values are interpolated into the generated workflow's `types: [...]` line
+— a free string there is a YAML injection into a file GitHub then executes, and it is the only
+place in this feature where a request body reaches an execution context. `workflow` — the
+hand-edited YAML of AC-31 — is added, because it exists only on the request and has no place in
+`vendor/shared`, which is vendored into the client and carries responses. Verified 2026-08-26
+against a running API: `target: "circle"` answers 422 with `instancePath: "/target"` and reaches
+no generator.
+
 
 ## Tool & Library Notes
 
@@ -1903,6 +2054,15 @@ tsconfig `paths` and routinely invent `Cannot find module '@devdigest/shared'` w
 `pnpm typecheck` is clean. Both are true at once: **distrust a diagnostic that names a module
 resolution problem; read one that names a type mismatch inside a test file**, because no gate will
 tell you.
+### A GitHub Actions run id does not fit in a 32-bit integer
+
+Measured against the live API on 2026-08-26: runs of `server-unit.yml` on `Holubinka/dev-digest`
+come back as `32885451296`, roughly 15× past `2^31`. `ci_runs.workflow_run_id` is therefore
+`bigint('workflow_run_id', { mode: 'number' })` — an `integer` column would have taken the value
+only until the first real ingest. `mode: 'number'` is safe up to `2^53`; ids are nowhere near it.
+The same call confirms where the two fields an ingested row is attributed by actually live:
+`pull_requests[0].number` (empty array when the run was not a PR's) and `repository.full_name`.
+
 
 ## Recurring Errors & Fixes
 
@@ -2161,6 +2321,14 @@ defect. The durable fix is in `waitForPrRuns`: a helper that gives up should thr
 names itself. Until it does, a green serial run and a red parallel one is not two results — it is
 one result and one timeout.
 
+**2026-08-26 — still true at 24 files, and it now also fails at container startup.** The Export-to-CI
+branch takes the split to 24 integration files. Two parallel runs minutes apart failed differently
+(8 tests in 3 files, then 4 in 1), each file passed alone, and `--fileParallelism=false` was green:
+24 files, 199 tests, ~148s. One serial run also failed *inside* `startPg` at
+`test/helpers/pg.ts:37` — a container that would not start, not an assertion — so re-run before
+reading a serial failure as real. `git stash -u` is not available to every agent here; running the
+suspect file alone separates the two cases just as well.
+
 ### A `withTimeout` mutation test hangs the whole vitest run instead of failing it
 
 **Symptom.** Removing `withTimeout(...)` from `modules/brief/service.ts` to prove the R43 test can
@@ -2279,6 +2447,66 @@ real fault. Hit twice on 2026-08-18 in `server/test/`.
 **Fix.** Never write a glob ending in `*/` inside a block comment; use `examples/<name>/…`. When
 esbuild reports a syntax error on a line that is obviously fine, look UP for an unbalanced
 backtick or an early `*/`, not at the line it names.
+
+### `pnpm typecheck` fails inside `src/adapters/llm/` in a worktree where nothing touched it
+
+**Symptom.** In a fresh worktree, `cd server && pnpm install` then `pnpm typecheck` prints 12
+errors. Ten are under `../reviewer-core/src/llm/**` (`Cannot find module 'openai'`, then `'res' is
+of type 'unknown'`), and two are in the server's OWN files — `src/adapters/llm/anthropic.ts:131`
+and `src/adapters/llm/openai.ts:118`, `Type 'unknown' is not assignable to type 'T'`. Those last
+two are what mislead: they name files the change never opened.
+**Cause.** Installing `server/` does not install the sibling. The tsconfig `paths` resolve
+`@devdigest/reviewer-core` to its raw source, so with no `reviewer-core/node_modules` the `openai`
+types are missing, its helpers degrade to `unknown`, and the server's adapters inherit that
+through the generic they pass it to.
+**Fix.** `cd reviewer-core && npm install` — npm, not pnpm. It cleared all 12 at once on
+2026-08-26. The root `CLAUDE.md` records the runtime half of the same missing install
+(`ERR_MODULE_NOT_FOUND` when the API boots); this is what `tsc` makes of it.
+
+### `pnpm db:migrate` fails with "DATABASE_URL is required" on a machine where the API runs fine
+
+**Symptom.** `cd server && pnpm db:migrate` exits 1 with `DATABASE_URL is required`, on a
+worktree where `pnpm dev` and `tsx src/server.ts` both start and serve queries. There is no
+`server/.env` — only `.env.example`, which greps for `DATABASE_URL` and misleads.
+
+**Cause.** Two different readers. `src/platform/config.ts:16-18` gives `DATABASE_URL` a
+**default** of `postgres://devdigest:devdigest@localhost:5434/devdigest`, so the API needs no env
+file. `src/db/migrate.ts:38` reads `process.env.DATABASE_URL` raw and refuses when it is empty.
+So the app and its migrator disagree about whether the variable is optional.
+
+**Fix.** Pass it explicitly:
+`DATABASE_URL='postgres://devdigest:devdigest@localhost:5434/devdigest' pnpm db:migrate`
+(2026-08-27). `scripts/dev.sh` writes an `.env` and so never hits this; a bare worktree does.
+
+### A 500 naming a column the branch just added means the DEV database, not the code
+
+**Symptom.** Every gate green — `pnpm typecheck`, 1479 unit tests, 205 integration tests — and
+`GET /agents/:id/ci` on the live API answers 500
+`column ci_installations.workflow_present does not exist` (2026-08-27, Export-to-CI branch).
+
+**Cause.** Migrations do not run on boot, and the integration suite cannot see the gap:
+`test/helpers/pg.ts` runs `runMigrations` against a **fresh** testcontainers Postgres every time,
+so the schema it tests is always current while the developer's 5434 container stays at whatever
+was last applied by hand. A branch that adds `0021`/`0022` is green everywhere and broken live.
+
+**Fix.** After pulling or writing a migration, apply it before believing anything the running API
+says — see the entry above for the env the command needs. The tell is that the missing column is
+one this branch introduced.
+
+### `tsx watch` does not pick up a newly REGISTERED Fastify module, so a long-lived dev API 404s a route that exists
+
+**Symptom.** `POST /agents/:id/export-ci` and `GET /agents/:id/ci` answered 404 on the dev API at
+:3001 while `src/modules/index.ts:18,50` clearly imports and registers `ci`. A second instance
+started from the same tree — `API_PORT=3099 pnpm exec tsx src/server.ts` — served both at 200.
+
+**Cause.** The :3001 process was started before the `ci` module existed. `tsx watch` re-runs on
+changes to files already in the module graph; a directory that was not imported when the process
+booted is not being watched, so registering it changes nothing until a real restart.
+
+**Fix.** Do not read a 404 from a long-running dev server as a routing defect. Start a throwaway
+instance on a spare port and curl that — it needs no `.env` (see two entries above) and leaves
+whatever the human is running untouched.
+
 
 ## Session Notes
 
@@ -2588,6 +2816,32 @@ backtick or an early `*/`, not at the line it names.
   this screen on this repository; the model's own judgement is.
 
 
+### 2026-08-26 — Export to CI, P3: finishing a package a session limit cut short
+
+- **What was already on disk and good:** `constants.ts`, `types.ts`, `helpers.ts`,
+  `repository.ts`, `ingest-executor.ts` and `generate/{slug,manifest,workflow,bundle}.ts`.
+  **What was missing:** `service.ts`, `routes.ts`, the `RunnerBundle` adapter, the container
+  getter, the hand registration in `modules/index.ts`, and every test of the package.
+- **A green `pnpm typecheck` on a half-written module proves nothing**, and it is worth saying out
+  loud before trusting one: nothing imported `modules/ci/**` yet, so `tsc` never visited it.
+  `tsconfig.json` `include` is `src/**/*.ts`, so the files WERE compiled — but the seams that
+  actually break (a service calling a repository method that does not exist, a route body whose
+  inferred type is not the service's parameter) only appear once something imports them.
+- **The three pinned action SHAs were re-verified against the live GitHub API on 2026-08-26** —
+  `actions/checkout@v4.2.2`, `setup-node@v4.1.0`, `upload-artifact@v4.4.3` — and all three
+  resolve to a `commit` object, which is what a `uses:` pin needs; a tag that resolved to a `tag`
+  object would be an annotated tag and the pin would be wrong. `curl
+  https://api.github.com/repos/<repo>/git/ref/tags/<tag>` is the check, and `gh api` is not — the
+  CLI here is unauthenticated and answers "please run gh auth login" instead of failing loudly.
+- **Exercised through the real stack**, not only through mocks: `POST /agents/:id/export-ci`
+  with `action: "files"` against a running API and the REAL `FileRunnerBundle` produced the
+  802 883-character `.devdigest/runner.mjs` with the AC-22 banner intact, `/export-ci/zip`
+  answered `content-type: application/zip` with a 220 522-byte archive of five files, and
+  `POST /ci/runs/refresh` against a repository the token cannot see answered
+  `errors: [{repo, reason}]` while `ci_installations.last_polled_at` stayed NULL — AC-128/AC-129
+  against a real Postgres and a real GitHub refusal rather than a mock.
+
+
 ## Open Questions
 
 - Onboarding Tour, 2026-08-18: moving `project_docs` above `file_samples` made the documents'
@@ -2752,3 +3006,10 @@ backtick or an early `*/`, not at the line it names.
   rank candidates and none of them was junk (2026-08-18). The unit case in
   `test/repo-intel-critical-paths.test.ts` pins the behaviour, but no real repository has yet shown
   the filter changing an answer — a monorepo with a large test tree would be the one to check.
+- Export to CI, 2026-08-26: `CiExport.installation` is not nullable, but `action: "files"` and
+  the `/zip` route write no `ci_installations` row (AC-7, AC-44). `CiService.installationPreview`
+  answers with the existing row when there is one and otherwise with an un-persisted description
+  carrying `id: ''`. Nothing in the client reads that field today (`client/src/lib/hooks/ci.ts`
+  uses `files` and `pr_url` only), so the empty id is invisible rather than wrong — but the
+  honest shape is `installation: CiInstallation | null`, and that is a change to
+  `vendor/shared/contracts/eval-ci.ts`, i.e. to both vendored copies and to the client's types.

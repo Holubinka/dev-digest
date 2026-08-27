@@ -148,6 +148,20 @@
       "when": 1786908535239,
       "tag": "0020_broad_steel_serpent",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1787729144093,
+      "tag": "0021_outstanding_lockjaw",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1787774773342,
+      "tag": "0022_keen_mandroid",
+      "breakpoints": true
     }
   ]
 }

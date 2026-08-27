@@ -1,0 +1,21 @@
+{
+  "name": "@devdigest/agent-runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "DevDigest CI runner — the single self-contained ESM file committed to a target repository as .devdigest/runner.mjs. Reads the agent manifest, the PR and the bundle from the checkout, runs reviewer-core, posts the review and always writes devdigest-result.json.",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "node scripts/build.mjs",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "esbuild": "^0.28.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

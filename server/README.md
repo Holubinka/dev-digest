@@ -84,12 +84,26 @@ flowchart TB
     conventions["conventions<br/>/repos/:id/conventions · /conventions/extract · /conventions/:id"]
     onboarding["onboarding<br/>GET /repos/:id/onboarding (cached, zero LLM)<br/>POST /repos/:id/onboarding/generate (one call, 6/min per workspace)"]
   end
+  subgraph CI["Export to CI"]
+    ci["ci<br/>POST /agents/:id/export-ci (generate; open_pr also publishes, 10/min)<br/>POST /agents/:id/export-ci/zip (application/zip, no GitHub call, 10/min)<br/>GET /agents/:id/ci (installations, last run, staleness)<br/>GET /ci/runs (stored rows only, zero Actions calls)<br/>POST /ci/runs/refresh (polls Actions; force ignores the 5-minute window)"]
+  end
   subgraph Platform["Platform"]
     settings["settings<br/>/settings · /providers"]
     workspace["workspace<br/>/workspace"]
   end
   HEALTH["/health (liveness) · /health/ready (DB ping → 200/503)"]
 ```
+
+**`ci` reaches the GitHub Actions API only downstream of a request a person made** — the
+CI Runs page opening or its Refresh button. There is no timer, no schedule and no
+boot-time hook in that module, and `POST /ci/runs/refresh` with `force: false` is what the
+page sends on mount: it skips any repository whose `ci_installations.last_polled_at` is
+under five minutes old. That column is stamped only by a poll that RETURNED, so a refusal
+from Actions neither reports a poll that did not happen nor restarts the window.
+
+The two export routes need `agent-runner/dist/runner.mjs`, which is git-ignored: without
+`cd agent-runner && npm run build` they answer 500 with a `config_error` naming that
+command.
 
 ## Environment
 
@@ -147,7 +161,8 @@ hermetic:
 
 - **unit** — `pnpm exec vitest run --exclude '**/*.it.test.ts'` — the DB-free
   files. Adapters mocked; no Docker.
-- **integration** — `pnpm exec vitest run .it.test` — the `*.it.test.ts` files.
+- **integration** — `pnpm exec vitest run .it.test --fileParallelism=false` — the
+  `*.it.test.ts` files. The flag is required locally (`TESTING.md` § *Conventions*).
   Each starts a real Postgres via testcontainers (`test/helpers/pg.ts`), builds
   the app, migrates + seeds, and exercises routes end-to-end. They self-skip when
   Docker is absent.

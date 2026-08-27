@@ -46,6 +46,18 @@ export const NAV: NavGroup[] = [
       { key: "conventions", label: "Conventions", icon: "ListChecks", href: "/repos/:repoId/conventions", gKey: "c" },
     ],
   },
+  {
+    // `key: "ci-runs"` is not a free choice: `activeKeyFor()` already returns
+    // "ci-runs" for a /ci-runs path (`components/app-shell/helpers.ts:43`) and
+    // `messages/en/shell.json` already holds `nav.ci-runs`, which the command
+    // palette reads as `t(`nav.${key}`)`. Any other key leaves the row
+    // unhighlighted and the palette entry untranslated.
+    //
+    // NO `gKey`. The comment above `SHORTCUTS` makes every `gKey` owe a row in
+    // that array, and no criterion in SPEC-05 asks for a shortcut here.
+    section: "GLOBAL",
+    items: [{ key: "ci-runs", label: "CI Runs", icon: "Workflow", href: "/ci-runs" }],
+  },
 ];
 
 export const SETTINGS_ITEM: NavItemDef = {

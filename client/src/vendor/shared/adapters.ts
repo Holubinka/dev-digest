@@ -149,6 +149,45 @@ export interface CommitFilesPayload {
   base: string;
   message: string;
   files: CommitFile[];
+  /**
+   * Paths removed by the SAME commit that writes `files` (AC-146).
+   *
+   * One commit and not two, so the repository is never briefly left with two
+   * workflows for one agent or with none. A path that the parent commit does
+   * not carry is skipped rather than refused: the caller asks for a state, not
+   * for a diff, and it has no way to know what the target repository holds.
+   */
+  deletions?: string[];
+}
+
+/**
+ * One GitHub Actions workflow run, as the ingest sees it.
+ *
+ * Every field an ingested `ci_runs` row is keyed or attributed by comes from
+ * HERE, never from the artifact body: the artifact is written inside the target
+ * repository and is not trusted to say which run, which commit or which PR it
+ * belongs to.
+ */
+export interface WorkflowRunRef {
+  id: number;
+  head_sha: string;
+  status: string;
+  conclusion: string | null;
+  /** The PR this run was triggered for, when GitHub reported one. */
+  pr_number: number | null;
+  html_url: string;
+  run_started_at: string | null;
+  updated_at: string | null;
+  /** "owner/name", as GitHub reported it for the run. */
+  repository: string;
+}
+
+/** One artifact attached to a workflow run. */
+export interface WorkflowArtifactRef {
+  id: number;
+  name: string;
+  size_in_bytes: number;
+  expired: boolean;
 }
 
 export interface GitHubClient {
@@ -172,6 +211,37 @@ export interface GitHubClient {
   commitFiles(repo: RepoRef, payload: CommitFilesPayload): Promise<{ branch: string }>;
   /** The open PR whose head is `branch`, if any (so re-publish reuses it). */
   findOpenPr(repo: RepoRef, branch: string): Promise<{ url: string } | null>;
+  /**
+   * Runs of ONE workflow file (e.g. "devdigest-review-security-reviewer.yml"),
+   * newest first, or `null` when the repository has no such workflow.
+   *
+   * Scoping to the file is what keeps the ingest from reading runs of workflows
+   * DevDigest did not generate. Since the file name carries the agent's slug
+   * (AC-135) it also scopes the runs to ONE agent.
+   *
+   * `null` IS THE ANSWER, not a failure: "Actions does not know this workflow"
+   * is what tells the CI tab that an installation cannot be confirmed (AC-147),
+   * and it has to be distinguishable from "the token cannot read this
+   * repository", which is a failed poll and must leave `last_polled_at` alone
+   * (AC-129). An empty array is a third, different thing — the workflow exists
+   * and has not run yet.
+   */
+  listWorkflowRuns(
+    repo: RepoRef,
+    workflowFile: string,
+    opts?: { perPage?: number },
+  ): Promise<WorkflowRunRef[] | null>;
+  /** Artifacts attached to one workflow run. */
+  listRunArtifacts(repo: RepoRef, runId: number): Promise<WorkflowArtifactRef[]>;
+  /**
+   * Download one artifact as its zip archive.
+   *
+   * `maxBytes` is a parameter and not the caller's business afterwards: the
+   * implementation refuses an over-sized artifact BEFORE the bytes are held,
+   * the way `parseSkillArchive` budgets inside fflate's filter. A caller that
+   * downloaded first and measured second has already paid the memory.
+   */
+  downloadArtifact(repo: RepoRef, artifactId: number, maxBytes: number): Promise<Uint8Array>;
   getIssue(repo: RepoRef, n: number): Promise<IssueMeta>;
   /** GET /user — for "posting as @user". */
   currentLogin(): Promise<string>;
@@ -503,4 +573,25 @@ export interface PromptTemplates {
    * `name` is a template filename, never user input.
    */
   render(name: string, vars: Record<string, string>): Promise<string>;
+}
+
+// ---------- Runner bundle (the generated `.devdigest/runner.mjs`) ----------
+export interface RunnerBundleInfo {
+  contents: string;
+  /** Runner version, as the bundle's build stamped it. */
+  version: string;
+  /** Commit SHA the bundle was built from. */
+  sourceSha: string;
+  bytes: number;
+}
+
+/**
+ * The built agent-runner bundle, read from disk.
+ *
+ * A port for the same reason `PromptTemplates` is one: the implementation reads
+ * the filesystem and the service that needs the bytes may not, and
+ * `no-fs-in-service` only sees a direct `node:fs` edge.
+ */
+export interface RunnerBundle {
+  read(): Promise<RunnerBundleInfo>;
 }

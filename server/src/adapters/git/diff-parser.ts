@@ -77,3 +77,24 @@ export function parseUnifiedDiff(raw: string): UnifiedDiff {
 
   return { raw, files: files.filter((f) => f.path) };
 }
+
+/**
+ * Rebuild a unified diff from per-file patches, then parse it.
+ *
+ * One reconstruction, because two callers depend on producing the SAME
+ * new-side line numbers: `modules/reviews/diff-loader.ts` feeds a studio review
+ * from persisted `pr_files`, and `agent-runner` feeds a CI review from the
+ * GitHub API. The grounding gate checks findings against those line numbers, so
+ * a review that reconstructed the diff differently would ground differently.
+ */
+export function diffFromPatches(files: { path: string; patch: string | null }[]): UnifiedDiff {
+  const parts: string[] = [];
+  for (const f of files) {
+    if (!f.patch) continue;
+    parts.push(`diff --git a/${f.path} b/${f.path}`);
+    parts.push(`--- a/${f.path}`);
+    parts.push(`+++ b/${f.path}`);
+    parts.push(f.patch);
+  }
+  return parseUnifiedDiff(parts.join('\n'));
+}

@@ -78,6 +78,20 @@ install_if_needed server
 # reviewer-core's RAW source is imported by the API at runtime (tsconfig alias);
 # without its deps the API crashes at boot with ERR_MODULE_NOT_FOUND. It uses npm.
 [ -d reviewer-core/node_modules ] || { log "installing deps in reviewer-core"; (cd reviewer-core && npm ci); }
+# The CI runner bundle. Unlike everything else here it is a BUILD ARTIFACT the app
+# serves: Export to CI copies agent-runner/dist/runner.mjs into the generated bundle
+# as .devdigest/runner.mjs, and dist/ is git-ignored, so a fresh clone has nothing to
+# export until this has run once. It uses npm, and its bundler resolves openai and zod
+# out of reviewer-core/node_modules — hence strictly after the install above.
+# Only built when missing, like the installs; rebuild by hand after changing
+# agent-runner/src (cd agent-runner && npm run build).
+if [ ! -f agent-runner/dist/runner.mjs ]; then
+  [ -d agent-runner/node_modules ] || { log "installing deps in agent-runner"; (cd agent-runner && npm ci); }
+  log "building the CI runner bundle"
+  # Not fatal: the API, the studio and every other screen boot fine without it.
+  # Only Export to CI is unavailable, and it says so louder than a dead bootstrap would.
+  (cd agent-runner && npm run build) || warn "agent-runner build failed — Export to CI will have no runner bundle until 'cd agent-runner && npm run build' succeeds"
+fi
 # mcp/ is deliberately NOT built here. It is a developer tool, not part of the running
 # app: nothing in this stack imports it, and the API, the web app and the tests are all
 # fine without it. Build it yourself when you want it — `cd mcp && npm ci && npm run

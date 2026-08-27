@@ -1,11 +1,13 @@
-/* AgentEditor — the agent's Config and the skills bound to it. Evals, Stats and
-   CI arrive with the lessons that fill them. Tab state lives in ?tab=. */
+/* AgentEditor — the agent's Config, the skills bound to it, its project context
+   and its CI deployment. Evals and Stats arrive with the lessons that fill them.
+   Tab state lives in ?tab=. */
 "use client";
 
 import React from "react";
 import { useTranslations } from "next-intl";
 import { Tabs } from "@devdigest/ui";
 import type { Agent } from "@devdigest/shared";
+import { CITab } from "./_components/CITab";
 import { ConfigTab } from "./_components/ConfigTab";
 import { ContextTab } from "./_components/ContextTab";
 import { SkillsTab } from "./_components/SkillsTab";
@@ -25,6 +27,8 @@ export function AgentEditor({ agent, tab, onTab }: { agent: Agent; tab: string; 
           <SkillsTab agent={agent} />
         ) : tab === "context" ? (
           <ContextTab agent={agent} />
+        ) : tab === "ci" ? (
+          <CITab agent={agent} />
         ) : (
           <ConfigTab agent={agent} />
         )}

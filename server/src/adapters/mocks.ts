@@ -37,9 +37,15 @@ import type {
   SkillFetcher,
   FetchedMarkdown,
   PromptTemplates,
+  WorkflowRunRef,
+  WorkflowArtifactRef,
+  RunnerBundle,
+  RunnerBundleInfo,
 } from '@devdigest/shared';
+import { ValidationError } from '../platform/errors.js';
 import { CloneReadError, CloneWriteError } from '@devdigest/shared';
 import { parseUnifiedDiff } from './git/diff-parser.js';
+import { refuseOversizedDownload, refuseUnusableArtifact } from './github/artifact-guard.js';
 import { EXCLUDED_WALK_DIRS } from './git/constants.js';
 import { byDepthThenPath } from './git/order.js';
 
@@ -134,6 +140,27 @@ export interface MockGitHubOptions {
   login?: string;
   /** Existing inline review comments returned by listReviewComments. */
   comments?: PrReviewComment[];
+  /** Runs returned by `listWorkflowRuns` for any file not named below, newest first. */
+  workflowRuns?: WorkflowRunRef[];
+  /**
+   * Per-file answers, keyed by workflow file name — `null` means the repository
+   * has no such workflow, which is what the ingest reads as "this installation
+   * cannot be confirmed" (AC-147).
+   *
+   * Needed because workflow files are per-agent (AC-135): a test with two agents
+   * in one repository has to give two different answers to one mock.
+   */
+  runsByWorkflow?: Record<string, WorkflowRunRef[] | null>;
+  /** Artifacts per workflow-run id; a run absent from the map has none. */
+  runArtifacts?: Record<number, WorkflowArtifactRef[]>;
+  /** Archive bytes per artifact id; an artifact absent from the map has none. */
+  artifactZips?: Record<number, Uint8Array>;
+  /**
+   * Every Actions call throws this instead of answering — the "the token
+   * cannot read this repository's Actions" path, which is the only way a
+   * caller's failure handling can be exercised.
+   */
+  actionsError?: Error;
 }
 
 export class MockGitHubClient implements GitHubClient {
@@ -141,6 +168,10 @@ export class MockGitHubClient implements GitHubClient {
   public openedPrs: OpenPrPayload[] = [];
   public committed: CommitFilesPayload[] = [];
   public createdComments: CreateReviewCommentInput[] = [];
+  /** Workflow files whose runs were asked for, in order. */
+  public polledWorkflows: { repo: string; workflowFile: string }[] = [];
+  /** Artifact ids whose bytes were HANDED BACK — a refused download records nothing. */
+  public downloadedArtifacts: number[] = [];
 
   constructor(private opts: MockGitHubOptions = {}) {}
 
@@ -237,6 +268,42 @@ export class MockGitHubClient implements GitHubClient {
   async findOpenPr(_repo: RepoRef, branch: string): Promise<{ url: string } | null> {
     const pr = this.openedPrs.find((p) => p.head === branch);
     return pr ? { url: 'https://github.com/mock/mock/pull/1' } : null;
+  }
+
+  async listWorkflowRuns(
+    repo: RepoRef,
+    workflowFile: string,
+    opts: { perPage?: number } = {},
+  ): Promise<WorkflowRunRef[] | null> {
+    if (this.opts.actionsError) throw this.opts.actionsError;
+    this.polledWorkflows.push({ repo: `${repo.owner}/${repo.name}`, workflowFile });
+    const named = this.opts.runsByWorkflow?.[workflowFile];
+    if (named === null) return null;
+    const runs = named ?? this.opts.workflowRuns ?? [];
+    return opts.perPage ? runs.slice(0, opts.perPage) : runs;
+  }
+
+  async listRunArtifacts(_repo: RepoRef, runId: number): Promise<WorkflowArtifactRef[]> {
+    if (this.opts.actionsError) throw this.opts.actionsError;
+    return this.opts.runArtifacts?.[runId] ?? [];
+  }
+
+  /**
+   * Refuses exactly what the Octokit adapter refuses, through the same two
+   * functions — a mock that handed the bytes over regardless would make a
+   * caller that forgot the cap pass its tests, and a mock with its own copy of
+   * the rule drifts from the adapter with nothing asserting either.
+   */
+  async downloadArtifact(_repo: RepoRef, artifactId: number, maxBytes: number): Promise<Uint8Array> {
+    if (this.opts.actionsError) throw this.opts.actionsError;
+    const declared = Object.values(this.opts.runArtifacts ?? {})
+      .flat()
+      .find((a) => a.id === artifactId);
+    if (declared) refuseUnusableArtifact(artifactId, declared, maxBytes);
+    const bytes = this.opts.artifactZips?.[artifactId] ?? new Uint8Array();
+    refuseOversizedDownload(artifactId, bytes, maxBytes);
+    this.downloadedArtifacts.push(artifactId);
+    return bytes;
   }
 
   async getIssue(_repo: RepoRef, n: number): Promise<IssueMeta> {
@@ -526,5 +593,26 @@ export class MockPromptTemplates implements PromptTemplates {
     return template.replace(/\{\{(\w+)\}\}/g, (whole, key: string) =>
       key in vars ? (vars[key] ?? '') : whole,
     );
+  }
+}
+
+// ---------- Mock runner bundle ----------
+/**
+ * Serves a fixed `.devdigest/runner.mjs` without a build having run.
+ *
+ * `bytes` is reported rather than measured from `contents`, so a test can state
+ * a size the fixture text does not have — a bundle over the size ceiling has no
+ * other way to be expressed without carrying megabytes of fixture.
+ */
+export class MockRunnerBundle implements RunnerBundle {
+  constructor(private info: Partial<RunnerBundleInfo> = {}) {}
+  async read(): Promise<RunnerBundleInfo> {
+    const contents = this.info.contents ?? '// mock runner bundle\n';
+    return {
+      contents,
+      version: this.info.version ?? '0.0.0-mock',
+      sourceSha: this.info.sourceSha ?? 'deadbeef',
+      bytes: this.info.bytes ?? Buffer.byteLength(contents),
+    };
   }
 }

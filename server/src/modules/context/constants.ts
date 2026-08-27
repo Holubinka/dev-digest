@@ -103,8 +103,32 @@ export const DEFAULT_SCAN_ROOTS = ['specs', 'docs', 'insights'] as const;
  * roots to `docs` would otherwise be unable to see the documents it just wrote.
  *
  * Not in `EXCLUDED_WALK_DIRS`, so `listFiles` already descends it.
+ *
+ * The NAME lives in `_shared/bundle-paths.ts`: `modules/ci` writes into this same
+ * root, and `no-cross-module` forbids the two slices importing each other.
  */
-export const DEVDIGEST_ROOT = '.devdigest';
+export { DEVDIGEST_ROOT } from '../_shared/bundle-paths.js';
+
+/**
+ * The folders under `.devdigest/` that an export to CI writes, and the only
+ * part of that root the scan leaves out.
+ *
+ * A committed bundle is DevDigest's own output, not a fact about the
+ * repository. Scanning `.devdigest/skills/<slug>.md` back in would let a review
+ * read the reviewing agent's own skill as project context and ground a finding
+ * in it (`AC-106`, `AC-107`). Everything else under the root stays, because the
+ * documents this feature writes itself live there and that is what the root is
+ * unconditional for (`AC-108`).
+ *
+ * The rest of a bundle needs no rule at all: `DOC_EXTENSIONS` below is `['.md']`,
+ * so the `.yaml`, `.jsonl`, `.mjs` and `.gitattributes` beside these two folders
+ * were never candidates.
+ *
+ * The DECISION to exclude them is this module's; the two names are the exporter's,
+ * so they arrive from `_shared/` rather than being restated here. A rename that
+ * touched only one side used to compile and pass `pnpm arch`.
+ */
+export { BUNDLE_SUBROOTS as EXCLUDED_DEVDIGEST_SUBROOTS } from '../_shared/bundle-paths.js';
 
 /** Tokens the assembled `## Project context` section may occupy, per prompt. */
 export const DEFAULT_CONTEXT_BUDGET_TOKENS = 16_000;

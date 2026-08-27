@@ -8,6 +8,7 @@ import type {
   LLMProvider,
   SkillFetcher,
   PromptTemplates,
+  RunnerBundle,
 } from '@devdigest/shared';
 import type { AppConfig } from './config.js';
 import type { Db } from '../db/client.js';
@@ -51,6 +52,7 @@ import { type DepGraph, DepCruiseGraph } from '../adapters/depgraph/index.js';
 import { type Tokenizer, TiktokenTokenizer } from '../adapters/tokenizer/index.js';
 import { HttpSkillFetcher } from '../adapters/skill-fetch/index.js';
 import { FilePromptTemplates } from '../adapters/prompts/file-templates.js';
+import { FileRunnerBundle } from '../adapters/runner-bundle/index.js';
 
 /**
  * DI container. One per app instance. Holds config, db, the JobRunner,
@@ -116,6 +118,11 @@ export interface ContainerOverrides {
   skillFetcher?: SkillFetcher;
   /** Instruction templates — tests inject canned text instead of reading `src/prompts`. */
   prompts?: PromptTemplates;
+  /**
+   * The built CI runner (16) — tests inject a fixture instead of requiring
+   * `agent-runner/dist`, which is git-ignored and absent until it is built.
+   */
+  runnerBundle?: RunnerBundle;
 }
 
 export class Container {
@@ -150,6 +157,7 @@ export class Container {
   private _tokenizer?: Tokenizer;
   private _skillFetcher?: SkillFetcher;
   private _prompts?: PromptTemplates;
+  private _runnerBundle?: RunnerBundle;
   private _priceBook?: PriceBook;
 
   constructor(config: AppConfig, db: Db, private overrides: ContainerOverrides = {}) {
@@ -184,6 +192,19 @@ export class Container {
     if (this.overrides.prompts) return this.overrides.prompts;
     this._prompts ??= new FilePromptTemplates();
     return this._prompts;
+  }
+
+  /**
+   * The built `.devdigest/runner.mjs` the export commits into a target
+   * repository. A port for the reason `prompts` is one — the implementation
+   * reads the filesystem and the generator may not — and the reason it is
+   * injectable is that `agent-runner/dist` is a BUILD OUTPUT: without an
+   * override every test of the export would need `npm run build` to have run.
+   */
+  get runnerBundle(): RunnerBundle {
+    if (this.overrides.runnerBundle) return this.overrides.runnerBundle;
+    this._runnerBundle ??= new FileRunnerBundle();
+    return this._runnerBundle;
   }
 
   get agentsRepo(): AgentsRepository {
