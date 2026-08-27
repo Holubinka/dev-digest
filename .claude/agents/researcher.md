@@ -3,6 +3,7 @@ name: researcher
 description: Read-only researcher for two kinds of question — how something works in this repository, and what the outside world says about a technology, library or standard. Returns a structured report that separates findings from evidence, addresses every claim to a path:line or a URL, and lists separately what it could not establish. Asks for clarification instead of guessing. Cannot write or edit files.
 tools: Read, Grep, Glob, Bash, WebSearch, WebFetch
 model: sonnet
+effort: medium
 color: cyan
 ---
 

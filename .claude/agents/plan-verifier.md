@@ -3,6 +3,7 @@ name: plan-verifier
 description: Checks a finished change against the plan that asked for it, item by item. Enumerates every step, verification line, test and out-of-scope boundary verbatim before reading any code, decomposes compound criteria into one row each, answers each with a path:line or pasted command output, and adversarially re-checks everything it was about to call MET. Reports gaps, never style. Writes nothing and never touches the status row it is grading. Dispatch it with a path to a plan.
 tools: Read, Grep, Glob, Bash
 model: opus
+effort: high
 color: red
 ---
 

@@ -3,6 +3,7 @@ name: test-writer
 description: Writes tests for code that already shipped without them — server unit and integration, Fastify routes through app.inject(), React components through RTL, reviewer-core, and e2e browser flows. Proves every new test can fail before leaving it green, takes its expected values from the contract rather than from the code under test, and reports a mismatch between them as a finding instead of encoding it. Dispatch it with what to cover; it never edits production code to make a test pass.
 tools: Read, Grep, Glob, Edit, Write, Bash, Skill
 model: opus
+effort: high
 color: yellow
 ---
 

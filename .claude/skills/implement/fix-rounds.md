@@ -82,7 +82,13 @@ boundary — becomes the file. One entry per finding:
   every finding above `note`, so this is usually a copy.
 
 The header names the plan the branch was executing. Then dispatch **one `implementer` against the
-brief path**. It opens only that plan's `## Out of scope`, `## Constraints` and `## Gates` — the
+brief path, with `model: sonnet` on the `Agent` call**. That override beats the agent's `opus`
+frontmatter for this one dispatch, and a brief built to the shape above is what makes it safe: the
+address, the rule, the quote and the target shape are all decided already, so the round is an edit
+rather than a design. Downgrade the *round*, never the agent file — a build implementer starting
+from a plan is not this, and `SKILL.md` § 11 says why it stays on `opus`. Note the override in
+your report; if a finding turns out to need a decision rather than an edit, it was filter 3's and
+does not belong in the brief at all. It opens only that plan's `## Out of scope`, `## Constraints` and `## Gates` — the
 steps are done, and re-reading them is what would make a fix round cost as much as the build did —
 and it runs the touched modules' gates before reporting.
 

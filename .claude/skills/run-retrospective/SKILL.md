@@ -60,7 +60,7 @@ jq '.totals' .retro/stats.json
 | `totals.reread_ratio` | cache-read tokens per token produced — the whole cost model in one figure | It is normally in the hundreds. What matters is which agents are above the run's own median, not the absolute value |
 | `agents[].turns` | how long an agent argued with itself | An agent far above its siblings either got a brief it could not act on or was doing someone else's job |
 | `duplication.files_read_by_many` | a file N agents each opened | Every entry above ~3 is a fact a brief could have carried once instead of N agents paying to find |
-| `duplication.files_written_by_many` | a file N agents each edited | **The packaging failed.** Concurrent agents were supposed to own disjoint files; this is the list of collisions git could not mediate |
+| `duplication.files_written_by_many` | a file N agents each edited | **Read it against the order in `agents[]` before calling it a failure.** Concurrent agents owning the same file is a collision git could not mediate; the same file written by three *sequential* `spec-creator` dispatches is a deliberate amendment chain, and the metric cannot tell them apart |
 
 **2b — Then the two the script computes about the briefs themselves.** These say less about the
 agents than about what they were handed.

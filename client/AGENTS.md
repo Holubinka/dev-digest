@@ -27,9 +27,13 @@ file only covers what is specific to this package.
   inline as well and the layout silently stops responding. Breakpoints in use: 900px (the
   sidebar becomes an overlay drawer), 1024px (a convention card stacks), 680px (page
   header and toolbar stop being single rows).
-- **`src/vendor/shared` and `src/vendor/ui` are vendored copies**, not packages. The
-  server's copy of `shared` is the source of truth; mirror any contract change there and
-  verify with `diff -rq ../server/src/vendor/shared src/vendor/shared`.
+- **`src/vendor/shared` is a vendored copy**, not a package. The server's copy is the
+  source of truth; mirror any contract change there and verify with
+  `diff -rq ../server/src/vendor/shared src/vendor/shared`.
+- **`src/vendor/ui` is our design kit** — same folder, opposite rule. No paired copy, no
+  mirror gate, and it is editable: a primitive that gains a prop is how the second caller
+  reuses it rather than cloning it. Widen it for a shape more than one caller needs, and
+  remember the edit goes unlinted (§ *Lint*).
 
 ## A design is an acceptance criterion
 
@@ -59,12 +63,20 @@ Walk it element by element and answer each with *matches / differs / absent*:
   number; a `ref: string` of paths cannot carry one. That is a finding about the contract, and it
   belongs in the report before anyone styles anything.
 
+**The walk is written down once, and then it *is* the design.** Whoever opens the image first
+answers those five axes into `specs/assets/<SPEC>-DESIGN-WALK.md`, beside the PNG. Every later agent
+is handed the walk and opens the image only to settle what the walk cannot answer — then appends
+that row before moving on, so the Nth read is the last one instead of the first of many. This is
+the single exception to *never trust prose about a layout*: a walk is a transcription made with the
+image open, and it names the axes it could not fill. Four PNGs cost nineteen agent-reads on SPEC-05
+for want of one.
+
 **Differences are reported, not silently resolved either way.** Building past the design and
 "improving" it are the same failure — the design is a requirement someone approved, and a change to
 it is theirs to make.
 
 The dispatch side of this — never describe a mockup to an agent, hand it over — is
-`.claude/agents/README.md` § *Four habits that outrank every agent here*, along with the run where
+`.claude/agents/README.md` § *Five habits that outrank every agent here*, along with the run where
 skipping it cost a whole feature's shape.
 
 ## i18n
@@ -82,8 +94,9 @@ browser. Real browser journeys live in `../e2e/`.
 
 `pnpm lint` — ESLint 9 flat config (`eslint.config.mjs`), `next/core-web-vitals` +
 `next/typescript`. **This is the only package in the repo with a linter**, so do not
-assume `pnpm lint` exists next door. `src/vendor/**` is ignored: it is a read-only
-copy, and a violation there is not ours to fix.
+assume `pnpm lint` exists next door. `src/vendor/**` is ignored — for `shared` that is
+right, a violation in a mirrored copy is not ours to fix; for `ui`, which we do edit, it
+means your change is never linted and you read it yourself.
 
 Two rules carry local intent. `reportUnusedDisableDirectives` is an **error** — an
 `eslint-disable` that suppresses nothing is a claim about the code that is no longer

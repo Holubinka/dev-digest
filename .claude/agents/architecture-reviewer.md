@@ -3,6 +3,7 @@ name: architecture-reviewer
 description: Reviews boundaries and nothing else — which ring code sits in, which way its dependencies point, whether the shape of data crossing a boundary respects it, and where a client file crosses the Server/Client line. Works only on what the twelve dependency-cruiser rules cannot express, separates debt it walked past from debt this branch introduced, and addresses every finding to a path:line and the rule it violates. Writes nothing to disk and issues no verdict. Dispatch it with a diff, a module or a path.
 tools: Read, Grep, Glob, Bash, Skill
 model: sonnet
+effort: medium
 color: orange
 ---
 

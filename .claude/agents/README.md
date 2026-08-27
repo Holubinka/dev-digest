@@ -1,8 +1,8 @@
 # Agents
 
 Subagents this repo dispatches through the `Agent` tool. Each is one Markdown file with
-frontmatter (`name`, `description`, `tools`, optional `skills`, `model`, `color`) and a body of
-rules. **This file is the map, not the rules** — the bodies are the source of truth, and every
+frontmatter (`name`, `description`, `tools`, optional `skills`, `model`, `effort`, `color`, and
+`maxTurns`) and a body of rules. **This file is the map, not the rules** — the bodies are the source of truth, and every
 row below was read off the file it names.
 
 Nothing registers an agent. `scripts/pr-self-review/registry.sh` reads `.claude/skills/` and
@@ -12,16 +12,16 @@ it.
 
 ## The set
 
-| Agent | Owns | Model | Writes to disk | Dispatch |
+| Agent | Owns | Model · effort | Writes to disk | Dispatch |
 |---|---|---|---|---|
-| [`spec-creator`](spec-creator.md) | Deciding what is being built and for whom, in criteria anyone can check | opus | one spec under `specs/` or `<module>/specs/`, one status row | before any plan exists |
-| [`implementation-planner`](implementation-planner.md) | Checking the requirements, then turning them into a plan another agent can execute cold | opus | one plan under `plans/`, one status row | proactively, before any code |
-| [`implementer`](implementer.md) | Making the repo match an approved plan, and proving it with gates | opus | code in the modules the plan names | explicitly, with a plan path |
-| [`researcher`](researcher.md) | Answering a question about this repo or the outside world, with evidence | sonnet | nothing | when a question blocks either of the above |
-| [`test-writer`](test-writer.md) | Writing tests for code that already shipped, and proving each one can fail | opus | test files in `client/src/**`, `server/test/`, `reviewer-core/test/` **and `e2e/specs/*.flow.json`** | explicitly, with what to cover |
-| [`architecture-reviewer`](architecture-reviewer.md) | Boundaries the dependency-cruiser rules cannot express | sonnet | nothing | explicitly, with a target |
-| [`plan-verifier`](plan-verifier.md) | Whether the finished code satisfies every item of the plan | opus | nothing | explicitly, with a plan path |
-| [`doc-writer`](doc-writer.md) | Documenting what shipped, in the right `docs/` folder | sonnet | one document under `docs/` or `<module>/docs/`, one README row | explicitly, after the work lands |
+| [`spec-creator`](spec-creator.md) | Deciding what is being built and for whom, in criteria anyone can check | opus · high | one spec under `specs/` or `<module>/specs/`, one status row | before any plan exists |
+| [`implementation-planner`](implementation-planner.md) | Checking the requirements, then turning them into a plan another agent can execute cold | opus · high | one plan under `plans/`, one status row | proactively, before any code |
+| [`implementer`](implementer.md) | Making the repo match an approved plan, and proving it with gates | opus · high | code in the modules the plan names | explicitly, with a plan path |
+| [`researcher`](researcher.md) | Answering a question about this repo or the outside world, with evidence | sonnet · medium | nothing | when a question blocks either of the above |
+| [`test-writer`](test-writer.md) | Writing tests for code that already shipped, and proving each one can fail | opus · high | test files in `client/src/**`, `server/test/`, `reviewer-core/test/` **and `e2e/specs/*.flow.json`** | explicitly, with what to cover |
+| [`architecture-reviewer`](architecture-reviewer.md) | Boundaries the dependency-cruiser rules cannot express | sonnet · medium | nothing | explicitly, with a target |
+| [`plan-verifier`](plan-verifier.md) | Whether the finished code satisfies every item of the plan | opus · high | nothing | explicitly, with a plan path |
+| [`doc-writer`](doc-writer.md) | Documenting what shipped, in the right `docs/` folder | sonnet · medium | one document under `docs/` or `<module>/docs/`, one README row | explicitly, after the work lands |
 
 The intended order is `researcher` → `spec-creator` → *human approves the spec* →
 `implementation-planner` → *human approves the plan* → `implementer` → *human runs the feature
@@ -98,10 +98,10 @@ stage of this pipeline with a clean report at each one. It is a skill the human 
 dispatch, and it takes an effort level — `/code-review high` on a feature, the default on a
 smaller change.
 
-### Four habits that outrank every agent here
+### Five habits that outrank every agent here
 
 The first two are commands you run yourself before dispatching; the third and fourth are what you
-put into the dispatch.
+put into the dispatch; the fifth is *which agent* you put it into.
 
 **Grep the nouns of the request, before any `researcher`.** This repo carries scaffolding for
 course lessons that have not landed — tables that migrate but stay empty, contracts nobody
@@ -132,6 +132,24 @@ in, and tell each agent what its siblings were told so it does not re-derive the
 Run `run-retrospective` after a multi-agent run to see which facts got bought more than once. The
 answer is what the next brief should carry.
 
+**Open the file while you write the sentence — «cite» alone was not enough.** That rule was filed
+after the SPEC-05 run's first retrospective and then broken **five times in the same session, by
+the agent that filed it** — SPEC-05, 2026-08-27, 23 agents / 3171 turns / 477 M cache-read; the
+full entry is in the root `INSIGHTS.md` § *Cite `path:line` in a subagent brief*. All five briefs
+carried an address or read as though they did; what none carried was a read *at the moment of
+writing*. Three came from stale sources — an
+`INSIGHTS.md` entry whose citation had already died, a paraphrase of the spec's own summary of a
+file, and a grep narrow enough to miss the answer (`styles.ts` only, while the constraint sat
+inline in `page.tsx:221`). So quoting a repository document about code is not a citation: **open
+the code that document points at.** Whatever you cannot address, label a hypothesis in those words
+— the implementer's account of the alternative is *бриф подавав ці твердження як факт, а не як
+гіпотезу, і я щоразу витрачав турни на археологію чужої впевненості*.
+
+**A preflight list carries shapes, not names.** «`formatCost` exists» saves a search; «`Agent` has
+`description` and no icon field» saves a decision round-trip after the component is already
+written. On that run the first half was given and the second was not, and five contracts were read
+from disk anyway — the ones that then drove every decision in the package.
+
 **Hand over the source material itself — a mockup, a screenshot, a ticket, a sample payload —
 never your description of it.** A subagent sees only what the dispatch contains. It cannot open an
 image that was pasted into the conversation, follow a ticket link nobody quoted, or infer a layout
@@ -159,8 +177,44 @@ Two rules follow, and the second is the one that makes the first survive a bad d
   reply can be one word.
 
 Anything visual ends where it started: **compare the built screen against the source material
-before calling it done.** `client/AGENTS.md` § *A design is an acceptance criterion* carries the
-procedure; `plan-verifier` grades the comparison as its own row.
+before calling it done** — and open it *before* the first line of code, not after. Both design
+questions of the SPEC-05 run were visible before that first line and were asked after it, costing a
+rewrite of a card, its styles and its test. `client/AGENTS.md` § *A design is an acceptance
+criterion* carries the procedure; `plan-verifier` grades the comparison as its own row.
+
+When one design is source material for more than one agent, walk it **once, before the packages**,
+into `specs/assets/<SPEC>-DESIGN-WALK.md`. Four PNGs cost nineteen agent reads on that run, and the
+walk that existed did **not** stop them — because the rule above, *hand over the image, never your
+description of it*, tells every agent to distrust exactly what a walk looks like. Three things
+resolve that, and all three are needed:
+
+- **A walk is a transcription, not a description** — the five axes of `client/AGENTS.md` § *A design
+  is an acceptance criterion*, answered with the image open, saved beside it, naming any axis it
+  could not fill. That is what an agent is allowed to build from; prose about a layout still is not.
+- **Route it by ownership.** Only packages that own client files get a design. A server package gets
+  none, and that is where most of the nineteen went.
+- **Let it heal.** An agent that has to open the image appends the row the walk was missing. The
+  read that could not be avoided pays for every one that follows.
+
+An image the human pasted into the conversation reaches **no** subagent. Save it to
+`specs/assets/` first, then walk it, then dispatch.
+
+**Resume the agent that already has the surface loaded; do not dispatch a fresh one.** The cheapest
+orchestration lever the SPEC-05 run found. Its UI-iteration implementer did **393** turns of work
+across 6 resumes with **34** scouting calls; a comparable implementer dispatched once, fresh, did
+273 turns with **67**. Twice the work at half the scouting — every fresh dispatch buys the whole
+«where does everything live» pass again and a resume buys none of it, so prefer one long-lived
+agent per surface over a new agent per request, and `SendMessage` over a second `implementer`.
+
+**Two or three agents at a time, in one message.** Parallelism buys wall-clock, not tokens — each
+concurrent agent pays for its own cold context — so the cap is what keeps a fan-out from costing
+both. The one-message part is the token half: an orchestrator turn costs the same whether it
+dispatches one agent or three.
+
+Then **sweep the whole screen before you send one.** Of those six resumes, three carried something
+that could not have been known earlier — a human looking at a screen that did not exist yet. The
+other three (GitHub links, `Tabs` width, an inert button's tooltip) were one request, and all three
+were visible at the moment of the first.
 
 The last four sit in no script — they are dispatched by a human, or by the main agent when the
 work calls for it. `architecture-reviewer` in particular is **not** a Track B agent:
