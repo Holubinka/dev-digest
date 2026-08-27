@@ -25,7 +25,14 @@
    it on GitHub under the reader's name. So it is shown editable and published
    only on an explicit confirmation (AC-101, AC-104): the editing IS the
    sanitisation, and `SPEC-05 § Untrusted inputs` puts it deliberately on the
-   person rather than on a filter. Nothing here renders the body as markup, and
+   person rather than on a filter. That only works if the person knows the text
+   is not theirs — a crafted diff can steer the model into writing social
+   engineering or a link — so the panel says where the draft came from, on
+   screen and through the field's `aria-describedby`. It is a warning rather
+   than a block: publishing still needs a deliberate press, and the text goes to
+   the reader's own repository, not to an attacker.
+
+   Nothing here renders the body as markup, and
    the comment is addressed to the finding's own file and START line (AC-102) —
    a line GitHub may well refuse, and that refusal is shown rather than
    swallowed by "fixing" the line (AC-107).
@@ -59,6 +66,7 @@ export function FindingActions({
   const tPr = useTranslations("prReview");
   /** One id per finding — the actions row is rendered once per card. */
   const hintId = React.useId();
+  const trustId = React.useId();
   const [open, setOpen] = React.useState(false);
   /* A DRAFT, not a copy of server state: it is seeded from the rationale
      (AC-101) and is the reader's from the first keystroke. Deriving it during
@@ -67,6 +75,9 @@ export function FindingActions({
   const create = useCreatePrComment(prId);
   const posted = create.data;
   const willRefuse = prStatus === "merged" || prStatus === "closed";
+  /* Emptying the field is the only state in which none of the model's words can
+     be left; every edit short of that is an edit of them. */
+  const hasDraft = body.trim() !== "";
 
   const send = () => {
     if (body.trim() === "") return;
@@ -130,6 +141,12 @@ export function FindingActions({
 
       {open && (
         <div style={s.reply}>
+          {hasDraft && (
+            <div style={s.replyWarn}>
+              <Icon.AlertTriangle size={13} style={s.warnIcon} />
+              <span id={trustId}>{t("page.finding.replyWarnAgentText")}</span>
+            </div>
+          )}
           {willRefuse && (
             <div style={s.replyWarn}>
               <Icon.AlertTriangle size={13} style={s.warnIcon} />
@@ -148,6 +165,7 @@ export function FindingActions({
             onChange={setBody}
             rows={5}
             placeholder={tPr("finding.replyPlaceholder")}
+            aria-describedby={hasDraft ? trustId : undefined}
           />
           <div className="mono" style={s.replyTarget}>
             {finding.file}:{finding.start_line}

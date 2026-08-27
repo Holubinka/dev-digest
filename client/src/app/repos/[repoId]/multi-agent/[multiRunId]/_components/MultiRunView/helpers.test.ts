@@ -1,7 +1,15 @@
 import { describe, it, expect } from "vitest";
 import type { AgentColumn, ConflictTake } from "@devdigest/shared";
 import type { ColumnStreamState } from "@/lib/hooks/multi-agent";
-import { emptyReason, isConflict, liveColumns, runCounts, runStateKey, visiblePositions } from "./helpers";
+import {
+  emptyReason,
+  fileRefHref,
+  isConflict,
+  liveColumns,
+  runCounts,
+  runStateKey,
+  visiblePositions,
+} from "./helpers";
 
 const take = (verdict: ConflictTake["verdict"], runId: string = verdict): ConflictTake => ({
   run_id: runId,
@@ -213,5 +221,39 @@ describe("runStateKey", () => {
     expect(runStateKey("done")).toBe("runState.done");
     expect(runStateKey("failed")).toBe("runState.failed");
     expect(runStateKey("cancelled")).toBe("runState.cancelled");
+  });
+});
+
+describe("fileRefHref", () => {
+  const ref = { file: "src/index.ts", start_line: 10, end_line: 12 };
+
+  /* "NO SHA, NO LINK": an old multi-run predating the `head_sha` column has a
+     known repo but no sha of its own — the quiet trap the docstring names, and
+     exactly the shape the finding calls out. */
+  it("builds no link when the multi-run has no head sha of its own, even with a known repo", () => {
+    expect(fileRefHref("acme/repo", null, ref)).toBeUndefined();
+  });
+
+  it("builds no link when neither the repo nor the sha is known", () => {
+    expect(fileRefHref(null, null, ref)).toBeUndefined();
+  });
+
+  /* The docstring's security claim: "The path itself stays hostile input and is
+     treated as such by `githubBlobUrl`: it refuses any `..` segment". A model
+     could write a `file` containing one; `fileRefHref` must not build a link
+     around `githubBlobUrl`'s own refusal. */
+  it("builds no link when the model-written file path carries a `..` segment", () => {
+    expect(
+      fileRefHref("acme/repo", "abc123", { file: "../../evil", start_line: 1, end_line: 1 }),
+    ).toBeUndefined();
+  });
+
+  /* THE SHA IS THE MULTI-RUN'S, NEVER THE PR'S — the positive case, pinned in
+     `githubBlobUrl`'s own documented shape:
+     `https://github.com/{owner}/{repo}/blob/{sha}/{file}#L{start}[-L{end}]`. */
+  it("builds the github.com blob link once both the repo and the multi-run's sha are known", () => {
+    expect(fileRefHref("acme/repo", "abc123", ref)).toBe(
+      "https://github.com/acme/repo/blob/abc123/src/index.ts#L10-L12",
+    );
   });
 });

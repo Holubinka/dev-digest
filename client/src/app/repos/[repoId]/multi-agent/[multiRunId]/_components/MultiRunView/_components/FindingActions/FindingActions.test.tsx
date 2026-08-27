@@ -101,6 +101,25 @@ describe("FindingActions", () => {
     });
   });
 
+  /* The draft is model-written text about an untrusted diff. Editing it is the
+     sanitisation, and a reader who does not know whose words these are has no
+     reason to edit anything. */
+  it("says whose words are in the field, and describes the field with it", () => {
+    renderActions();
+
+    fireEvent.click(screen.getByRole("button", { name: "Reply to author" }));
+
+    const notice = screen.getByText(runs.page.finding.replyWarnAgentText);
+    const field = screen.getByRole("textbox");
+    expect(notice.id).not.toBe("");
+    expect(field).toHaveAttribute("aria-describedby", notice.id);
+
+    // Only the reader's own empty field carries none of the model's words.
+    fireEvent.change(field, { target: { value: "" } });
+    expect(screen.queryByText(runs.page.finding.replyWarnAgentText)).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox")).not.toHaveAttribute("aria-describedby");
+  });
+
   it("keeps the typed text and shows the returned reason when GitHub refuses (AC-106, AC-107)", () => {
     comment.isError = true;
     comment.error = new ApiError("line is outside the diff", 502, "github_comment_failed");

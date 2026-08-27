@@ -17,7 +17,12 @@ vi.mock("../api", () => ({
   API_BASE: "http://api.test",
 }));
 
-import { prMultiAgentKey, useMultiRunColumnEvents, useRerunMultiAgentRun } from "./multi-agent";
+import {
+  MAX_LIVE_COLUMN_STREAMS,
+  prMultiAgentKey,
+  useMultiRunColumnEvents,
+  useRerunMultiAgentRun,
+} from "./multi-agent";
 
 class FakeEventSource {
   static instances: FakeEventSource[] = [];
@@ -211,6 +216,40 @@ describe("useMultiRunColumnEvents", () => {
 
     act(() => FakeEventSource.find("run-a").emit({ runId: "run-a", msg: "a real one" }));
     expect(result.current["run-a"]?.lastMsg).toBe("a real one");
+  });
+
+  /**
+   * AC-145/D27's budget: a browser gives one origin six HTTP/1.1 connections,
+   * and the trace drawer opens one of its own — so this hook may not spend more
+   * than `MAX_LIVE_COLUMN_STREAMS` (4) on the columns, whatever `runIds` asks
+   * for. Five wanted runs is the smallest case that exercises the ceiling at
+   * all, `multi-agent.test.tsx`'s other cases having stopped at two.
+   */
+  it(`opens at most MAX_LIVE_COLUMN_STREAMS (${MAX_LIVE_COLUMN_STREAMS}) sockets, however many runs are passed`, () => {
+    const runIds = ["run-a", "run-b", "run-c", "run-d", "run-e"];
+
+    renderHook(() => useMultiRunColumnEvents(runIds));
+
+    expect(FakeEventSource.instances).toHaveLength(MAX_LIVE_COLUMN_STREAMS);
+    expect(() => FakeEventSource.find("run-e")).toThrow();
+  });
+
+  /**
+   * AC-147: the slot a closed run gives up goes to the next run still waiting
+   * behind the ceiling, so a fifth run is not left permanently unlistened to —
+   * it is only ever waiting for a slot, exactly like `liveColumns`' AC-148
+   * column that keeps its multi-run-read state until one opens.
+   */
+  it("opens a stream for the run waiting behind the ceiling once a slot frees", () => {
+    const runIds = ["run-a", "run-b", "run-c", "run-d", "run-e"];
+
+    renderHook(() => useMultiRunColumnEvents(runIds));
+    expect(FakeEventSource.instances).toHaveLength(MAX_LIVE_COLUMN_STREAMS);
+
+    act(() => FakeEventSource.find("run-a").end());
+
+    expect(FakeEventSource.instances).toHaveLength(MAX_LIVE_COLUMN_STREAMS + 1);
+    expect(() => FakeEventSource.find("run-e")).not.toThrow();
   });
 });
 

@@ -8,6 +8,17 @@ Failures and surprises specific to the web app. Repo-wide ones live in the root
 
 ## What Works
 
+### Rule-1 mutation for a delegating security check lives in the delegate, not the caller
+
+`fileRefHref` (`MultiRunView/helpers.ts:80`) has no dot-segment logic of its own — it
+forwards to `githubBlobUrl` (`src/lib/github-urls.ts`), which refuses `..` in any
+component. A test pinning "no link on a `..` path" (added 2026-08-27) can only be proven
+red by mutating `hasDotSegment`'s use inside `githubBlobUrl`, not by mutating
+`fileRefHref` itself — there is nothing there to break for that specific case. Two
+production files carried a (reverted) mutation for one test file's Rule-1 proof; that is
+correct, not a scope violation, when the function under test is a thin, deliberate
+delegation to a shared security predicate.
+
 ### A filter above collapsible accordions needs two extra behaviours or it reads as broken
 
 A control that narrows the findings lists — the severity bar added on 2026-07-28 in
@@ -1508,6 +1519,11 @@ radius, the `ddpop` animation — from that primitive into its `styles.ts`, so i
 every other menu on the page. `vendor/ui/` is a read-only copy, so widening the primitive was never
 an option; check whether a menu needs to STAY OPEN before reaching for `Dropdown`.
 
+**Correction, 2026-08-27.** `vendor/ui/` is no longer read-only — both `AGENTS.md` files now say
+it is our design kit and editable (no paired copy, no mirror gate). The advice above still holds
+for `Dropdown` on its merits, but "widening the primitive was never an option" is out of date:
+widening it for a shape a second caller needs is now the preferred move over cloning it.
+
 ### A display format that four surfaces print has exactly one home, and `formatSeconds` is not in it
 
 **Symptom.** Building the Multi-Agent Review screens (2026-08-26) every surface had to print a
@@ -1788,6 +1804,19 @@ number for every reason a query could be live. When one of those reasons is "wai
 own number rather than the urgent one. And before reaching for SSE instead: `useRunEvents` is shared
 with the trace drawer, whose behaviour `SPEC-05 § AC-81` freezes — the multi-run page needed its own
 hook (`useMultiRunColumnEvents`) for exactly that reason.
+
+### `vendor/ui` primitives disagree about `...rest`, so an ARIA attribute may not be passable
+
+`kit/TextInput.tsx:14` takes `& Omit<React.InputHTMLAttributes<HTMLInputElement>, "value" |
+"onChange" | "type" | "size">` and spreads `{...rest}` onto the `<input>`. `kit/Textarea.tsx` took
+five named props and nothing else — so `aria-describedby` on a `<Textarea>` was a typecheck error,
+not a silently dropped attribute (2026-08-27, wiring a content-trust notice to the reply field in
+`multi-agent/[multiRunId]/.../FindingActions/FindingActions.tsx`).
+
+The fix is TextInput's own shape, not a one-off `describedBy` prop: spread `{...rest}` FIRST, so
+the primitive's `className`, `value`, `onChange` and `style` still win over a caller's. Before
+adding any ARIA attribute to a kit primitive, read its props — the pass-through is per-file, and
+`Textarea` and `TextInput` are the only two that have it today.
 
 ## Tool & Library Notes
 

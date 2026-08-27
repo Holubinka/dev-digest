@@ -1985,6 +1985,23 @@ deliberately after any `server/**` change you intend to exercise. Restart by PID
 the process tree first — the web on :3000 is a separate group here (`pnpm start`), but
 `scripts/dev.sh` traps EXIT and does tie them together.
 
+### `localhost:3000` / `:3001` is somebody else's checkout when you work in a worktree
+
+**Symptom.** 2026-08-27, verifying a client change from
+`worktrees/dev-digest/emdash/multi-agent-run-3xihn`: the page under test returned `404` from
+`http://localhost:3000` and `http://localhost:3001/multi-agent-runs/<id>` answered
+`Route GET:… not found`. Both look like the feature is broken or unmigrated; neither was.
+
+**Cause.** The default ports were held by a different checkout
+(`/Users/Vitalik/WebstormProjects/dev-digest`, which predates the feature). Several worktrees run
+their own pair at once — this one was on `:3200` (web) and `:3201` (api).
+
+**Fix.** Resolve the port from the CWD, never the other way round:
+`lsof -nP -iTCP -sTCP:LISTEN | grep node` for the candidates, then
+`lsof -a -p <pid> -d cwd -Fn` to see which checkout each one serves. This is the companion to
+*A dev server started without `watch` serves code that no longer exists* above: that entry
+catches a stale process on the right port, this one catches a healthy process on the wrong tree.
+
 ### A push is rejected for the whole branch when a commit adds a workflow file
 
 **Symptom.** `! [remote rejected] … (refusing to allow a Personal Access Token to create or

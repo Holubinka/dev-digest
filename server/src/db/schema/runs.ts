@@ -66,6 +66,36 @@ export const agentRuns = pgTable(
     byAgentTime: index('agent_runs_ws_agent_done_ran_idx')
       .on(t.workspaceId, t.agentId, t.ranAt.desc())
       .where(sql`${t.status} = 'done'`),
+    // The PR page's POLL, both halves of it: `listRunsForPull`
+    // (`workspace_id = ? AND pr_id = ?` ORDER BY `ran_at` DESC) and
+    // `activeRunsForPull` (the same equality pair plus `status IN
+    // ('running','queued')`). `pr_id` was indexed nowhere, so each tick was a
+    // sequential scan of every run the workspace ever made — and the poll now
+    // keeps ticking while runs are merely `queued`, which a multi-run leaves
+    // them for as long as its pre-work takes.
+    //
+    // The two equality columns first, in the order both queries write them;
+    // `ran_at desc` third so the history's ORDER BY is the index's own order
+    // rather than a sort node above it.
+    //
+    // `.nullsFirst()` is load-bearing, not decoration. Drizzle's bare `.desc()`
+    // emits `DESC NULLS LAST`, while SQL's `ORDER BY ran_at DESC` means `NULLS
+    // FIRST` — and Postgres matches sort pathkeys structurally, so a NOT NULL
+    // column does NOT make the two interchangeable. Measured on 20 000 runs:
+    // with NULLS LAST the plan is `Sort → Index Scan`; with NULLS FIRST the
+    // Sort node is gone. (`agent_runs_ws_agent_done_ran_idx` above has the same
+    // mismatch and does still sort — left alone here on purpose.)
+    //
+    // `status` is deliberately NOT a key column and not a predicate: inside one
+    // PR's runs — tens of rows, not the workspace's whole history — it discards
+    // almost nothing, so `activeRunsForPull` is already served by the prefix.
+    // `(pr_id, status)` would serve neither query's leading column and would
+    // leave the history sorting.
+    byPullTime: index('agent_runs_ws_pr_ran_idx').on(
+      t.workspaceId,
+      t.prId,
+      t.ranAt.desc().nullsFirst(),
+    ),
   }),
 );
 

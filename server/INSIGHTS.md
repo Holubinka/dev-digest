@@ -1697,6 +1697,40 @@ expresses it as ``index(name).on(cols).where(sql`…`)`` and `drizzle-kit genera
 `DROP INDEX` + `CREATE INDEX … WHERE` pair on its own; renaming the index is what makes it do so
 rather than silently skipping the change.
 
+**Correction, 2026-08-27 (same day, next round).** The comment this entry's index carries in
+`db/schema/runs.ts` claims the read is "one index step per agent". It is not, and the reason is
+below: `.desc()` emits `NULLS LAST`, `ORDER BY ran_at DESC` means `NULLS FIRST`, so the index
+cannot supply the `DISTINCT ON` pathkeys and a `Sort` of every `done` row sits on top of it even
+when the index scan is forced. Measured on 20 000 runs / 19 082 `done`: forced through
+`agent_runs_ws_agent_done_ran_idx`, `Unique → Sort (19 082 rows) → Bitmap Heap Scan`; through an
+otherwise identical `NULLS FIRST` twin, `Unique → Index Scan`, no sort. The buffer figures in the
+table above are real and unaffected — the index still stops the sequential scan. Only the "one
+index step" claim is wrong. Left unfixed on purpose: that round's index was not in scope for this
+one.
+
+### Drizzle's `.desc()` on an index column emits `NULLS LAST`, and `ORDER BY x DESC` wants `NULLS FIRST`
+
+**Symptom.** An index whose columns match a query's `WHERE` prefix and its `ORDER BY` exactly is
+used for the scan — and Postgres still puts a `Sort` node on top of it. Seen 2026-08-27 while
+adding `agent_runs_ws_pr_ran_idx` (migration `0024`) for the PR page's run-history poll.
+
+**Cause.** `t.ranAt.desc()` generates `"ran_at" DESC NULLS LAST`; SQL's `ORDER BY ran_at DESC`
+means `DESC NULLS FIRST`. Postgres matches sort pathkeys **structurally**, and a `NOT NULL`
+constraint on the column does not make the two equivalent — the planner never consults it here.
+
+**Fix.** Write `t.ranAt.desc().nullsFirst()` whenever the index exists to serve an
+`ORDER BY … DESC`. Measured on 20 000 `agent_runs`, 100 of them on the target PR:
+
+| index tail | plan | buffers |
+|---|---|---|
+| none | `Sort → Seq Scan`, `Rows Removed by Filter: 19 900` | 387 |
+| `ran_at DESC NULLS LAST` | `Sort → Index Scan` | 104 |
+| `ran_at DESC NULLS FIRST` | `Index Scan`, no sort | 104 |
+
+The buffer count is the same either way at this size; what the mismatch costs is a sort whose
+input grows with one PR's history, and it is invisible to every gate. `EXPLAIN` is the only thing
+that tells you — check for a `Sort` node above your own index, not just that the index appears.
+
 ### `execSync` deadlocks a Fastify server you booted in the same process
 
 **Symptom.** A throwaway script that starts `buildApp` + `app.listen()` and then curls

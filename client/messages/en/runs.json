@@ -187,6 +187,7 @@
       "inertHint": "Learn and Turn into eval case are waiting on the memory and evaluation features, which a later lesson adds. Until then a finding can only be accepted or dismissed.",
       "replyWarnPrState": "This pull request is {status} — GitHub is expected to refuse an inline comment on it. The reason is the state of the PR, not anything you did.",
       "replyWarnLineShift": "These findings were produced against an earlier state of this pull request; the line may have moved since.",
+    "replyWarnAgentText": "This draft was written by a review agent from the pull request's own diff \u2014 read it before you send it. The comment is posted to GitHub under your name.",
       "replyPosted": "Comment posted.",
       "replyViewComment": "View on GitHub"
     }
