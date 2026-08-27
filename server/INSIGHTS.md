@@ -817,6 +817,69 @@ that grounding would actually keep — stopped the overflow, so the assertion th
 reached inside the task loop. When a bound test fails after a fix, read whether it was measuring
 the bound or the thing overflowing it before touching the number.
 
+### A cancel is two writes, and the half that answers `{ok:true}` is not the half that stops the spend
+
+**Symptom.** 2026-08-26: cancelling a `queued` run of a multi-run returned `{ok:true}`, the row
+kept saying `queued`, and when the pool reached the job the agent ran and billed in full.
+
+**Cause.** `ReviewService.cancelRun` is three steps — `runBus.cancel()`, `cancelRunIfRunning()`,
+`runBus.complete()` — and it awaits none of their answers. `cancelRunIfRunning` was guarded on
+`status='running'`, so on a waiting row it updated zero rows; then `RunBus.complete` **deletes**
+the in-memory cancelled flag (`platform/sse.ts:78`), so the only other record of the cancellation
+was gone one line later. The route reports the *request*, never the effect.
+
+**Fix.** For a run that has not started, the DB row is the ONLY durable cancel signal — the bus
+flag is for a live runner that is already inside a checkpoint loop. Both writes must agree on what
+"in flight" means (`IN_FLIGHT = ['running','queued']` in `repository/run.repo.ts:16`), and the
+worker must honour the boolean `startAgentRun` returns instead of proceeding unconditionally. When
+a repository function returns a boolean nobody reads, that is a guard that has already stopped
+guarding: `run-executor.ts` discarded it while the doc comment above it claimed it was "what stops
+a run cancelled while it waited from being resurrected".
+
+### A "finished" flag written after the fan-out races the client that the fan-out just woke up
+
+**Symptom.** SPEC-05's multi-run summary time is a measured span: `finished_at - ran_at`, stamped
+by `MultiRunService.launch`'s `.then()` once `executeRuns` resolves (AC-155). A multi-run with all
+runs terminal and no `finished_at` is one the reaper closed after a restart, and the page prints
+`—` plus "run interrupted" (AC-158). Those two rules collide for a few milliseconds on every
+perfectly ordinary run.
+
+**Cause.** The last run's `runBus.complete(runId)` fires *inside* `runOneAgent`, before the pool
+resolves. That close is exactly what makes the client refetch (`useMultiRunColumnEvents`'
+`onRunClosed` → `refetch`). So the read the feature is designed to trigger arrives while the
+`UPDATE ... SET finished_at` is still in flight — every column terminal, no completion recorded,
+which is the signature of an interrupted run. An ordinary multi-run would flash "interrupted".
+
+**Fix.** `multi-run-service.ts` keeps a module-level `EXECUTING_HERE: Set<string>` — the multi-runs
+*this process* is still working on — added in `launch` and removed in the `.finally` after the
+stamp. `get` treats membership as "still going", so the window reports `elapsed` instead. It is not
+belt-and-braces: it is a closer reading of AC-158, whose condition is "the reaper closed them after
+a restart", and after a restart the set is empty. The general shape: any state derived from "a
+background write has not happened yet" needs a way to tell *not yet* from *never*, and process-local
+in-flight membership is the cheapest one when the writer is in this process. `test/multi-agent.it.test.ts`
+polls `finished_at` rather than the runs' statuses for the same reason.
+
+### Requiring two agents per position emptied "Where agents disagree" on real data
+
+`buildConflicts` in `server/src/modules/reviews/conflicts.ts` used to drop every component that
+only one run had touched as soon as two agents reached `done`. Measured against the dev database
+on 2026-08-27, multi-run `ebd3b426`: five agents, all `done`, nine findings between two of them,
+none overlapping another agent's — **0 positions**. The screen showed an empty section beside two
+columns full of findings, which is how the rule was caught.
+
+The mockup had said so from the start: `specs/assets/SPEC-05-multi-agent-review-columns.png` draws
+"Magic number 3600" as one SUGGESTION beside two `did not flag`. A FINISHED agent's silence is its
+opinion and is what the section exists to show; only a run that never reached `done` has none.
+The human reversed the rule on 2026-08-27 — every component is a position now, `not_reviewed`
+untouched.
+
+Before believing a grouping rule here, run it against real rows rather than fixtures. Positions
+are recomputed on every read and never stored, so a second read-only API beside the human's dev
+server answers in one request: `cd server && API_PORT=3199 pnpm exec tsx src/server.ts`, then
+`curl localhost:3199/multi-agent-runs/<id>`. The `DATABASE_URL` default already points at the
+dev Postgres on 5434.
+
+
 ## Codebase Patterns
 
 ### The allowed-refs invariant is checkable in one line against a real PR
@@ -1566,8 +1629,55 @@ generation port is deliberately unable to read the index state at all
 (`generation-types.ts:36-43`), and a number handed over is not a port: it costs one field, while
 widening the port would cost the property that this feature can never index.
 
+### The multi-agent fan-out is SEQUENTIAL — `runReview` runs N agents one after another
+
+**Symptom.** A feature brief for SPEC-05 (2026-08-26) stated as established fact that
+"parallel execution already works — `POST /pulls/:id/review` and `run-executor` already handle
+several agents". Nothing in the route name or the plural `runs`/`reviews` it returns contradicts
+that. It is wrong.
+
+**Cause.** Both fan-out paths are plain `for … await` loops:
+`modules/reviews/run-executor.ts:203` — `for (const { agent, runId } of jobs) { … await
+this.runOneAgent(…) }` — and `modules/reviews/diff-review.ts:199` on `POST /reviews/diff`. What
+IS shared across the set is the PRE-WORK (diff, intent, repo-intel), computed once for all
+agents; that is the "several agents" the executor genuinely does, and it is easy to mistake for
+concurrency. `p-queue` is a dependency (`package.json:41`) but is used only in
+`platform/jobs.ts:40` and `repo-intel/pipeline/full.ts:132` — never in `modules/reviews`.
+
+**Fix.** Before promising anything time-shaped about a multi-agent run, read the loop. The root
+`INSIGHTS.md` already carried the measurement that settles it — 2026-08-09, five agents on a
+193-character diff, **1 min 35 s**, five sequential ~18 s calls — and nobody checked the brief
+against it. Had it gone unchecked here, a pre-run estimate specified as `max(duration)` across
+the selected agents would have been wrong by roughly the agent count (≈4× on four agents), and
+the UI copy "parallel fan-out" would have been a claim the engine cannot support.
+
+### Every `agent_runs` row of a fan-out is written `status: 'running'` up front
+
+`repository/run.repo.ts:137` inserts each run with `status: 'running'` at creation, before any
+agent starts. Combined with the sequential loop above, N runs report `running` simultaneously
+while exactly one is executing — so a per-agent live status read straight from that column is
+honest only about the set, never about the individual agent. Any UI that shows one lane per
+agent (SPEC-05 column headers) needs a `queued` state that this column cannot currently express;
+`AgentColumn.status` in the vendored contract knows only `done | failed | running`, and
+`run.repo.ts:99` already writes a fourth value, `cancelled`, that it also cannot express.
+
 
 ## Tool & Library Notes
+
+### `execSync` deadlocks a Fastify server you booted in the same process
+
+**Symptom.** A throwaway script that starts `buildApp` + `app.listen()` and then curls
+itself through `execSync('curl …')` hangs forever — no response, no error, a 300 s
+timeout (2026-08-26, while smoke-testing the multi-agent routes).
+
+**Cause.** `execSync` blocks the Node event loop until the child exits, and the server
+that has to answer the request is on that same loop. `curl` waits for a reply that cannot
+be produced until `curl` exits.
+
+**Fix.** Put the server in its own process. Boot it with `nohup pnpm exec tsx <script>.ts &`,
+have the script print a readiness line and stay up on a `SIGTERM` handler, then curl from
+the shell. `app.inject()` is the in-process alternative and is a real request through the
+whole Fastify lifecycle — but it is not a socket, so it proves nothing about the listener.
 
 ### `break` out of a `for await` destroys the stream, so teardown errors land inside the `try`
 
@@ -1904,7 +2014,61 @@ tsconfig `paths` and routinely invent `Cannot find module '@devdigest/shared'` w
 resolution problem; read one that names a type mismatch inside a test file**, because no gate will
 tell you.
 
+
 ## Recurring Errors & Fixes
+
+### A widened `ReviewRepository` breaks hermetic tests at RUNTIME, and the error names the wrong thing
+
+**Symptom.** Adding one method to `ReviewRepository` and calling it from
+`run-executor.ts` turned three green hermetic tests red on 2026-08-26 with
+`expected [] to have a length of 1` and `expected false to be true` —
+`test/reviews-repo-intel-once.test.ts` (2 cases) and `test/review-head-sha.test.ts`
+(1 case). `pnpm typecheck` stayed clean throughout, and nothing in the output
+mentioned a missing method.
+
+**Cause.** Those tests build their repository as
+`{ insertReview: …, completeAgentRun: … } as unknown as ReviewRepository`. The double
+cast is what lets a five-method object stand in for a fifty-method class, and it is also
+what stops the compiler noticing the fifty-first. At runtime the executor calls
+`this.repo.startAgentRun(runId)`, the stub has no such key, the `TypeError` lands in
+`runJob`'s own `catch` — which exists to isolate ONE agent's failure — and the run is
+recorded as a failed agent instead of a crash. Every assertion downstream then fails for
+its own apparent reason.
+
+**Fix.** After adding a method to `ReviewRepository` that the executor calls, grep for the
+stubs and extend each one:
+
+```sh
+grep -rln "as unknown as ReviewRepository" server/test server/src
+```
+
+Three files carried it on 2026-08-26. `pnpm exec vitest run --exclude '**/*.it.test.ts'`
+is the only gate that sees this; typecheck cannot.
+
+### A `.it.test` failure that reproduces only in the full lane is the 10 s in `waitForPrRuns`
+
+**Symptom.** `cd server && pnpm exec vitest run .it.test` fails 1–3 cases out of 196,
+a different set each run, always in `reviews-context.it.test.ts`, `reviews-skills.it.test.ts`
+or `reviews.it.test.ts`. The assertions look like real defects — `expected 404 to be 200`
+on `GET /runs/:id/trace`, or `Cannot read properties of undefined (reading 'model')`.
+Running the same files alone passes 3/3 (measured 2026-08-26).
+
+**Cause.** `test/helpers/runs.ts` gives up after `timeoutMs = 10_000` and **returns the
+runs anyway** rather than throwing. Under the full lane this machine has 23 testcontainer
+Postgres instances competing, a run takes longer than 10 s, and the caller proceeds with a
+run that is still `running` — whose trace has not been written yet, hence the 404. The
+helper's silence is the whole illusion: the test reads as "the trace endpoint is broken"
+rather than "we did not wait long enough".
+
+**Fix.** Before believing a `.it.test` failure, run that file alone:
+
+```sh
+cd server && pnpm exec vitest run test/<the-file>.it.test.ts
+```
+
+Green alone and red in the lane means the timeout, not the code. Verified 2026-08-26 that
+the same failures occur with `--exclude '**/multi-agent.it.test.ts'`, i.e. independently
+of whichever file was added last.
 
 ### A review run fails with `401 Missing Authentication header`
 

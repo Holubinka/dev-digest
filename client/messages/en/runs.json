@@ -7,11 +7,28 @@
     "noFindings": "No findings.",
     "findingsCount": "{count, plural, one {# finding} other {# findings}}"
   },
+  "runState": {
+    "queued": "queued",
+    "running": "reviewing",
+    "done": "done",
+    "failed": "run failed",
+    "cancelled": "run cancelled"
+  },
   "conflicts": {
     "title": "Where agents disagree",
     "onlyConflicts": "Show only conflicts",
-    "empty": "No conflicts — the agents agree on every flagged location.",
-    "didNotFlag": "did not flag"
+    "didNotFlag": "did not flag",
+    "notFinal": "Not final — some agents have not finished.",
+    "empty": {
+      "oneAgentTitle": "Nothing to compare with",
+      "oneAgentBody": "Only one agent ran on this pull request. Choose more of them in Configure run and their findings will line up side by side here.",
+      "unfinishedTitle": "Nothing to compare yet",
+      "unfinishedBody": "{done} finished · {running} still running · {unfinished} never got there.",
+      "nothingFoundTitle": "They found nothing",
+      "nothingFoundBody": "Every agent that finished flagged nothing on this pull request, so there is nothing to line up.",
+      "agreedTitle": "They agreed everywhere",
+      "agreedBody": "No position is contested: nowhere did two agents that both flagged the same lines disagree about how bad it is. Turn the toggle off to see them all."
+    }
   },
   "tabs": {
     "noSummary": "No summary."
@@ -111,27 +128,67 @@
   },
   "page": {
     "title": "Multi-Agent Review",
-    "subtitle": "this PR through every enabled agent in parallel",
-    "selectPr": "Select PR",
-    "prItem": "#{number} · {title}",
+    "crumb": "Multi-Agent Review",
+    "configureCrumb": "Configure run",
+    "configureRun": "Configure run",
+    "runAgain": "Run again",
+    "running": "Running…",
+    "selectedAgents": "{count, plural, one {# selected agent} other {# selected agents}}",
+    "meta": "{count, plural, one {# agent} other {# agents}} · in-process fan-out, up to {concurrency} at a time · {durationKind, select, elapsed {{duration} elapsed so far} interrupted {{duration} total · run interrupted} other {{duration} total}} · {cost}",
+    "costPartial": "≥ {cost}",
+    "costPartialHint": "At least this much — one or more runs reported no cost.",
+    "deleted": "deleted",
     "view": {
       "columns": "columns",
       "tabs": "tabs"
     },
-    "runAll": "Run all agents",
-    "running": "Running…",
-    "meta": "{count} agents · fan-out via p-queue · {duration}s total · {cost}",
-    "noAgents": {
-      "title": "Enable agents to run reviews",
-      "body": "Multi-agent review runs the PR through every enabled agent in parallel. You have no agents enabled yet.",
-      "cta": "Go to Agents"
+    "skipped": "Skipped, no longer in this workspace: {names}",
+    "empty": {
+      "title": "No multi-agent runs yet",
+      "body": "Nothing has been compared on this repository yet. Configure a run to fan one pull request out to several agents.",
+      "cta": "Configure run"
     },
-    "noRun": {
-      "title": "No multi-agent run yet",
-      "bodyReady": "Run all enabled agents on this PR to see N columns + conflicts.",
-      "bodySelect": "Select a PR to begin.",
-      "cta": "Run all agents"
+    "notFound": {
+      "title": "This comparison was not found",
+      "body": "It was deleted, or it belongs to another workspace."
     },
-    "crumb": "Multi-Agent Review"
+    "loadFailed": {
+      "title": "Couldn't load this comparison"
+    },
+    "configure": {
+      "title": "Run a Multi-Agent Review",
+      "subtitle": "Pick a pull request and choose which agents to fan out — they run in parallel and you compare their findings side by side.",
+      "step1": "Pull request",
+      "step2": "Agents to run",
+      "selectPr": "Select a pull request…",
+      "searchPr": "Search by number or title…",
+      "noPrMatch": "No pull request matches that search.",
+      "prItem": "#{number} · {title}",
+      "prItemStatus": "#{number} · {title} · {status}",
+      "noPulls": "No pull requests imported for this repository yet.",
+      "selectAll": "Select all",
+      "clearAll": "Clear all",
+      "noPr": {
+        "title": "Pick a pull request first",
+        "body": "Choose which PR to review above, then select the agents to run on it."
+      },
+      "noAgents": {
+        "title": "No agents in this workspace",
+        "body": "A multi-agent review fans a pull request out to the agents you keep. Create one on the Agents screen and it will show up here.",
+        "cta": "Go to Agents"
+      },
+      "estimate": "{bound, select, lower {≥} other {≈}} {time} · {cost} · in-process fan-out, up to {concurrency} at a time",
+      "missingTime": "{count, plural, one {# agent not in the time estimate} other {# agents not in the time estimate}}",
+      "missingCost": "{count, plural, one {# agent not in the cost estimate} other {# agents not in the cost estimate}}",
+      "runFailed": "Couldn't start the run: {reason}"
+    },
+    "finding": {
+      "turnIntoEvalCase": "Turn into eval case",
+      "inertHint": "Learn and Turn into eval case are waiting on the memory and evaluation features, which a later lesson adds. Until then a finding can only be accepted or dismissed.",
+      "replyWarnPrState": "This pull request is {status} — GitHub is expected to refuse an inline comment on it. The reason is the state of the PR, not anything you did.",
+      "replyWarnLineShift": "These findings were produced against an earlier state of this pull request; the line may have moved since.",
+      "replyPosted": "Comment posted.",
+      "replyViewComment": "View on GitHub"
+    }
   }
 }

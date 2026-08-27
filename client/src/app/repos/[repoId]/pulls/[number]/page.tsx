@@ -16,10 +16,11 @@ import { FindingsTab } from "./_components/FindingsTab";
 import { DiffTab } from "./_components/DiffTab";
 import type { SeverityLevel } from "./_components/SeverityFilterBar/constants";
 import { isSeverityLevel } from "./_components/SeverityFilterBar/helpers";
-import RunTraceDrawer from "./_components/RunTraceDrawer";
+import RunTraceDrawer from "@/components/run-trace-drawer";
 import { usePullDetail, usePulls } from "../../../../../lib/hooks";
 import { useQueryClient } from "@tanstack/react-query";
 import { usePrReviews, useCancelRun, usePrActiveRuns, usePrRuns, useDeleteRun } from "../../../../../lib/hooks/reviews";
+import { useLatestMultiAgentRunForPull } from "@/lib/hooks/multi-agent";
 import { useActiveRepo, useRepoNotFound } from "../../../../../lib/repo-context";
 import { ApiError } from "../../../../../lib/api";
 import { githubPrUrl } from "../../../../../lib/github-urls";
@@ -86,6 +87,25 @@ export default function PRDetailPage() {
   const invalidateSmartDiff = () => {
     if (prId) qc.invalidateQueries({ queryKey: ["smart-diff", prId] });
   };
+
+  // The way back to this PR's multi-agent comparison, from TWO sources.
+  //
+  // The freshly created id wins while it is there: the server was asked before
+  // that run existed, so preferring its answer would point at the PREVIOUS
+  // comparison for as long as the invalidated query takes to come back. The
+  // server read is what makes the link survive a reload or a visit tomorrow —
+  // an id kept only here dies with the page (R54; AC-88 covers only the moment
+  // of launch).
+  //
+  // It is NOT a query parameter. The shareable address is the multi-run's own
+  // URL, and keeping it out of the URL is what leaves `onRunStart` with the
+  // single `setParams` call the comment below at :90-94 is about.
+  const [justStartedMultiRunId, setJustStartedMultiRunId] = React.useState<string | null>(null);
+  const { data: latestMultiRun } = useLatestMultiAgentRunForPull(prId);
+  const multiRunId = justStartedMultiRunId ?? latestMultiRun?.id ?? null;
+  const multiRunHref = multiRunId
+    ? `/repos/${repoId}/multi-agent/${encodeURIComponent(multiRunId)}`
+    : null;
 
   const tab = search.get("tab") ?? "overview";
   const traceRunId = search.get("trace");
@@ -192,7 +212,10 @@ export default function PRDetailPage() {
         githubUrl={repoFullName ? githubPrUrl(repoFullName, pr.number) : null}
         onSetTab={setTab}
         onRunStart={() => setTab("findings")}
-        onRunsStarted={() => invalidateActiveRuns()}
+        onRunsStarted={(started) => {
+          setJustStartedMultiRunId(started.multiRunId);
+          invalidateActiveRuns();
+        }}
       />
 
       <div style={{ padding: "24px 32px 44px", display: "flex", flexDirection: "column", gap: 24, maxWidth: 1080, margin: "0 auto" }}>
@@ -212,6 +235,7 @@ export default function PRDetailPage() {
         {tab === "findings" && (
           <FindingsTab
             prId={prId}
+            multiRunHref={multiRunHref}
             liveRunIds={liveRunIds}
             reviewRunning={reviewRunning}
             lethalTrifecta={lethalTrifecta}

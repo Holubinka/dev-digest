@@ -1,0 +1,1 @@
+ALTER TABLE "multi_agent_runs" ADD COLUMN "finished_at" timestamp with time zone;

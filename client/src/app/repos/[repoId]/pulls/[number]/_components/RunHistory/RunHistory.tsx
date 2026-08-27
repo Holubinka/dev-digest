@@ -23,6 +23,14 @@ type Outcome = { key: string; color: string; bg: string; icon: IconName };
 
 function outcomeOf(run: RunSummary): Outcome {
   const status = run.status ?? "";
+  // A multi-run writes its rows `queued` — they exist before any model is
+  // called. Without this branch a waiting agent has zero blockers and zero
+  // findings and falls through to the settled `approved` case below, so
+  // launching five agents paints five green approvals on the timeline before
+  // anything has been reviewed. The word is the one the results page uses for
+  // the same state (`runState.queued`, MultiRunView/helpers.ts).
+  if (status === "queued")
+    return { key: "queued", color: "var(--text-muted)", bg: "var(--bg-hover)", icon: "Clock" };
   if (status === "running")
     return { key: "running", color: "var(--accent)", bg: "var(--accent-bg)", icon: "RefreshCw" };
   if (status === "failed")

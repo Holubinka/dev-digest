@@ -1,6 +1,6 @@
 import type { Db } from '../../db/client.js';
 import * as t from '../../db/schema.js';
-import type { Finding, RunSummary, RunTrace } from '@devdigest/shared';
+import type { Finding, LastSuccessfulRun, RunSummary, RunTrace } from '@devdigest/shared';
 
 /**
  * A2 — review data-access. The ONLY layer touching the DB for the review
@@ -25,6 +25,9 @@ export type ReviewRow = typeof t.reviews.$inferSelect;
 import * as reviewRepo from './repository/review.repo.js';
 import * as runRepo from './repository/run.repo.js';
 import * as pullRepo from './repository/pull.repo.js';
+import * as multiRunRepo from './repository/multi-run.repo.js';
+
+export type { MultiRunDetail, MultiRunItemDetail, MultiRunRow } from './repository/multi-run.repo.js';
 
 export class ReviewRepository {
   constructor(private db: Db) {}
@@ -74,8 +77,9 @@ export class ReviewRepository {
     return reviewRepo.getReview(this.db, reviewId);
   }
 
-  /** In-flight runs for a PR (status='running') — the server-side source of
-   *  truth for "which agents are running now". Joined with the agent name. */
+  /** In-flight runs for a PR (status IN ('running','queued')) — the server-side
+   *  source of truth for "which agents are working on this PR now", a multi-run's
+   *  waiting agents included. Joined with the agent name. */
   activeRunsForPull(
     workspaceId: string,
     prId: string,
@@ -98,8 +102,9 @@ export class ReviewRepository {
     return runRepo.cancelRunIfRunning(this.db, runId);
   }
 
-  /** On boot: any run still 'running' is orphaned (its process died / restarted),
-   *  so mark it failed. Prevents permanently stuck "running" runs in the UI. */
+  /** On boot: any run still 'running' or 'queued' is orphaned (its process died
+   *  / restarted), so mark it failed. Prevents permanently stuck runs in the UI —
+   *  a multi-run's waiting column included, which has no process to resume it. */
   reapStaleRunningRuns(): Promise<number> {
     return runRepo.reapStaleRunningRuns(this.db);
   }
@@ -133,15 +138,28 @@ export class ReviewRepository {
 
   // ---- observability: agent_runs + run_traces ----------------------------
 
-  /** Create an agent_runs row in `running` state; returns its id (= the runId). */
+  /** Create an agent_runs row; `running` unless a multi-run asks for `queued`.
+   *  Returns its id (= the runId). */
   createAgentRun(values: {
     workspaceId: string;
     agentId: string | null;
     prId: string;
     provider: string | null;
     model: string | null;
+    status?: 'running' | 'queued';
   }): Promise<string> {
     return runRepo.createAgentRun(this.db, values);
+  }
+
+  /** Promote a queued run to `running` when the pool frees a slot. A no-op on
+   *  the single-run path, where the row was inserted `running` already. */
+  startAgentRun(runId: string): Promise<boolean> {
+    return runRepo.startAgentRun(this.db, runId);
+  }
+
+  /** The newest `done` run of each agent — the pre-run estimate's only input. */
+  lastSuccessfulRunPerAgent(workspaceId: string): Promise<LastSuccessfulRun[]> {
+    return runRepo.lastSuccessfulRunPerAgent(this.db, workspaceId);
   }
 
   completeAgentRun(
@@ -178,5 +196,70 @@ export class ReviewRepository {
 
   getRunTrace(runId: string): Promise<RunTrace | undefined> {
     return runRepo.getRunTrace(this.db, runId);
+  }
+}
+
+/**
+ * SPEC-05 — data access for the multi-agent slice, a class beside
+ * `ReviewRepository` rather than more methods on it.
+ *
+ * Two aggregates, two seams: `MultiRunService` takes this one as a constructor
+ * parameter and never sees the review repository's fifty methods, and a test of
+ * the service fakes five methods instead of stubbing a class that also owns
+ * reviews, findings, traces and pulls.
+ */
+export class MultiRunRepository {
+  constructor(private db: Db) {}
+
+  /** Create the multi-run, its queued agent runs and its items in ONE
+   *  transaction — either all of it exists or none does (AC-27/AC-28/AC-30). */
+  createMultiRun(values: {
+    workspaceId: string;
+    prId: string;
+    headSha: string | null;
+    concurrency: number;
+    items: { agentId: string; agentName: string; provider: string; model: string }[];
+  }): Promise<{ multiRunId: string; runIds: string[] }> {
+    return multiRunRepo.createMultiRun(this.db, values);
+  }
+
+  /** Record that this multi-run's last run reached a terminal state — the second
+   *  half of the measured summary duration (AC-155). Writes once. */
+  markMultiRunFinished(multiRunId: string): Promise<void> {
+    return multiRunRepo.markMultiRunFinished(this.db, multiRunId);
+  }
+
+  /** The whole multi-run in one read: its PR, its items in position order, each
+   *  joined to its run, its agent, its review and that review's findings. */
+  getMultiRun(
+    workspaceId: string,
+    multiRunId: string,
+  ): Promise<multiRunRepo.MultiRunDetail | undefined> {
+    return multiRunRepo.getMultiRun(this.db, workspaceId, multiRunId);
+  }
+
+  /** Newest multi-run of a repo, or undefined when it has never had one. */
+  latestMultiRunForRepo(
+    workspaceId: string,
+    repoId: string,
+  ): Promise<{ multiRun: multiRunRepo.MultiRunRow; prNumber: number } | undefined> {
+    return multiRunRepo.latestMultiRunForRepo(this.db, workspaceId, repoId);
+  }
+
+  /** Newest multi-run of one PR (R54) — what makes the PR page's link survive a
+   *  reload instead of living only in the response that created it. */
+  latestMultiRunForPull(
+    workspaceId: string,
+    prId: string,
+  ): Promise<{ multiRun: multiRunRepo.MultiRunRow; prNumber: number } | undefined> {
+    return multiRunRepo.latestMultiRunForPull(this.db, workspaceId, prId);
+  }
+
+  /** The stored agent set + its PR, in position order — the re-run's input. */
+  agentIdsOfMultiRun(
+    workspaceId: string,
+    multiRunId: string,
+  ): Promise<{ prId: string; agents: { agentId: string; agentName: string }[] } | undefined> {
+    return multiRunRepo.agentIdsOfMultiRun(this.db, workspaceId, multiRunId);
   }
 }

@@ -199,3 +199,30 @@ describe("FindingsTab cross-tab jump to a finding", () => {
     expect(document.querySelector('[data-finding-id="b1"]')).toBeNull();
   });
 });
+
+/**
+ * The non-blocking link to this PR's multi-agent comparison (AC-88/AC-89, R54).
+ * It sits ABOVE the live-run section and outside it: the comparison it points at
+ * may be from yesterday, when there is no live run for it to sit beside.
+ */
+describe("FindingsTab — the multi-agent comparison link", () => {
+  it("renders the link the page resolved, above the live run", () => {
+    renderTab({ multiRunHref: "/repos/repo-1/multi-agent/mr-1", liveRunIds: ["run-x"] });
+
+    const link = screen.getByRole("link", { name: /multi-agent comparison/i });
+    expect(link).toHaveAttribute("href", "/repos/repo-1/multi-agent/mr-1");
+
+    const live = screen.getByText("Live review");
+    expect(link.compareDocumentPosition(live) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("still renders it when nothing is running — that is the reload case", () => {
+    renderTab({ multiRunHref: "/repos/repo-1/multi-agent/mr-1", liveRunIds: [] });
+    expect(screen.getByRole("link", { name: /multi-agent comparison/i })).toBeInTheDocument();
+  });
+
+  it("renders nothing when the PR has no comparison", () => {
+    renderTab();
+    expect(screen.queryByRole("link", { name: /multi-agent comparison/i })).toBeNull();
+  });
+});

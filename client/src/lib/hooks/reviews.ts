@@ -4,8 +4,9 @@
 
 import React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, API_BASE } from "../api";
+import { api } from "../api";
 import { notify } from "../toast";
+import { openRunEventSource } from "../run-event-source";
 import type {
   FindingActionKind,
   PrReviewComment,
@@ -35,15 +36,25 @@ export function usePrActiveRuns(prId: string | null | undefined) {
 }
 
 // ---- Full run history for a PR (every agent_runs row, any status) ----
-/** All runs for a PR — done, failed (with error), cancelled, running. Survives
-   reload (DB-backed). Polls while anything is running so it self-updates. */
+/** All runs for a PR — done, failed (with error), cancelled, running, queued.
+   Survives reload (DB-backed). Polls while anything is still in flight so it
+   self-updates.
+
+   `queued` counts as in flight, the same pair `MultiRunView/helpers.ts` counts:
+   every run of a multi-run is `queued` until the pool promotes it, and that
+   happens only after the shared pre-work — a diff load plus `intentService`,
+   an LLM call that can take tens of seconds. Polling on `running` alone leaves
+   the timeline frozen on rows that are about to change, for that whole
+   window. */
 export function usePrRuns(prId: string | null | undefined) {
   return useQuery({
     queryKey: ["pr-runs", prId],
     queryFn: () => api.get<RunSummary[]>(`/pulls/${prId}/runs`),
     enabled: !!prId,
     refetchInterval: (query) =>
-      (query.state.data ?? []).some((r) => r.status === "running") ? 4000 : false,
+      (query.state.data ?? []).some((r) => r.status === "running" || r.status === "queued")
+        ? 4000
+        : false,
   });
 }
 
@@ -178,7 +189,6 @@ export function useRunEvents(runIds: string[]) {
     let open = runIds.length;
 
     for (const runId of runIds) {
-      const es = new EventSource(`${API_BASE}/runs/${runId}/events`);
       const onMsg = (ev: MessageEvent) => {
         try {
           const parsed = JSON.parse(ev.data) as RunEvent;
@@ -191,12 +201,7 @@ export function useRunEvents(runIds: string[]) {
           /* ignore non-JSON keepalive frames (and dataless native error events) */
         }
       };
-      // The server tags events with kind as the SSE `event:` name AND emits them
-      // as default messages too in some clients — listen broadly.
-      es.onmessage = onMsg;
-      for (const kind of ["info", "tool", "result", "error"]) {
-        es.addEventListener(kind, onMsg as EventListener);
-      }
+      const es = openRunEventSource(runId, onMsg);
       es.onerror = () => {
         es.close();
         open -= 1;

@@ -73,6 +73,30 @@ describe("RunHistory — outcome badge", () => {
     renderRuns([run({ status: "running", score: null, blockers: null })]);
     expect(screen.getByText("running")).toBeInTheDocument();
   });
+
+  /**
+   * A multi-run writes its rows `queued` before any model is called, and this
+   * timeline used to have no branch for it: zero blockers + zero findings fell
+   * through to the settled `approved` case, so five waiting agents rendered as
+   * five green approvals. The word is the one the results page already uses for
+   * this state (`runState.queued` in `MultiRunView/helpers.ts`).
+   */
+  it("a queued run reads 'queued' — never a green 'approved' before any model ran", () => {
+    renderRuns([
+      run({
+        status: "queued",
+        findings_count: 0,
+        blockers: 0,
+        score: null,
+        duration_ms: null,
+        tokens_in: null,
+        tokens_out: null,
+        grounding: null,
+      }),
+    ]);
+    expect(screen.getByText("queued")).toBeInTheDocument();
+    expect(screen.queryByText("approved")).not.toBeInTheDocument();
+  });
 });
 
 describe("RunHistory — cost badge", () => {

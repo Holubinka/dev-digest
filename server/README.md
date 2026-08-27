@@ -73,7 +73,8 @@ flowchart TB
     polling["polling<br/>/repos/:id/poll"]
   end
   subgraph Review["Review & runs"]
-    reviews["reviews<br/>/pulls/:id/review · /reviews · /reviews/diff · /findings/:id/(accept|dismiss)<br/>/runs/:id/(events|trace)"]
+    reviews["reviews<br/>/pulls/:id/review · /reviews · /reviews/diff · /findings/:id/(accept|dismiss)<br/>/runs/:id/(events|trace) · /runs/last-successful"]
+    multiAgent["multi-agent (same module — a slice of its own<br/>could not import ReviewRunExecutor)<br/>POST /pulls/:id/multi-agent-run (5/min) · POST /multi-agent-runs/:id/rerun (5/min)<br/>GET /multi-agent-runs/:id · GET /pulls/:id/multi-agent · GET /repos/:id/multi-agent-runs/latest"]
   end
   subgraph Agents["Agents & skills"]
     agents["agents<br/>/agents · /agents/:id · /agents/:id/skills (bindings)"]

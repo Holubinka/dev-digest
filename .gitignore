@@ -55,3 +55,4 @@ test-results/
 # of a retrospective does not live here anyway: it goes to INSIGHTS.md, and what
 # stays is the arithmetic for one run, which nobody reads twice.
 .retro/
+.claude/settings.local.json

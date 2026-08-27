@@ -7,7 +7,7 @@ import {
 } from '@devdigest/reviewer-core';
 import { RunLogger } from '../../platform/run-logger.js';
 import type { ReviewRepository, FindingRow, PullRow, ReviewRow } from './repository.js';
-import { attachedSkills, skillBodiesFor, taskLine } from './helpers.js';
+import { attachedSkills, runWithConcurrency, skillBodiesFor, taskLine } from './helpers.js';
 import { buildPromptAssemblyLog, promptLogDetail } from './prompt-log.js';
 import { loadDiff } from './diff-loader.js';
 import type {
@@ -53,6 +53,20 @@ export type RunOutcome = {
   grounding: string;
   raw: Review;
 };
+
+/**
+ * The batch pre-work every job of one `executeRuns` call shares, carried as one
+ * value so `runJob` takes it as a single parameter. Nothing here is per-agent:
+ * that is precisely the property `test/reviews-repo-intel-once.test.ts` pins.
+ */
+interface BatchContext {
+  workspaceId: string;
+  pull: ReviewPull;
+  repo: ReviewRepo;
+  diff: UnifiedDiff;
+  intentSection: string | undefined;
+  readonly repoIntel: RepoIntelContext;
+}
 
 /**
  * What has to be resolved before the engine can be called. Every field except
@@ -116,6 +130,15 @@ export class ReviewRunExecutor {
     repo: ReviewRepo,
     jobs: { agent: ReviewAgent; runId: string }[],
     logger?: Logger,
+    /**
+     * How many agents may be in flight at once.
+     *
+     * THE DEFAULT OF 1 IS A CRITERION, NOT A FALLBACK (SPEC-05 § AC-35): the PR
+     * page's review button and `POST /reviews/diff` must keep running agents one
+     * at a time, in `jobs` order, publishing exactly the events they publish
+     * today. Only `MultiRunService` passes anything else.
+     */
+    opts: { concurrency?: number } = {},
   ): Promise<void> {
     // ONE logger fanned out over every queued run: shared pre-work (diff +
     // intent) is streamed into each target agent's Live Log and persisted into
@@ -200,36 +223,92 @@ export class ReviewRunExecutor {
       ? await this.buildRepoIntelContext(pull.repoId, diff, runLog)
       : NO_REPO_INTEL;
 
-    for (const { agent, runId } of jobs) {
-      const agentStart = Date.now();
-      logger?.info(
-        { runId, agent: agent.name, provider: agent.provider, model: agent.model, prId: pull.id },
-        `review: agent "${agent.name}" started (${agent.provider}/${agent.model})`,
-      );
-      try {
-        const outcome = await this.runOneAgent(
-          { workspaceId, pull, repo, diff, intentSection, repoIntel, agent, runId },
-          runLog,
-        );
+    const ctx: BatchContext = { workspaceId, pull, repo, diff, intentSection, repoIntel };
+    await runWithConcurrency(jobs, opts.concurrency ?? 1, (job) =>
+      this.runJob(job, ctx, runLog, logger),
+    );
+  }
+
+  /**
+   * One agent's slot in the pool. The `try/catch` moved here WITH the body it
+   * guards, and that is the point: AC-36 wants one agent's rejection to stay
+   * inside its own job so the remaining jobs keep draining, and a `catch` left
+   * behind at the call site would isolate nothing once the calls overlap.
+   */
+  private async runJob(
+    { agent, runId }: { agent: ReviewAgent; runId: string },
+    ctx: BatchContext,
+    runLog: RunLogger,
+    logger?: Logger,
+  ): Promise<void> {
+    const agentStart = Date.now();
+    logger?.info(
+      { runId, agent: agent.name, provider: agent.provider, model: agent.model, prId: ctx.pull.id },
+      `review: agent "${agent.name}" started (${agent.provider}/${agent.model})`,
+    );
+    try {
+      // A multi-run's rows are written `queued` and only become `running` when a
+      // slot opens (AC-33, AC-34), so this claim is also the LAST CHECKPOINT
+      // BEFORE ANY SPEND: `false` means the row left the in-flight set while the
+      // job waited — it was cancelled — and running it anyway is what makes
+      // Cancel on a 10-agent multi-run bill for the seven still behind the
+      // ceiling. Nothing else is owed on this path: `ReviewService.cancelRun`
+      // already marked the row and completed the bus.
+      //
+      // Inside the `try` because a throwing UPDATE is a failed run like any
+      // other; the widened reaper is what picks the row up if the process dies
+      // between here and the row.
+      if (!(await this.repo.startAgentRun(runId))) {
         logger?.info(
-          {
-            runId,
-            agent: agent.name,
-            findings: outcome.findings.length,
-            grounding: outcome.grounding,
-            durationMs: Date.now() - agentStart,
-          },
-          `review: agent "${agent.name}" done — ${outcome.findings.length} finding(s)`,
+          { runId, agent: agent.name, prId: ctx.pull.id },
+          `review: agent "${agent.name}" was cancelled before it started — not run`,
         );
-      } catch (err) {
-        // runOneAgent already persisted the failure/cancel (status + error +
-        // trace) and completed the bus; here we only log at the run level.
-        const cancelled = err instanceof RunCancelledError;
-        logger?.[cancelled ? 'info' : 'error'](
-          { runId, agent: agent.name, err: (err as Error).message, durationMs: Date.now() - agentStart },
-          `review: agent "${agent.name}" ${cancelled ? 'cancelled' : 'failed'}`,
-        );
+        return;
       }
+      /* THE ONLY EVENT ON THE BUS THAT REPORTS A STATE, and it is here rather
+         than one line up because only a claim that RETURNED TRUE means the row
+         is now `running` — beside the call it would also fire for the run that
+         lost the claim to a cancel.
+
+         `forRun`, never `runLog`: everything above this point — the diff, the
+         intent — is published to EVERY run of the multi-run at once
+         (`platform/run-logger.ts:50`), while every one of those rows is still
+         `queued`. A client that read the fan-out as "this run started" would
+         paint the seven agents waiting behind the concurrency ceiling as
+         reviewing. This event is the one thing on the stream that is true of
+         exactly one run.
+
+         The state rides in `data` on purpose: `RunEvent.data` is already
+         optional and untyped, so the client gains a live status with no change
+         to `vendor/shared/contracts/trace.ts` and nothing to mirror into the
+         client's copy. Widening `RunEvent` with a typed `status` is the tidier
+         shape if a second state ever needs announcing; one does not justify
+         touching a contract that is vendored twice.
+
+         AC-35: `executeRuns` is shared with the PR page's button and
+         `POST /reviews/diff`, so this line now appears in a single run's Live
+         Log too. It adds a line; it changes no ordering, no numbering and no
+         count of steps — the drawer maps events 1:1 (`run-trace-drawer/helpers.ts:11`). */
+      runLog.forRun(runId).event('info', `Agent "${agent.name}" started`, { status: 'running' });
+      const outcome = await this.runOneAgent({ ...ctx, agent, runId }, runLog);
+      logger?.info(
+        {
+          runId,
+          agent: agent.name,
+          findings: outcome.findings.length,
+          grounding: outcome.grounding,
+          durationMs: Date.now() - agentStart,
+        },
+        `review: agent "${agent.name}" done — ${outcome.findings.length} finding(s)`,
+      );
+    } catch (err) {
+      // runOneAgent already persisted the failure/cancel (status + error +
+      // trace) and completed the bus; here we only log at the run level.
+      const cancelled = err instanceof RunCancelledError;
+      logger?.[cancelled ? 'info' : 'error'](
+        { runId, agent: agent.name, err: (err as Error).message, durationMs: Date.now() - agentStart },
+        `review: agent "${agent.name}" ${cancelled ? 'cancelled' : 'failed'}`,
+      );
     }
   }
 

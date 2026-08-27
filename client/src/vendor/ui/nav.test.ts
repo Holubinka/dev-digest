@@ -86,3 +86,35 @@ describe("nav — Project Context", () => {
     });
   });
 });
+
+describe("nav — Multi-Agent Review", () => {
+  const global = NAV.find((g) => g.section === "GLOBAL")?.items ?? [];
+  const row = navItems.find((item) => item.key === "multi-agent");
+
+  it("gives GLOBAL exactly one row, the one AC-90 names", () => {
+    // Presence AND count. The mockup
+    // (`specs/assets/SPEC-05-multi-agent-review-configure-run.png`) draws four
+    // GLOBAL rows — Memory, Agent Performance and CI Runs beside this one — and
+    // SPEC-05 § N7 puts all three out of scope. "Contains the row" passes with a
+    // dead link shipped next to it; this does not.
+    expect(global.map((i) => i.key)).toEqual(["multi-agent"]);
+    expect(row?.label).toBe("Multi-Agent Review");
+  });
+
+  it("uses the key `activeKeyFor` and shell.json already fixed", () => {
+    // `activeKeyFor()` returns "multi-agent" for any /multi-agent path and
+    // `messages/en/shell.json` holds `nav.multi-agent`. A different key leaves
+    // the row unhighlighted (AC-91) and its label untranslated.
+    expect(row?.href).toBe("/repos/:repoId/multi-agent");
+    expect(row?.icon).toBe("Users");
+  });
+
+  it("is reachable by `g m`, and the `?` modal says so", () => {
+    expect(row?.gKey).toBe("m");
+    expect(SHORTCUTS).toContainEqual({
+      keys: "g m",
+      label: "Go to Multi-Agent Review",
+      group: "Navigation",
+    });
+  });
+});

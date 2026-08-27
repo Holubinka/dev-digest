@@ -21,6 +21,17 @@ import {
   RiskBriefRecord,
   RiskBriefTimeline,
   ReviewRecord,
+  AgentColumn,
+  AgentColumnFinding,
+  AgentColumnStatus,
+  ConflictTake,
+  Conflict,
+  MultiAgentRun,
+  MultiAgentRunRequest,
+  MultiAgentRunRef,
+  LastSuccessfulRun,
+  RunRequest,
+  MAX_AGENTS_PER_MULTI_RUN,
 } from '@devdigest/shared';
 import { MAX_ENV_VARS } from '../src/modules/onboarding/constants.js';
 
@@ -1009,5 +1020,183 @@ describe('platform DTOs', () => {
         commits: [],
       }),
     ).not.toThrow();
+  });
+});
+
+describe('multi-agent contracts (SPEC-05)', () => {
+  const uuid = (n: number) => `0000000${n}`.slice(-8) + '-0000-4000-8000-000000000000';
+
+  const finding = {
+    id: 'f1',
+    severity: 'WARNING',
+    category: 'security',
+    title: 'Unbounded fan-out',
+    file: 'src/run.ts',
+    start_line: 12,
+    end_line: 18,
+    rationale: 'No ceiling on concurrent runs.',
+    suggestion: 'Bound it.',
+    confidence: 0.8,
+    review_id: 'rev1',
+    accepted_at: null,
+    dismissed_at: null,
+  };
+
+  it('AgentColumnFinding is FindingRecord, not the old seven-field subset', () => {
+    // The expanded detail draws confidence, rationale and the suggested fix, and
+    // the Accept/Dismiss buttons must show their state on first paint (AC-63) —
+    // which is `accepted_at` / `dismissed_at`. A subset makes that a second
+    // request, and a second shape drifts from this one.
+    const parsed = AgentColumnFinding.parse(finding);
+    expect(parsed.accepted_at).toBeNull();
+    expect(parsed.confidence).toBe(0.8);
+    const { review_id: _dropped, ...subset } = finding;
+    expect(() => AgentColumnFinding.parse(subset)).toThrow();
+  });
+
+  it('AgentColumnStatus carries queued and cancelled, which agent_runs.status alone cannot', () => {
+    // AC-33/AC-34: a bounded fan-out has runs that exist and have not started.
+    // AC-39: a cancelled column must be distinguishable from a failed one.
+    expect(AgentColumnStatus.options).toEqual([
+      'queued',
+      'running',
+      'done',
+      'failed',
+      'cancelled',
+    ]);
+  });
+
+  it('AgentColumn keeps a deleted agent named (AC-118)', () => {
+    const column = AgentColumn.parse({
+      run_id: 'run1',
+      agent_id: null,
+      agent_name: 'Security',
+      agent_deleted: true,
+      provider: null,
+      model: null,
+      status: 'done',
+      error: null,
+      verdict: 'request_changes',
+      score: 61,
+      summary: null,
+      duration_ms: 8200,
+      cost_usd: null,
+      findings: [finding],
+    });
+    expect(column.agent_name).toBe('Security');
+    expect(column.agent_deleted).toBe(true);
+  });
+
+  it('ConflictTake.verdict has exactly THREE kinds — severities, ignored, not_reviewed', () => {
+    // SPEC-05 § D22. The rejected alternative is four run states inside the
+    // verdict; the run state already sits in `AgentColumn.status` of the same
+    // body, and this test is what makes splitting it a red suite rather than a
+    // screen that says "reviewing" beside a column that says "run failed".
+    const take = (verdict: string, note: string | null) => ({
+      run_id: 'run1',
+      agent_id: null,
+      persona: 'Security',
+      verdict,
+      note,
+    });
+    for (const v of ['CRITICAL', 'WARNING', 'SUGGESTION', 'ignored', 'not_reviewed']) {
+      expect(() => ConflictTake.parse(take(v, null))).not.toThrow();
+    }
+    for (const v of ['failed', 'cancelled', 'running', 'queued', 'done']) {
+      expect(ConflictTake.safeParse(take(v, null)).success, `verdict ${v}`).toBe(false);
+    }
+    // AC-122: a `not_reviewed` take carries no note at all, so the field is
+    // nullable rather than a string holding the system's own words.
+    expect(ConflictTake.parse(take('not_reviewed', null)).note).toBeNull();
+  });
+
+  it('Conflict carries the line RANGE, not a single line', () => {
+    const c = Conflict.parse({
+      file: 'src/run.ts',
+      start_line: 12,
+      end_line: 18,
+      title: 'Unbounded fan-out',
+      takes: [],
+    });
+    expect(c.end_line).toBe(18);
+    expect(() =>
+      Conflict.parse({ file: 'a', line: 12, title: 't', takes: [] }),
+    ).toThrow();
+  });
+
+  it('MultiAgentRun says how it ran and whether its total is complete', () => {
+    const run = MultiAgentRun.parse({
+      id: 'm1',
+      pr_id: 'p1',
+      pr_number: 482,
+      pr_title: 'Add rate limiting to public API endpoints',
+      head_sha: 'abc123',
+      ran_at: '2026-08-26T10:00:00.000Z',
+      agent_count: 4,
+      concurrency: 3,
+      total_duration_ms: 9100,
+      total_duration_kind: 'measured',
+      total_cost_usd: 0.2,
+      total_cost_partial: true,
+      columns: [],
+      conflicts: [],
+    });
+    // AC-40's "how it was executed" is written from this number, never from the
+    // word "parallel"; AC-42's incompleteness mark is a field, not an inference.
+    expect(run.concurrency).toBe(3);
+    expect(run.total_cost_partial).toBe(true);
+    // AC-41/AC-156/AC-158: the duration and its CAPTION travel together, so a
+    // number measured over a finished multi-run can never be printed as the time
+    // elapsed on a live one, or the other way round.
+    expect(run.total_duration_kind).toBe('measured');
+  });
+
+  it('MultiAgentRunRef is a link, not a comparison', () => {
+    const ref = MultiAgentRunRef.parse({
+      id: 'm1',
+      pr_id: 'p1',
+      pr_number: 482,
+      ran_at: '2026-08-26T10:00:00.000Z',
+    });
+    expect(Object.keys(ref).sort()).toEqual(['id', 'pr_id', 'pr_number', 'ran_at']);
+  });
+
+  it('LastSuccessfulRun lets every number be absent (AC-20, AC-21)', () => {
+    const r = LastSuccessfulRun.parse({
+      agent_id: uuid(1),
+      duration_ms: 8200,
+      cost_usd: null,
+      ran_at: null,
+    });
+    // An agent whose last successful run has no cost still counts toward the
+    // time maximum, so cost is nullable on its own rather than the row missing.
+    expect(r.cost_usd).toBeNull();
+    expect(r.duration_ms).toBe(8200);
+  });
+
+  it('MultiAgentRunRequest is non-empty and capped at the ceiling (AC-27, AC-30)', () => {
+    expect(MAX_AGENTS_PER_MULTI_RUN).toBe(10);
+    expect(() =>
+      MultiAgentRunRequest.parse({ agentIds: [uuid(1), uuid(2)] }),
+    ).not.toThrow();
+    // Derived with `.pick().required()`, so these three prove the derivation kept
+    // the checks rather than just the field.
+    expect(MultiAgentRunRequest.safeParse({ agentIds: [] }).success).toBe(false);
+    expect(
+      MultiAgentRunRequest.safeParse({
+        agentIds: Array.from({ length: 11 }, (_, i) => uuid(i)),
+      }).success,
+    ).toBe(false);
+    expect(MultiAgentRunRequest.safeParse({}).success).toBe(false);
+    expect(MultiAgentRunRequest.safeParse({ agentIds: ['not-a-uuid'] }).success).toBe(false);
+  });
+
+  it('RunRequest still accepts every body the PR page already sends', () => {
+    // `agentIds` was ADDED to `RunRequest`; `reviews/routes.ts` parses
+    // `req.body ?? {}` through it, so all three of these must keep parsing or
+    // AC-35 ("the PR page's review button does not change") is already broken.
+    expect(RunRequest.parse({})).toEqual({});
+    expect(RunRequest.parse({ agentId: 'a1' })).toEqual({ agentId: 'a1' });
+    expect(RunRequest.parse({ all: true })).toEqual({ all: true });
   });
 });

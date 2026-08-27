@@ -927,6 +927,88 @@ because the entry moved. A rule defended by a dead reference is a rule nobody ca
 The tests said so too, by name: *"links a risk reference at the index commit, not at the head"*.
 A test that names the alternative it rejects is the best possible warning — and it is only worth
 as much as the reason behind it, which here had rotted.
+### `messages/en/runs.json` already holds a `page` block for a Multi-Agent screen that no longer exists
+
+**Symptom.** Writing SPEC-05 (2026-08-26) against a new Multi-Agent Review design, the i18n keys
+for it were already in the repo — `client/messages/en/runs.json:112`, a full `page` block with
+`title`, `subtitle`, `selectPr`, `view.columns` / `view.tabs`, `runAll`, `meta`, `noAgents`.
+
+**Cause.** They were written for an OLDER design of the same screen: `"runAll": "Run all agents"`
+where the screen now picks an arbitrary SET of agents, and
+`"meta": "{count} agents · fan-out via p-queue · …"` — a mechanism that is not on this path at all
+(`p-queue` lives in `server/src/platform/jobs.ts:40` and `repo-intel/pipeline/full.ts:132`, never
+in `modules/reviews`, which rolls its own bounded pool — `runWithConcurrency`,
+`server/src/modules/reviews/helpers.ts:336`, given `DEFAULT_MULTI_RUN_CONCURRENCY = 3` by a
+multi-run and `1` by a single one. It read "a sequential loop" when this entry was written on
+2026-08-26 and stopped being true inside the same branch; see `server/INSIGHTS.md`).
+
+**Fix.** A ready-made translation block is not evidence that the flow it describes is the current
+one. Read the strings before wiring them: an implementer who reuses these keys ships a screen
+whose copy promises "run all agents" over a picker, and names a queue that never runs. Date the
+design the keys belong to before reusing or replacing them.
+
+
+### A status helper that ends in an unconditional `return` has a default, and the default will be wrong
+
+**Symptom.** `outcomeOf` in `RunHistory.tsx` branched on `running` / `failed` / `cancelled` and
+ended `return { key: "approved", color: "var(--ok)" … }`. When the server started writing
+`queued` (SPEC-05, 2026-08-26), a brand-new waiting run — zero blockers, zero findings — fell
+through to that line, and launching five agents painted five green "approved" reviews on the PR
+timeline before a single model had been called.
+
+**Cause.** The chain read as "everything left is settled `done`", which was true of the four
+statuses that existed when it was written. `RunSummary.status` is `z.string()`, so adding a fifth
+one upstream compiled everywhere.
+
+**Fix.** Two things, both cheap. Give the helper an explicit branch per known state and make the
+last line the *unknown* case, not the happiest one — a green verdict is the worst possible default
+for an unrecognised status. And take the word from wherever the state is already named rather than
+inventing a second one: `MultiRunView/helpers.ts` maps `queued → runState.queued`, so the timeline
+badge says "queued" too (AC-125's rule, applied to a second pair of surfaces). Component tests
+catch this in one line — `render` a row in the new state and assert the old badge is absent.
+
+### Six connections per origin is a PRODUCT ceiling once a feature opens one stream per entity
+
+**Symptom.** SPEC-05's results page opens one `EventSource` per agent run
+(`client/src/lib/hooks/multi-agent.ts`), and `MAX_AGENTS_PER_MULTI_RUN` is 10. Over plain HTTP/1.1
+— which `API_BASE` is by default (`client/src/lib/api.ts:5`) — Chrome and Firefox allow **six**
+sockets per origin. Streams 7-10 never connect: those columns show no live line, their
+stream-closed callback never fires, so the page never refetches for them. Every ordinary REST call
+to the same origin also queues behind the six long-lived streams.
+
+**Cause.** The per-entity stream count was derived from a product limit (how many agents may be
+picked) that nobody compared against the transport limit. Neither number is wrong on its own.
+
+**Fix.** When a feature opens one long-lived connection per item, the item cap and the connection
+cap are the same decision — budget them together, and leave headroom for streams the page opens for
+other reasons (the trace drawer opens its own, `RunTraceDrawer.tsx:46`). SPEC-05 settled on four
+concurrent column streams: 4 + 1 drawer + 1 spare inside six.
+
+_Built 2026-08-26 (SPEC-05 amendment 3, D27, AC-145…AC-150), and two traps that only showed up in
+the doing._ The sockets have to live in a **ref**, not in the effect's closure: the wanted list
+shrinks every time a run reaches a terminal state, so an effect that closes everything on cleanup
+tears down and reconnects the streams that are still running — losing their live lines and burning
+connections on the page whose whole problem is that it has too few. And a run holds its slot until
+it *closes*, not until the refetch says it is terminal, so the freed slot must be refused to the run
+that just vacated it (an `ended` set) or it goes straight back to the same finished run. The visible
+invariant is `MAX_LIVE_COLUMN_STREAMS` in `src/lib/hooks/multi-agent.ts`; the caller passes the
+non-terminal runs only.
+
+### A section built from grouped data cannot show an "empty" text by checking the list
+
+**Symptom.** SPEC-05's AC-110 text — "only one agent ran, there is nobody to compare with" — was
+written unconditionally but appeared only when that agent found *nothing*.
+
+**Cause.** The empty branch was reached by `positions.length === 0`. The grouping rule keeps every
+component when fewer than two runs finished (it has to, or a lone finding would vanish), so a lone
+agent that found something produced a non-empty list and the branch never ran.
+
+**Fix.** 2026-08-26: `ConflictsSection` answers `columns.length === 1` with an early return, before
+it builds anything — no positions, no toggle, no not-final mark (D25, AC-136…AC-138). The general
+shape: when a text is conditioned on the INPUT (how many agents were chosen), test the input, not
+the OUTPUT of a grouping pass over it. `emptyReason`'s `agents <= 1` branch is still there and now
+covers only `agents === 0`.
+
 
 ## Codebase Patterns
 
@@ -1395,6 +1477,254 @@ the trap's own effect runs once per open. `MermaidDiagram` holds its `onRendered
 adjacent reason, and the two together are the shape to copy: a callback that must not restart an
 effect does not belong in its dependencies.
 
+### The vendored `Dropdown` closes on every item click, so it cannot host a multi-select
+
+`vendor/ui/kit/Dropdown.tsx:12-15` calls `onClose()` inside each item's own `onClick`. That is
+right for a list of commands and wrong for a list of checkboxes: ticking a second agent would shut
+the panel. SPEC-05's PR-page agent picker therefore draws its own popover
+(`pulls/[number]/_components/RunReviewDropdown/`) and copies the panel chrome — elevation, border,
+radius, the `ddpop` animation — from that primitive into its `styles.ts`, so it still looks like
+every other menu on the page. `vendor/ui/` is a read-only copy, so widening the primitive was never
+an option; check whether a menu needs to STAY OPEN before reaching for `Dropdown`.
+
+### A display format that four surfaces print has exactly one home, and `formatSeconds` is not in it
+
+**Symptom.** Building the Multi-Agent Review screens (2026-08-26) every surface had to print a
+duration — the picker card, the column header, the tab header, the estimate — and the only
+implementation in this package is `formatSeconds` in `src/components/run-trace-drawer/helpers.ts:22`,
+which that folder's `index.ts` deliberately does not export.
+
+**Cause.** The drawer's barrel exports the component and its props only, so a second consumer has
+two options: deep-import `@/components/run-trace-drawer/helpers`, or write `(ms / 1000).toFixed(1)`
+again. The sibling case was already solved the other way — `run-cost-badge/index.ts` does
+`export * from "./format"` precisely because four surfaces render cost "and they have to agree to
+the digit".
+
+**Fix.** The multi-agent screens deep-import it rather than restating it, and the report says so:
+restating a format rule is how two screens start disagreeing to the digit, which this repo has
+already recorded once for cost. The durable fix is to move it to `src/lib/` (where `agent-color`
+and `line-numbers` now live) or re-export it from the drawer's index — a one-line change nobody has
+been given yet. Do not add a third `(ms / 1000).toFixed(1)`.
+
+### `<Button full>` inside a `Dropdown` is still shrink-to-fit until the wrapper stops being `inline-block`
+
+**Symptom.** 2026-08-26, Configure run: the PR trigger resized on every pick, so it was given
+`full`. `Button` duly rendered `width: 100%` (`vendor/ui/primitives/Button.tsx:42`) and the button
+did not get any wider.
+
+**Cause.** `Dropdown`'s own wrapper was `display: inline-block`
+(`vendor/ui/kit/Dropdown.tsx`), and 100% of a shrink-to-fit box is shrink-to-fit. `width` on
+`Dropdown` was no help either — it sizes the **menu**, not the trigger, which is why `width={420}`
+had been sitting there over a button that was never 420 wide.
+
+**Fix.** `Dropdown` now takes `full`, which makes its wrapper `display: block` and pins the menu
+to `left: 0; right: 0` so the panel inherits the same width. Anything else being made full-width
+inside a vendored popover needs the same two-part check: the control asks for 100%, and something
+above it has to be block-level for the 100% to mean anything.
+
+Two consequences worth knowing before reaching for it:
+
+- **Truncation is the caller's job.** `Button` renders `{children}` straight into its flex row, so
+  a long label has to arrive already wrapped: `<span style={{ flex: 1, minWidth: 0, overflow:
+  "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>`. See
+  `configure/.../ConfigureRunView/styles.ts` → `prTriggerLabel`.
+- **The icons do not shrink, and that is not luck.** With `flex: 1` the label's flex-basis is `0`,
+  so its scaled shrink factor is zero and the flex line never overflows — the label simply grows
+  into the space the icon and the chevron left. Give the label `flex-shrink` with a non-zero basis
+  instead (`flex: 1 1 auto`) and the 15px icons start being squeezed.
+
+### Anything a column shows about its state must key on `status`, never on `streams[runId]`
+
+**Symptom.** 2026-08-26, the results columns: a reader could not tell a working agent from a
+finished one. Half the reason was that the only per-run signal beyond the bare word rendered on
+`!isTerminal(status) && live?.lastMsg` — so on a run of five or more agents the columns with no
+stream showed nothing at all, and a silent column beside a talking one reads as the finished one.
+
+**Cause.** `MAX_LIVE_COLUMN_STREAMS = 4` (`lib/hooks/multi-agent.ts`). A browser gives one origin
+six HTTP/1.1 connections, so from the fifth agent on, some columns have no `streams[runId]` entry
+until a slot frees. That is by design and AC-148 says the difference must stay invisible.
+
+**Fix.** The state now renders as a coloured `Badge` keyed on `c.status` alone — the field every
+other column draws from — and the stream supplies only the optional message text below it. When
+adding anything else that speaks about a run (a timer, a count, a chip), key it on `status` and
+render it against a column with **no** stream before believing it: `useMultiRunColumnEvents`
+returning `{}` is that case, and it is exactly what `MultiRunView.test.tsx`'s mock already gives.
+
+**Correction, 2026-08-26 (same day).** The state is no longer read from `status` *alone*. The
+server now emits one event carrying `data.status: 'running'` after a run wins its concurrency
+slot, and `liveColumns(columns, streams)` in
+`multi-agent/[multiRunId]/_components/MultiRunView/helpers.ts` promotes `queued → running` from
+it — which is what finally satisfies AC-78 without a timer and without a request. The rule above
+survives in the shape that matters: **the arrival of a line still proves nothing**, because the
+diff and the intent are fanned out to every run while all of them are queued (root `INSIGHTS.md`,
+"An event on a run's SSE stream does not mean that run started"). What changed is that there is
+now exactly one event that does prove it. Note also that the promotion happens in ONE function
+whose result is handed to all four consumers — the columns, the tabs, the takes and the drawer —
+because AC-125 requires the header and the take to name a run identically, and four call sites
+deriving it separately is precisely how that stops being true.
+
+### A pulsing dot lost to a badge — motion is not the same as legibility
+
+2026-08-26. The first pass at "show me the agent is working" was a pulsing dot beside the state
+word plus three pulsing dots standing in for a missing live line. The human rejected it on sight
+in favour of putting the word itself into a chip: *"краще не пульсуюча крапка а можна tab з
+написом status"*. On a ten-column comparison a field of blinkers is harder to read than five
+static colours, and the state was already text — the fix was to make the text visible, not to add
+a second thing beside it.
+
+Worth knowing before reaching for animation on this page again. Two durable pieces came out of it:
+
+- `runStateTone(status)` sits beside `runStateKey(status)` in
+  `multi-agent/[multiRunId]/_components/MultiRunView/helpers.ts`, so the word and the colour for a
+  run state come from one file. AC-125 already forces the word to be single-sourced; the colour
+  has the same failure mode.
+- The badge is the vendored `Badge` primitive with a `--x` / `--x-bg` token pair, which is what
+  `SEV` does — no new component was created for it. `cancelled` takes `--warn`, not `--crit` and
+  not the muted grey `queued` needs: a run someone stopped and a run still waiting must not read
+  alike.
+
+
+### A flex item with a fixed `width` still shrinks — `minWidth: 0` on its sibling does not save it
+
+**Symptom.** 2026-08-26, the PR page's agent picker: three checkboxes rendered as 16×16 squares
+and the fourth as a narrow upright oval. Only the row whose description was longest was affected,
+which made it look like a rendering glitch rather than a layout rule.
+
+**Cause.** `vendor/ui/kit/Checkbox.tsx` renders `<button style={{ width: 16, height: 16 }}>` beside
+its label inside a `display: flex` label, and the button had no `flexShrink: 0`. When the label's
+content is wider than the row — `MENU_WIDTH` is 300 — the browser distributes the overflow across
+**every** item with a shrink factor, weighted by base size. The label absorbed most of it and the
+button absorbed the remainder: 16px became ~10px, and `borderRadius: 4` on a 10×16 box reads as an
+oval. The `minWidth: 0` already on the label lets the label shrink; it does not stop the box
+shrinking too, because those are different items.
+
+**Fix.** `flexShrink: 0` on anything with a fixed pixel size that sits in a flex row —
+`components/agent-monogram/styles.ts:12` had it from the start, which is exactly why the monograms
+stayed square in the same rows while the checkboxes did not. Fixed in the primitive: no consumer
+of a checkbox wants a squashed one, and Configure run builds the same rows from the same component
+(it was simply wide enough not to show it yet).
+
+### A `maxHeight` list of variable-height cards cuts one in half, and the cut shows the next card's border
+
+**Symptom.** Same screenshot. The picker's list (`maxHeight: 320, overflowY: auto`) ended mid-card,
+and a 1px sliver of the NEXT card's coloured `borderTop` showed under it. It read as a stray line,
+not as a list that continues — a reader took it for broken styling.
+
+**Cause.** Nothing is wrong with the scroll container; the rows are as tall as their descriptions
+wrap, so no `maxHeight` can land on a boundary.
+
+**Fix.** An overlay fade at the bottom edge of the list, rendered only while something is really
+below it (`RunReviewDropdown`, `moreBelow`). Two things to know before copying it:
+
+- **The pure-CSS `background-attachment: local` scroll-shadow trick does not work here.** It paints
+  on the scroll container's own background box, and these rows are opaque, so the shadow is hidden
+  behind them. It only works over transparent content.
+- **The overlay cannot live inside the scrolling element** — it would scroll away with the content.
+  It needs a `position: relative` wrapper around the list, which is what `s.listWrap` is for.
+
+Whether the fade is needed is a **measurement** (`scrollHeight - scrollTop - clientHeight > 1`),
+read on open and on scroll. jsdom reports 0 for every layout box, so a test can prove the fade
+stays away on a short list but cannot prove it appears on a long one — that half needs a browser.
+
+### A deep link into reviewed code must be pinned to the sha that was REVIEWED
+
+2026-08-26. The multi-agent results page gained github.com links on its findings and on the
+disagreement headers, reversing `SPEC-05 § Untrusted inputs`' no-link rule (the human lifted it
+after using the screen; a finding you cannot open is one you go and find by hand).
+
+Two shas are in scope on that page and only one is right. `multiRun.head_sha` is the tree the
+agents actually read; `pr.head_sha` is where the branch is now. A link built from the PR's head
+opens the right file at a line that may have moved — and unlike `Reply to author`, which warns
+about exactly this (AC-109), a link says nothing when it lands in the wrong place. Both are
+reachable in `MultiRunView`, which is precisely why the choice was moved into one function,
+`fileRefHref` in that folder's `helpers.ts`, and every surface calls it instead of picking a sha
+locally. No sha, no link: the fallback is the plain `file:line` text, never a quiet substitution.
+
+The safety argument worth keeping, because it is what made the reversal reasonable rather than a
+loosening: `lib/github-urls.ts` refuses any `..` segment in the repo, the sha or the file, encodes
+each path segment, and takes the host from a constant — so a model-written path cannot steer a
+reader off github.com. What remains is a path to a file that does not exist, which is a 404: a
+broken link, not a way in. `isLinkablePath` in the same file is the stricter predicate (it also
+rejects control characters and `scheme:` prefixes) and is what `BriefRef` uses; the finding
+surfaces deliberately match `FindingCard`'s weaker rule instead, so that one finding cannot link
+in Tabs and render as text in Columns. Unifying them is a live question, not a settled one.
+
+### A `disabled` button cannot explain why it is disabled
+
+**Symptom.** 2026-08-26: a reader asked why `Turn into eval case` would not press. The behaviour
+was correct (AC-62, D8 — the server takes only `accept`/`dismiss`), but the button was mute, so
+"deliberate" and "broken" looked identical.
+
+**Cause.** `disabled` is what makes it mute, structurally, and no amount of `title` fixes it.
+A disabled control dispatches **no mouse events**, so a tooltip over it is unreliable; and it is
+**out of the tab order**, so a keyboard never reaches it to be told anything at all. Both halves
+of the explanation are blocked by the one attribute.
+
+**Fix.** `aria-disabled="true"` instead, with no handler bound. The button stays focusable and
+inert, which is the only shape that can describe itself: hover *or* focus reveals the line, and
+`aria-describedby` points at an always-rendered `srOnly` copy so a screen reader hears it on focus
+whether or not the visible line is up. Two details this cost time on:
+
+- **`Button` in `vendor/ui` sets its own `onMouseEnter`/`onMouseLeave` AFTER `{...rest}`**, so a
+  caller's mouse handlers are silently dropped. Put them on a wrapper element. `onFocus`/`onBlur`
+  pass through and bubble, which is why one wrapper can hear both.
+- **The dimming has to be restated** once `disabled` is gone (`opacity`, `cursor`), *and* the
+  ghost hover background neutralised — otherwise an inert button lights up under the pointer like
+  something that would respond. Caller `style` wins: `Button` spreads it last.
+
+There is no `.sr-only` utility in this app; the clip-rect idiom is inlined in
+`multi-agent/[multiRunId]/_components/MultiRunView/styles.ts` as `s.srOnly`. `display: none` would
+not do — it removes the element from the accessibility tree and takes `aria-describedby` with it.
+
+### The PR page's content width is inline in `page.tsx`, not in any `styles.ts`
+
+2026-08-26. "The PR page has no max width — I grepped every `styles.ts` under `pulls/[number]/`"
+was checked and is false: `pulls/[number]/page.tsx:221` (and `:183` for the loading state) wraps
+the tabs in `maxWidth: 1080, margin: "0 auto"`. `.dd-page` in `globals.css` carries padding only.
+
+Worth knowing before matching a layout to that page: grepping the colocated `styles.ts` files
+misses it, and "remove the cap to match" would have made the multi-agent tabs *wider* than the
+page they were meant to match — a rationale running the full width of a 2400px window, which is
+harder to read than the 760px ribbon it replaced. The cap is now `1080` + `margin: 0 auto` in
+`MultiRunView/styles.ts`, quoting the source line.
+
+### The "Show only conflicts" toggle filters on divergent severity alone
+
+`isConflict` in
+`app/repos/[repoId]/multi-agent/[multiRunId]/_components/MultiRunView/helpers.ts` counted
+flagged-versus-`ignored` as a conflict until 2026-08-27, and that made the toggle hide nothing at
+all. Measured that day against the live API — `GET /multi-agent-runs/:id` on the only multi-run in
+the database, five agents all at `done` — every one of its three positions passed the test, because
+`server/src/modules/reviews/conflicts.ts` keeps every component and a typical position is therefore
+one flag beside four finished agents that said nothing: `[ignored, ignored, ignored, WARNING,
+ignored]`. The human's rule is that this shape is AGREEMENT. A predicate whose whole job is to
+shrink a list is worth running over real rows before believing it works — lint, typecheck and 1115
+unit tests cannot tell a strict filter from one that matches everything.
+
+### A stateful hook shared by two route trees goes in `src/lib/<kebab>.ts`, not `src/lib/hooks/`
+
+`src/lib/hooks/` is the TanStack Query layer and it has a barrel (`lib/hooks/index.ts`), so a hook
+placed there is pulled in by every `@/lib/hooks` import even though it touches no endpoint. The
+repo already answers where the request-free ones go, and the answer is one level up: `lib/theme.tsx`
+exports `useTheme`, `lib/repo-context.tsx` exports `useActiveRepo` and `useRepoNotFound`,
+`lib/toast.tsx` exports `useToast` — kebab-case modules directly in `src/lib/`, each with
+`"use client"` at the top, none of them in the barrel. `useAgentSelection` joined them at
+`lib/agent-selection.ts` on 2026-08-27, when the same tick state was found written out twice, in
+`pulls/[number]/.../RunReviewDropdown` and in `multi-agent/configure/.../ConfigureRunView`.
+`frontend-architecture` § *Which `hooks/` folder* sends a non-data hook to `<Owner>/hooks/`, which
+only decides it when there is exactly one owner.
+
+### Two copies of one state machine were identical except for the order they returned
+
+`defaultSelection` was byte-for-byte the same in both agent pickers, and `atCeiling`/`toggle`
+differed only in how `selected` was projected — but that projection was the load-bearing part.
+`RunReviewDropdown` filtered the picked ids by "still exists", keeping the order the reader ticked
+them in; `ConfigureRunView` walked the agents list, keeping the list's order, which is what AC-46
+fixes and what lets `estimateRun`'s wave tie-break stay deterministic (AC-152, documented in
+`ConfigureRunView/helpers.ts`). Collapsing them onto the list-order projection (2026-08-27) changes
+nothing on screen and nothing either suite asserts, but it does change the order of `agentIds` in
+the `POST /multi-agent-runs` body after an untick-then-retick. When merging two "identical" copies,
+diff what each one returns, not what each one computes.
 
 ## Tool & Library Notes
 
@@ -1639,6 +1969,32 @@ key (`headingPrefix` plus `<span className="mono" style={{ color: "var(--accent-
 in Chrome as `rgb(147, 187, 252)` / JetBrains Mono). What NOT doing it cost was a review round.
 Writing the constraint down does not close it: when a message renders beside a mockup, check whether
 the design puts two faces in one string before the key is written.
+### `@testing-library/user-event` is NOT installed here — the suite is `fireEvent`
+
+**Symptom.** `import userEvent from "@testing-library/user-event"` fails the whole test FILE at
+collection: *"Failed to resolve import … Does the file exist?"*, with zero tests run.
+
+**Cause.** `client/package.json` carries `@testing-library/react` and `@testing-library/jest-dom`
+and nothing else from that family. The `react-testing-library` skill says "always `userEvent`, never
+`fireEvent`", and every existing test here does the opposite because it has to.
+
+**Fix.** Use `fireEvent` and follow the surrounding files. Adding the dependency is a package.json
+change and therefore somebody's decision, not a test's.
+
+### A defaulted fixture parameter narrows to the type of its default, and `vitest run` will not tell you
+
+**Symptom.** `const take = (verdict: ConflictTake["verdict"], runId = verdict) => …` — every test
+passes under `pnpm test`, and `pnpm typecheck` then fails eleven times with *"Argument of type
+'\"r2\"' is not assignable to parameter of type 'CRITICAL | WARNING | …'"*.
+
+**Cause.** With no annotation, TypeScript infers the parameter's type from its default, so `runId`
+became the verdict union. Vitest transpiles and does not typecheck, so the suite was green the whole
+time.
+
+**Fix.** Annotate any defaulted parameter of a fixture builder — `runId: string = verdict`. And
+treat a green `pnpm test` as no evidence at all about types: the client's three gates are
+`lint`, `typecheck` and `test`, and only the middle one reads these files as types.
+
 
 ## Recurring Errors & Fixes
 
@@ -2435,6 +2791,27 @@ nobody thought about.
 `useSearchParams: () => new URLSearchParams()` and `useRouter: () => ({ replace: () => {} })` are
 enough when the file asserts nothing about navigation.
 
+### Promoting a component out of `app/` breaks every relative import that escapes its folder — the `vi.mock` paths included
+
+**Symptom.** `app/repos/[repoId]/pulls/[number]/_components/RunTraceDrawer/` was moved to
+`components/run-trace-drawer/` on 2026-08-26 under a plan step that called the move "whole and
+unmodified". It is not: three of that folder's imports point OUT of it by relative depth, and from
+the new location they resolve outside the repo. Caught by auditing the paths before the first run;
+had it run, the two `vi.mock` calls would simply have stopped intercepting and the drawer would have
+reached the real `useRunTrace` — an error about a missing QueryClient, naming nothing that was
+edited.
+
+**Cause.** The folder's own imports are relative and survive a move, which is what makes the move
+look safe. Three imports were NOT internal: `RunTraceDrawer.test.tsx:5` reached the messages file
+through eight `../`, and its two `vi.mock` specifiers reached `lib/hooks/*` through seven. From the
+new depth those resolve outside the repo, so the mocks registered against module ids nothing
+imports and stopped intercepting — the component then called the real `useRunTrace`.
+`_components/PromptBlock/PromptBlock.tsx:8` had the same shape with nine.
+
+**Fix.** After moving a component folder, `grep -rn '\.\./\.\./\.\./\.\.' <new dir>` and repoint every
+hit to the `@/` alias, tests included. A plan that says the moved test is "not edited" is describing
+its ASSERTIONS: a mock specifier is a path, and a path that no longer resolves is not the same test.
+
 
 ## Open Questions
 
@@ -2464,3 +2841,10 @@ enough when the file asserts nothing about navigation.
   appears in the run's list and not in the hover card. Both are defensible on their own — see
   Codebase Patterns. Decide whether `INFO` is a real severity for this product and make the
   two agree; the server's contract says it is not, the design system says it is.
+- The pre-run estimate on Configure run names the fan-out mechanism but not its ceiling, because
+  the ceiling is published to the client only on `MultiAgentRun.concurrency` — a field of a run that
+  does not exist yet while the screen is being drawn (2026-08-26). The results page prints
+  `up to 3 at a time` from the response; Configure run says only `in-process fan-out`. Fix by
+  publishing the default beside `MAX_AGENTS_PER_MULTI_RUN` in `vendor/shared/contracts/platform.ts`
+  so both surfaces read one number, or accept that the estimate names no ceiling. `SPEC-05 § D9`
+  requires the copy to be written from what the code does, and today the client can only half do it.

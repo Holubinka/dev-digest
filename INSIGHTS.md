@@ -215,6 +215,38 @@ provider was the variable and the code was not. Without the control, the session
 
 Run the control whenever a live failure appears right after a change that could plausibly cause
 it. The cost is one more run; the alternative is a permanent change made from a coincidence.
+### Cite `path:line` in a subagent brief; an unaddressed fact costs what a false one costs
+
+**Measured 2026-08-26**, SPEC-05 run, 17 agents / 1938 turns / 290M cache-read tokens. The
+`spec-creator` brief asserted six facts about the repo without addresses. All six were true. Each
+was opened from scratch anyway, because an agent cannot tell an unverified true claim from a false
+one — and the same brief contained a seventh claim that **was** false ("the fan-out already runs
+agents in parallel"; `modules/reviews/run-executor.ts:203` is a sequential `for … await`).
+
+Nine of that agent's ten opening reads merely confirmed the brief. The tenth caught the false
+claim, and it had looked exactly like the nine. **So the lesson is not "trust the brief" — it is
+that verification will happen regardless, and citing turns it from a file read into a click.**
+Uncited, the true facts cost the same as the false one; cited, only the false one costs anything.
+
+The agent's own rule, worth keeping in its words: write `path:line`, not the fact, and when no
+address can be given, label it a hypothesis.
+
+**Correction, 2026-08-27 — the rule as written was not enough.** It was filed after this session's
+first retrospective and then broken five times in the same session, by the agent that filed it.
+Every one of the five briefs carried an address or sounded like it did; what they lacked was a
+**read at the moment of writing**. Three came from stale sources: an `INSIGHTS.md` entry whose
+citation had already died when it was quoted, a paraphrase of the spec's own summary of a file, and
+a grep narrow enough to miss the answer (`styles.ts` only, while the constraint lived inline in
+`page.tsx`). So the rule is not "cite" — it is **open the file while you write the sentence**, and
+when you are quoting a repository document rather than code, quote the code it points at instead.
+The measured cost, in an implementer's words: *the brief stated these as fact rather than
+hypothesis, so I spent turns on the archaeology of someone else's certainty.*
+
+A second shape of the same waste: a preflight list that carries **names** rather than **shapes**.
+Telling P3's implementer that `formatCost` exists saved it a search; not telling it that the
+`Agent` contract has `description` and no icon field cost a full decision round-trip after the
+component was already written.
+
 
 ## What Doesn't Work
 
@@ -855,6 +887,191 @@ really was the whole of what that diff had, and cost two agents to learn.
 between passes: half the later findings were about code that did not exist when the review began.
 And when a defect's shape repeats twice, stop patching instances and change the shape of the
 check — the third instance is already written, it just has not been found yet.
+### A criterion about "nothing is shown" hides however many causes produce that same nothing
+
+**Symptom.** SPEC-05 opened with a doctrine (D1): never invent an agent's opinion — an agent that
+did not flag a position shows `did not flag` and no note, because no such note exists in the data.
+AC-71 was written as the direct embodiment of that doctrine, and violated it. An agent whose run
+**failed**, was **cancelled**, or was still **running** produced no finding at that position
+either, so it rendered as `did not flag` — a claim that it looked and chose not to flag.
+
+**Cause.** The criterion asked *is there a finding here?* when the honest question is *did this
+agent's run reach the end?*. Absence of data reads identically no matter what produced it, so a
+doctrine about not inventing content is easy to enforce on text and easy to break on silence. The
+qualifier that would have caught it already existed in the repo and was not carried into the
+criterion: `contracts/observability.ts:61-65` defines a conflict as one agent flagging where
+another **"(that also reviewed)"** did not.
+
+**Correction, 2026-08-27.** That citation was already dead when this entry was written. Lines
+61-65 of `contracts/observability.ts` are `ConflictTake`'s fields, and the comment over `Conflict`
+deliberately does **not** define one — it says the question belongs to the takes, not to the stored
+shape. `git log -S "divergent severities"` over both vendored copies is empty: the sentence quoted
+above existed in a revision of the file that P1 replaced, and this entry repeated it from the spec
+rather than from the file. The lesson stands; the address does not. It cost a dispatch that asked
+an implementer to edit two vendored copies against a quotation that was not there, and the
+implementer refused and checked — which is the only reason it was caught. `client/INSIGHTS.md`
+already carries the general form of this: *a rule defended by a dead reference is a rule nobody can
+re-check.*
+
+**Fix.** For every criterion that specifies an empty, blank, or "did not" state, ask how many
+distinct causes produce that same emptiness, and whether the text is true for each. SPEC-05 needed
+four different empty texts for its disagreement section, not one. The same question applies to the
+computation behind the state, not just its copy: a position where one agent flagged and the rest
+crashed is not a disagreement — nothing disagreed with it — so a run that never completed must
+count neither for nor against (SPEC-05 § D23).
+
+**2026-08-26, the same failure a second time in one spec, from the other side.** SPEC-05's AC-110
+("one agent in the multi-run → nothing to compare with") is worded unconditionally, but it was only
+ever evaluated inside the section's empty-state branch. A lone agent that **found something** left
+that list non-empty, so the branch never ran and the criterion never fired — it was reachable only
+when the lone agent found nothing. **A criterion that reads unconditionally but is only checked
+inside a conditional branch is not a criterion; it is a comment.** When a spec states a rule about a
+whole state ("one agent"), check where the implementation is forced to ask the question, not where
+the sentence sits.
+
+### Comparing the build against the design as the LAST step of a package guarantees a second pass
+
+**Symptom.** SPEC-05's plan put "compare against the mockup element by element and report
+differences" as step 7 of a package whose step 5 built the component. Both design differences of
+that run — the agent card showing the model instead of `description`, and the missing icon tile —
+became visible the moment the implementer opened the mockup and the `Agent` contract, *before* the
+first line of the component. They were reported after it, and the card's markup, its styles and its
+test were then rewritten.
+
+**Cause.** A design comparison is not a check on finished work; it is where the questions a design
+cannot answer for itself surface, and those questions are the human's. Ordering it last converts
+every one of them into rework.
+
+**Fix.** Put the design walk first — its output is a decision list, not a verdict. Two further
+figures from the same run argue the same way: four design PNGs in `specs/assets/` were read by
+**nineteen** agent-reads (one of them by eight separate agents), and the artifact that would have
+carried that reading once — a per-element matches/differs/absent table — was written by the last
+implementer of four, at the end. Written first, it is a brief; written last, it is a receipt.
+
+
+### A new value in a shared status enum breaks files the branch never opens
+
+**Symptom.** SPEC-05 (2026-08-26) added `queued` to `agent_runs.status`. The PR timeline then
+rendered every waiting agent as a green "approved" review with zero findings —
+`RunHistory.tsx:24`, a file `git status` showed as untouched by the branch, and which therefore
+appeared in no diff, no scope report and no reviewer's file list. `usePrRuns`
+(`client/src/lib/hooks/reviews.ts:46`) stopped self-refreshing for the same reason: it polled on
+`status === "running"` only.
+
+**Cause.** The regression travelled through the DATA, not through the code. `RunSummary.status` is
+`z.string()` in `vendor/shared/contracts/trace.ts`, so nothing type-checked, and both readers were
+written when four statuses existed — one as a chain whose final unconditional `return` meant
+"settled", the other as an equality test for the single in-flight state.
+
+**Fix.** When a change widens a status/enum a contract carries, grep both packages for every
+predicate over the OLD values before calling the change done —
+`grep -rn "status === " client/src server/src` — and treat a final unconditional `return` in a
+status helper as a branch that was never written. The diff is the wrong place to look: the file
+that breaks is the one nobody edited. Contracts typed `z.string()` for a status make this
+invisible to typecheck; `z.enum` would have made it a build error in both packages at once.
+
+### One formula behind both an estimate and a total hides its own wrongness
+
+**Symptom.** SPEC-05 computed the time of a multi-agent run as `max(duration)` over its agents, and
+used that one formula twice: for the estimate shown before the run, and for the "total" shown after
+it. Measured 2026-08-26 on a live five-agent run with a concurrency ceiling of 3: the columns read
+3.4 / 3.8 / 3.3 / 3.7 / 5.1s and the meta row read **"5.1s total"**, while the run actually took
+about 8.9s — two waves, not one. The label was understating by roughly three quarters.
+
+**Cause.** `max` is a defensible *approximation* for a forecast, and being an approximation is what
+kept anyone from questioning it. Reused for a number labelled "total", the same expression is not
+an approximation at all — it is a report of something that already happened, and it is wrong. The
+shared formula let the first use excuse the second.
+
+**Fix.** Split them by what they answer, not by how they are computed. A forecast may model
+(SPEC-05 now estimates in waves, `⌈N ÷ ceiling⌉`); a total must be **measured** — the multi-run's
+own elapsed interval, not derived from the runs inside it, so it also absorbs queue waiting and
+shared pre-work that no per-run duration contains. And when you switch a number from derived to
+measured, ask who writes the last mark: SPEC-05's reaper marks orphaned runs failed without a
+duration, so a run killed with the process would otherwise "measure" an hour of idleness.
+
+### A prohibition can be built from a true premise and a conclusion nobody checked
+
+**Symptom.** SPEC-05's `## Untrusted inputs` forbade turning a finding's file path into a link:
+the path is written by the model, so "this feature does not make a link out of it that leads out
+of the app". Every implementer obeyed it, and the new screen shipped strictly less useful than the
+PR page — which has linked the same model-written paths to github.com since long before.
+
+**Cause.** The premise was true and the conclusion was never tested against the code that would
+have done the linking. `client/src/lib/github-urls.ts` is 124 lines: `HOST` is a constant (`:11`),
+`encPath` splits on `/` and runs every segment through `encodeURIComponent` (`:78-83`, so
+`javascript:alert(1)` becomes `javascript%3Aalert(1)` — a scheme cannot survive), and the builder
+refuses a `.` or `..` segment in the repo name, the sha or the path (`:107-123`). The danger the
+rule was written against could not be reached through that function.
+
+**Fix.** State what is *guaranteed* and what is merely *possible*, and get both from the code
+rather than from the shape of the risk. Here: guaranteed that the link lands on github.com at an
+encoded path inside the intended repository; not guaranteed that the path names a file that
+exists, so a wrong path is a 404 — a broken link, not an exploit. Reading the one file it depends
+on costs less than a rule that makes a feature worse.
+
+**And when you do link to a commit, pin the right one.** SPEC-05 links a finding to the multi-run's
+own `head_sha`, not the PR's current head: `client/INSIGHTS.md` records a measurement where the
+other choice 404s on every file the PR *adds*, because that path does not exist in the older tree.
+
+### When your words disagree with your own mockup, open the mockup
+
+**Symptom.** SPEC-05 defined a "position" in its cross-agent section as a code location touched by
+**two or more** finished agents. The implementation obeyed it exactly (`conflicts.ts:221`, with a
+comment citing the criteria). On a real run — one agent flagging two things, four finishing
+silently — the section rendered empty, and the feature's headline promise ("silence from a finished
+agent is an opinion too") was unreachable.
+
+**Cause.** The rule was argued in prose and never checked against the picture it was written for.
+`specs/assets/SPEC-05-multi-agent-review-columns.png` had been in the repository from the start,
+and **both** positions it draws carry a single verdict plus two `did not flag` — so on the mockup's
+own data the rule produces an empty section. One look answered in a second what four rounds of
+wording did not.
+
+**Fix.** Four times in this feature the spec's words diverged from the mockup. Three times the
+words were right — the mockup was a prototype on fixtures, and it invented notes, agents and
+totals that real data cannot produce. The lesson is therefore **not** "the mockup wins": it is that
+a divergence from your own design artefact is a reason to open the artefact, not a reason to argue
+from the text. Cheap check, and the one time it was skipped it cost a shipped screen that could
+not show what it existed to show.
+
+Corollary, from the same pass: a fixture can contradict itself. In that mockup's second position
+`Security` reads `did not flag` while `Security`'s own column carries a finding on the same line.
+Take the **shape** from a design and the **composition** from the rules.
+
+### Resuming one agent beats dispatching a fresh one, and the saving is in scouting
+
+**Measured 2026-08-27**, SPEC-05 run, 23 agents / 3171 turns. One implementer resumed six times
+across a live-UI iteration loop: **393 turns, 34 scout calls**. A sibling dispatched once, fresh,
+for a comparable package: **273 turns, 67 scout calls**. Twice the work for half the scouting,
+because a resume keeps the context in which "where does this live" was already answered.
+
+**Apply it** when the same surface is being revised repeatedly — a screen the human is looking at
+and reacting to. Send the next request to the agent that built it, not to a new one. A fresh
+dispatch is right when the work moves to a different package, when the previous agent's context is
+now mostly irrelevant, or when two pieces of work must genuinely run at once on disjoint files.
+
+**The matching failure mode is on the dispatcher's side, not the agent's.** Of those six resumes,
+three carried something genuinely new — the human had just seen a screen that did not exist
+before. The other three were one request ("make this card behave like the PR page") split into
+three rounds, and all three were visible on the same screen when the first was sent. Look at the
+screenshot once and enumerate everything it implies before writing the first brief.
+
+### "Skip the tests to save tokens" was paid for six times over in scratch tests
+
+**Measured 2026-08-27.** Mid-session the human asked for no new test files, to save tokens. The
+diff did stay free of them. But the implementer still had to prove each change worked, so across
+the remaining rounds it **wrote, ran and deleted six one-off test files** — for a stream cap, a
+monogram, a badge, a conflict predicate, a tooltip and a link builder — instead of leaving three
+permanent ones. Nothing in the suite remembered any of it, so each later round re-proved from
+scratch what the previous had already established.
+
+**What this does not say:** that the instruction was wrong. Its saving was real and immediate, and
+whether that trade is worth it belongs to whoever pays. **What it does say:** the cost of a test is
+not its first writing, and "no new tests" does not mean "no test work" — it means the same work,
+repeated, thrown away, and absent from the branch afterwards. Say that when the instruction is
+given, so the trade is made with both numbers visible.
+
 
 ## Codebase Patterns
 
@@ -1305,6 +1522,54 @@ number or the next screen re-derives it differently. And when it is stale, **mar
 hide it** — the doctrine is already written down in SPEC-02 (AC-25, AC-26, AC-38 all show
 stale data with a marker) and the marker must survive being read without colour (AC-4), which
 in the list is the word `earlier` beside the ring rather than a dimmer ring.
+
+### An event on a run's SSE stream does not mean that run started
+
+**Symptom.** 2026-08-26. The multi-agent results page showed a run as `queued` for its whole
+life and then jumped straight to `done` (AC-78 unmet). The obvious fix — "a line arrived on this
+run's stream, so it is running" — is wrong, and wrong in the case that matters.
+
+**Cause.** `ReviewRunExecutor.executeRuns` builds ONE `RunLogger` over **every** run of the
+multi-run (`server/src/modules/reviews/run-executor.ts:143-150`) and `RunLogger.event` publishes
+to all of them (`server/src/platform/run-logger.ts:50-53`). So the shared pre-work — loading the
+diff, deriving the intent, and every line the intent deriver emits through its own `onEvent` — is
+delivered to all N runs while all N rows are still `queued`. At a concurrency of 3 out of 10, the
+"first event" heuristic paints seven waiting agents as reviewing. The promotion itself
+(`startAgentRun`, `repository/run.repo.ts:200-207`) published nothing to the bus; the logging
+around it is pino, which never leaves the server.
+
+**Fix.** The executor now publishes exactly one narrowed event after the claim RETURNS TRUE:
+`runLog.forRun(runId).event('info', 'Agent "<name>" started', { status: 'running' })`. `forRun`
+is the load-bearing word — it drops the fan-out — and *after the claim* is the other one, since
+beside the call it would also fire for a run that lost the claim to a cancel. The client reads
+`data.status`, never the arrival of a line.
+
+Two things worth carrying:
+
+- **`RunEvent.data` is already `unknown` and optional**, so a new fact can ride on the stream
+  with no change to `vendor/shared/contracts/trace.ts` — and therefore nothing to mirror into
+  the client's copy. Reach for that before widening a contract that is vendored twice.
+- **`executeRuns` is shared with the PR page's single-run button and `POST /reviews/diff`**, so
+  anything published there is visible on a surface AC-35 promises is untouched. Check the trace
+  drawer before adding one: it maps events 1:1 (`client/src/components/run-trace-drawer/helpers.ts:11`)
+  and numbers nothing, so a line is additive — but a step counter would not have been.
+
+### The server's grouping rule decides whether the client's conflict toggle has anything to do
+
+Two rules in two packages with no shared test between them.
+`server/src/modules/reviews/conflicts.ts` decides which positions exist;
+`isConflict` in `client/src/app/repos/[repoId]/multi-agent/[multiRunId]/_components/MultiRunView/helpers.ts`
+decides which of them "Show only conflicts" keeps — and it counts one flag beside any `ignored` as
+a conflict. So when the server began emitting single-flag positions on 2026-08-27, every position
+became a conflict and the toggle stopped hiding anything: across all nine multi-runs in the dev
+database the positions were 0-9 each and the hidden count was **0** in every one. With two or more
+finished agents the toggle can now only hide a position that EVERY finished agent flagged at the
+same severity.
+
+Neither package's suite noticed, and neither could: each side's fixtures are written by hand
+against its own rule. When you change what the grouper emits, replay a real multi-run through
+`isConflict` — nine `GET /multi-agent-runs/<id>` responses and twelve lines of Python were enough
+to see it.
 
 ## Tool & Library Notes
 
@@ -2263,3 +2528,19 @@ to `Edit` — the gate was right, and the script was the way around it.
   as an ICU `{max, number}` was rejected on 2026-08-14 because `en` renders it "40,000" and the
   rest of that file writes numbers with a space; a pre-formatted value would need every `t(errorKey)`
   call site to pass it. Left as prose deliberately, and it is a real coupling, not an oversight.
+- The disagreement section's four empty texts (SPEC-05 AC-110, AC-129, AC-111, AC-112) were sized
+  for a grouping rule that no longer exists. Since 2026-08-27 `positions.length === 0` with two or
+  more finished agents means "nobody found anything", yet `emptyReason` still answers
+  `different-places` there and `client/messages/en/runs.json` reads "No two finished agents landed
+  on the same lines" — true only vacuously. AC-112's `agreed` branch is nearly unreachable for the
+  mirror reason: it needs a position that is not a conflict, and almost none is. Raised with the
+  human on 2026-08-27; the spec decides the wording, not the code.
+- **Answered 2026-08-27** for the entry above. The human ruled that "one agent flagged, the rest of
+  the finished agents stayed silent" is AGREEMENT, so `isConflict` now keys on divergent severity
+  alone, and `emptyReason`'s third branch is `nothing-found` with new copy ("They found nothing" /
+  "Every agent that finished flagged nothing on this pull request…"). `agreed` stopped being nearly
+  unreachable in the same move: the only multi-run in the local database lands there now. Still
+  open, and deliberately NOT changed because the decision was scoped to one text —
+  `conflicts.empty.agreedBody` reads "Every shared position carries the same verdict from every
+  agent that reviewed it", which is false for exactly the case that just became agreement
+  (`[ignored, ignored, ignored, WARNING, ignored]`).
