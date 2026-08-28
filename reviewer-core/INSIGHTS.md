@@ -201,6 +201,96 @@ routes to varies per request, so it fails intermittently.
 whether the raw text was empty **before** touching the Zod schema: the final `throw` is the
 loop's exit, not a diagnosis.
 
+### A verbatim, correctly-copied MULTI-LINE quote was silently dropped 100% of the time since the quote feature shipped
+
+**Symptom.** Investigating Performance Reviewer's near-zero recall (2026-08-24), a diagnostic
+script that called `reviewPullRequest` directly (bypassing the batch executor, which discards
+`outcome.dropped` down to a bare count) showed the model repeatedly reporting a real, correctly
+located finding — right file, right lines, and a `quote` that was, byte for byte, an exact copy of
+3-4 real diff lines — and grounding dropping every one of them with `"the quote was not found
+anywhere ... citation unverifiable"`.
+
+**Cause.** `buildLineText` (`src/grounding.ts`) maps EACH new-side line number to its OWN single
+line of text — `Map<number, string>`, one line per entry, by construction. `locateQuote` checked
+`text.includes(q)` per entry: one line's text against the FULL quote. A quote spanning more than one
+line necessarily contains an embedded `\n`, and a single line's text can never `.includes()` a
+string that itself contains a newline — so ANY multi-line quote matched ZERO lines, always, on
+every diff, for every agent, regardless of how exactly it was copied. Single-line quotes (the shape
+every existing test used — see the 2026-08-23 entry above) worked fine and hid this completely; nothing
+before this session had ever fed the gate a genuinely multi-line one. Verified live: the same case
+run 4 times before the fix dropped 3/4 (one with the leading-whitespace-trimmed variant covered
+below, two with the multi-line quote itself); the same case run 4 times after the fix kept 4/4.
+
+**Fix.** Rewrote `locateQuote` to group `buildLineText`'s per-line map into CONTIGUOUS runs of
+covered line numbers first (never joining across a gap between two hunks — a quote claiming two
+lines are adjacent when 48 unrelated lines sit between them in the real file must not heal), join
+each run's lines with `\n`, and search for the quote as a substring of the WHOLE run, mapping a hit
+back to a `{start, end}` line range instead of a single line number. `groundFindings`'s healing now
+sets `start_line`/`end_line` to that range rather than forcing both to the same point. Covered by
+two new tests in `test/grounding.test.ts`: a real multi-line heal (falsified first — failed against
+the pre-fix code with `dropped.length === 1`, passed after), and a same-shape quote that spans an
+inter-hunk gap, which must still be rejected (guards against over-correcting the fix into joining
+lines that were never actually adjacent).
+
+**A related, separate contributor to the same symptom worth knowing**, found first and partly
+addressed before the code bug was found: `Finding.quote` (`@devdigest/shared` contracts) had NO
+`.describe()` — unlike `Review.score`, which does, and which is the ONLY field in this schema that
+reached the model with any instruction about its meaning. A model given a field literally named
+`quote` and zero guidance reasonably inferred "a representative excerpt", not "an exact substring",
+and reliably produced quotes using `"..."` as an elision or dropping the first line's leading
+whitespace — cosmetically different failures with the SAME root: nothing told the model the field
+had to be copy-paste exact. Added a `.describe()` explaining the exact-copy requirement, the
+`MAX_QUOTE_CHARS` ceiling (500, `src/grounding.ts:31`), and that a failed quote drops the whole
+finding silently. This alone measurably reduced (not eliminated) the leading-whitespace variant of
+the drop before the multi-line matching bug was found underneath it — worth doing on its own
+merits, but not sufficient by itself, because it could not fix a matcher that structurally could
+never succeed on a multi-line copy no matter how exact.
+
+**Net effect, Performance Reviewer's 15-case eval set, `deepseek/deepseek-v4-flash`, 3 batches
+before vs 3 after (same agent/prompt version, nothing else changed between them):** citation_accuracy
+0%/0%/0% → 83.3%/66.7%/0%; recall 0%/14.3%/0% → 33.3%/20%/0%. Still noisy — this model drops to
+fully silent on roughly 1 run in 3-4 regardless of any fix made this session — but the ceiling moved
+for the first time all session, and this fix applies to every reviewing agent in production, not
+just the one whose eval set happened to surface it.
+
+### `OpenRouter structured output failed schema validation` throws away a genuinely correct finding one attempt short of valid
+
+**Symptom.** Security Reviewer's `ssrf-in-webhook-forwarding…` eval case, previously stable, started
+failing outright — not with a wrong finding, `actualOutput` was `{"error": "OpenRouter structured
+output failed schema validation for Review"}`. 100% reproducing on `claude-haiku-4.5` (3/3 direct
+eval-case runs, plus the batch that first surfaced it).
+
+**Cause.** `parseWithRepair` (`src/llm/structured.ts`) validates raw model text against the Zod
+schema and reprompts on failure; `openrouter.ts`'s loop runs `maxRetries + 1` attempts before giving
+up. Instrumented the loop directly (temporary `console.log` in the parse-attempt branch, gated on an
+env var, removed after) to see what the model actually sent on each attempt for this case:
+
+- Attempt 1: a full markdown security-review report — headers, bullet lists, a "Verdict" section —
+  not JSON at all. Ignored the structured-output contract entirely.
+- Attempt 2 (after reprompt): valid JSON, and the finding itself was CORRECT — right file, right
+  line range, right quote, right rationale (SSRF via `req.body.callback_url` reaching `fetch`
+  unvalidated) — but missing 4 required fields (`score` top-level; `id`, `category`, `confidence` on
+  the finding).
+- Attempt 3 (after another reprompt): added the missing fields, but `category` was a free-text label
+  ("A10 Server-Side Request Forgery") instead of the `bug|security|perf|style|test` enum, and
+  `confidence` was the string `"high"` instead of a number.
+
+Visibly converging — each attempt fixed the previous one's errors and introduced no new ones — and
+`DEFAULT_REVIEW_MAX_RETRIES` (`src/review/run.ts`) was `2`, giving exactly 3 attempts. The loop ran
+out one attempt before it would very likely have succeeded.
+
+**Fix.** Raised `DEFAULT_REVIEW_MAX_RETRIES` to `3` (4 total attempts). Re-ran the same eval case 3
+times after the change: 3/3 clean (`recall: 1, precision: 1, pass: true`), where it had been 3/3
+failed before. No test pinned the old value. Applies to every reviewing agent, the same way the
+grounding and quote-`.describe()` fixes above did — this was never Security-Reviewer-specific or
+SSRF-specific, just the case that happened to sample the failure first.
+
+**Open question, not chased further today:** WHY this model produces a full prose report on attempt
+1 instead of respecting `response_format` at all is unexplained — `require_parameters: true` should
+make OpenRouter refuse the request outright with a non-compliant provider rather than let one
+through silently. Worth a look if this pattern resurfaces on a case that wasn't fixed by one extra
+retry.
+
 ## Session Notes
 
 ### 2026-08-03
@@ -211,6 +301,42 @@ loop's exit, not a diagnosis.
   The provider (OpenRouter, `deepseek/deepseek-v4-flash`) intermittently does not answer
   large prompts at all while `/models` and short completions stay fast — so this is not a
   bug to fix upstream, it is a condition to survive.
+
+### 2026-08-23
+
+- **A finding's line-range check can pass while the line is still wrong, when the wrong
+  line sits in the same hunk as the right one.** `rangeIntersects` (`src/grounding.ts`)
+  only asks "does any covered line fall in `[start_line, end_line]`" — a coarse,
+  intentionally cheap check. Measured live on `gpt-4o-mini`: a finding cited line 9 for a
+  secret that was actually on line 10, and passed grounding anyway, because both 9 and 10
+  belong to the same hunk. The number was wrong; the gate said fine. Added `Finding.quote`
+  (optional, `@devdigest/shared`) and a second check in `groundFindings`: when a finding
+  carries a quote, `locateQuote` searches the diff's own text (re-derived from `raw`, not a
+  new adapter dependency — `core stays pure`) for a covered line containing it. A unique
+  match REPLACES the declared `start_line`/`end_line` — self-healing, not just filtering —
+  because copying text turned out to be a task the model gets right far more often than
+  counting lines: in the same live batch, the finding's `rationale` quoted line 10's exact
+  text while its own `start_line` field said 9. A quote matching zero lines drops the
+  finding (stronger signal than a bare wrong number — the model named text that is not in
+  the diff at all); a quote matching more than one line falls back to the plain check,
+  unchanged, since it cannot disambiguate on its own. Real result on the same 14-case eval
+  set, same cheap model, same clean prompt, two repeats each: precision 9-14% before this
+  existed → a stable 50%/50% after, once the prompt was also told to fill `quote`. This
+  followed two prompt-only attempts at the identical underlying problem that both made
+  metrics WORSE (see `specs/SPEC-05-eval-pipeline.md` D5a in the server package) — the
+  pattern across all three: a cheap model spends attention/accuracy budget on whatever
+  meta-task the prompt adds, and a schema field the model just has to copy into costs it
+  far less than an instruction asking it to reason about correctness of its own output.
+- **`scripts/prompt-sync.mjs`'s hand-written template-literal un-escaper didn't recognise
+  `\\` (an escaped backslash) as its own token** — only `` \` `` and `\$`. It had never been
+  exercised: no prompt before this one needed to show a literal backslash-then-backtick
+  sequence (a worked example quoting a JS template literal that itself contains a
+  backtick). Confirmed the drift it reported was a false positive by evaluating the real
+  runtime string both ways (`npx tsx -e '...'` against the actual `SECURITY_REVIEWER_PROMPT`
+  export vs. the `.md` file) before touching the script — they were already byte-identical;
+  the *comparator*, not the content, was wrong. Fixed by checking for `\\` before `` \` ``/`\$`
+  (order matters: checking backtick first desyncs the scan by one character on a
+  four-character `\\\`` sequence).
 
 ## Open Questions
 
@@ -224,3 +350,21 @@ loop's exit, not a diagnosis.
   on 2026-08-09 because the task was scoped to `rangeIntersects`; the fix needs a policy decision
   (clamp `newLines` to the lines actually parsed, or drop the fallback and treat an empty hunk as
   covering nothing).
+
+- **Narrower scope per model call measurably raises recall on the categories it stays inside —
+  validated 2026-08-23, not yet built.** After the quote-grounding and skill fixes plateaued
+  `gpt-4o-mini` at 5 consistently-missed `must_find` cases (open redirect, two race conditions, a
+  missing-auth endpoint, a data-exposure-via-logging case), a one-off test swapped Security
+  Reviewer's system prompt for a narrow specialist scoped to exactly three categories
+  (concurrency/TOCTOU, missing auth, sensitive-data exposure) and ran it against the same 14
+  cases. Two of the four in-lane cases (`checkout.ts`, `server.ts`) passed for the first time all
+  session; the other two (a TOCTOU in `simple-git.ts`, a race condition in `skills/service.ts`)
+  still missed even narrowed. Out-of-lane cases were pooled-metric noise by construction (the
+  specialist correctly reports nothing on SSRF/secrets/open-redirect, which is not what the pooled
+  recall/precision on the full 14-case set means to measure) — the batch's pooled numbers from that
+  run are not comparable to any other run in this file and were not recorded as a result.
+  **Deliberately not built as a real capability**, on the human's explicit call: doing this for real
+  means N model calls per review instead of one (cost), a way to express more than one prompt per
+  agent (today `agents.system_prompt` is one column — a schema change), and it would change every
+  real PR review by an agent using it, not just eval batches. Left as a validated hypothesis for
+  whoever picks up multi-pass review next, not a half-built path in the executor.

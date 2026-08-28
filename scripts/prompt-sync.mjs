@@ -57,9 +57,20 @@ function seedLiteral(source, name) {
     const ch = source[i];
     if (ch === "\\") {
       const next = source[i + 1];
-      // Only the two sequences a template literal forces us to escape are
-      // un-escaped here. Anything else keeps its backslash, so a prompt that
-      // one day contains a real `\n` two-character sequence is not corrupted.
+      // `\\` must be checked BEFORE `` \` `` / `\$`: a doc quoting a template
+      // literal that itself contains a backtick needs an escaped backslash
+      // *followed by* an escaped backtick (source `\\\``, four characters, for
+      // one literal `\` + one literal backtick) — checking `` \` `` first would
+      // consume the first two of those four chars as "an escaped backtick" and
+      // desync the rest of the scan by one character.
+      if (next === "\\") {
+        out += "\\";
+        i += 2;
+        continue;
+      }
+      // The two sequences a template literal otherwise forces us to escape.
+      // Anything else keeps its backslash, so a prompt that one day contains a
+      // real `\n` two-character sequence is not corrupted.
       if (next === "`" || next === "$") {
         out += next;
         i += 2;

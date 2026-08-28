@@ -316,6 +316,36 @@ vi.mock("next/navigation", () => ({
 is that open → Esc → "focus is back on the title" is ONE test over the real loop instead of three
 over its pieces, and `nav.replace.mock.calls` still holds the URL for a separate assertion.
 
+### Verifying a client-only screen: `curl` the API first, then strip `<script>` from the page HTML
+
+Every screen here is `"use client"` with TanStack Query, so `curl http://localhost:3000/<route>`
+returns the shell plus skeletons — never the data branch. Two habits make that curl worth doing
+anyway, and both were learned the hard way on 2026-08-23 building `/evals`:
+
+**1. Grepping the raw HTML gives false positives.** `next-intl` serializes the whole message
+namespace into a `<script>` tag on the page, so `grep -c "No eval cases yet" page.html` returned 1
+for a screen that was rendering a `Skeleton` — the match was the dictionary, not the DOM. Strip
+scripts before believing a grep:
+
+```py
+h = re.sub(r'<script[\s\S]*?</script>', '', open('page.html').read())
+print(re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', h)).strip())
+```
+
+What survives is real: the sidebar (so a new `nav.ts` row and its `nav.<key>` label are verifiable
+this way), the breadcrumb, the page header, static toolbar controls and `<option>` labels. That
+last one is how the missing message key in the entry below was found.
+
+**2. `curl` every API route the screen consumes, one by one.** The page renders 200 whether or not
+the data call works — the failure lands in the browser, after hydration. On this branch
+`GET /agents/:id/eval-dashboard` answered 200 with no query and **500 with any `from`**, so the
+screen's default state was broken while its RTL suite was green against fixtures. One line per
+route finds that in seconds:
+
+```sh
+curl -s -m 5 -w " [%{http_code}]\n" "http://localhost:3001/agents/$A/eval-dashboard?from=2026-07-24T00:00:00.000Z"
+```
+
 
 ## What Doesn't Work
 
@@ -1054,6 +1084,42 @@ but the opposite one. 4 of 93 dev `agent_runs` rows carry a null `duration_ms`, 
 `parallelSpeedup` in `app/repos/[repoId]/multi-agent/[multiRunId]/_components/MultiRunView/helpers.ts`
 hides on incomplete data instead. Before copying the `≥` pattern onto a new number, ask whether its
 bound can cross a value that flips the sentence's meaning.
+
+### Building a `next-intl` key by interpolation — a missing key renders as its own path, silently
+
+**Symptom.** The eval agent page shipped a date-range `<select>` whose options read
+`eval.dashboard.range.7d`, `eval.dashboard.range.30d`, `eval.dashboard.range.90d` — the literal
+key paths — in a running browser, on 2026-08-23. `pnpm lint`, `pnpm typecheck` and the component's
+own RTL suite were all green.
+
+**Cause.** The option list was built as ``t(`dashboard.range.${key}`)`` over the URL values
+`["7d","30d","90d","all"]`, while `messages/en/eval.json` spells them `d7`, `d30`, `d90`, `all` —
+a JSON key that starts with a digit reads badly beside its siblings, so the two vocabularies were
+never the same. `t()` does not throw on a miss; it returns the full path as the string. `all` was
+the one that happened to line up, which is why the bug looked like a styling glitch rather than a
+systematic one.
+
+**Why no gate caught it.** The `t()` call had to be cast (`as "dashboard.range.d7"`) to typecheck
+at all — the cast *is* the warning, and it was written off as next-intl's typing being awkward.
+The RTL assertion was `expect(select).toHaveValue("30d")`, which reads the option's **value**; the
+label was wrong and the value was right. Nothing in lint, tsc or RTL looks at option text unless
+you ask it to.
+
+**Fix.** Never interpolate a message key. Store it beside the value it belongs to and index the
+pair — the same shape `STATE_ICON` in `EvalsTab.tsx` uses for `passed` / `failed` / `neverRun`,
+where `never` and `neverRun` differ for the same reason:
+
+```ts
+export const RANGES = [
+  { key: "7d", labelKey: "dashboard.range.d7" },
+  …
+] as const;
+```
+
+Two assertions keep it out, and both fail on the regression: `getByRole("option", { name: "30 days" })`
+in the component test, and a loop in `app/evals/_components/format.test.ts` that resolves every
+`labelKey` against the imported `messages/en/eval.json`. The second is the cheap one — it needs no
+render and catches the same class of bug for any table of `{ value, labelKey }` pairs.
 
 ## Codebase Patterns
 
@@ -2939,6 +3005,12 @@ an untouched `finding.replyWarnAgentText`.
 identical and the diff still makes a reviewer ask what else moved.
 **Fix.** Insert new keys textually, or diff after writing and restore any line you did not mean to
 change. `git diff --stat` on the message file should report exactly the keys you added.
+*Recurred 2026-08-23.* Adding `useRouter` to `FindingsPanel` (for «Turn into eval case») broke
+16 tests across two files — its own, and `FindingsTab.test.tsx`, which renders it two levels down
+and mocks only `lib/hooks/reviews`. The grep above finds the first file and misses the second: a
+component that mounts the changed one transitively has no `next/navigation` mock to extend, so
+there is nothing to grep for. The reliable move after touching a mid-tree component is
+`pnpm test` over the whole suite rather than the file you edited — 17s here, and it named both.
 
 ## Open Questions
 

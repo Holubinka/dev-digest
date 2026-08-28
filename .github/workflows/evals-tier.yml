@@ -1,0 +1,140 @@
+# One model-run eval tier, on OpenRouter through the bundled LiteLLM proxy. Reusable: the three
+# tier workflows (evals-skills, evals-agents, evals-workflow) each call it with their own `tier`,
+# so the proxy dance, the baseline restore and the report are written once rather than three times.
+#
+# Advisory by construction. `continue-on-error` lives on the job below — a job that calls a
+# reusable workflow cannot declare it, and this is the one place the "never blocks a merge"
+# decision belongs anyway. Promote a tier by removing it here, deliberately, for all three.
+#
+# The secret: OPENROUTER_API_KEY reaches this workflow through `secrets: inherit` in the caller.
+# GitHub never exposes it to a fork PR under the plain `pull_request` trigger the callers use
+# (NOT `pull_request_target` — that would). The job checks for it itself and skips cleanly rather
+# than failing on an auth error.
+name: evals · model-run tier
+
+on:
+  workflow_call:
+    inputs:
+      tier:
+        description: 'Which suite to run — skills | agents | workflow. Also names the baseline (evals/baselines/<tier>.json) and the run label.'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  tier:
+    name: ${{ inputs.tier }} (advisory — never required)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # hard budget backstop; eval:repeat itself caps -n at 2
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: evals
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # the recalibration warning below diffs against the merge base
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: evals/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Check the model-tier secret is available
+        id: secret
+        run: echo "ok=${{ secrets.OPENROUTER_API_KEY != '' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Skip note (no secret — expected on a fork PR)
+        if: steps.secret.outputs.ok != 'true'
+        run: |
+          {
+            echo "### Model-run evals skipped — ${{ inputs.tier }}"
+            echo "No \`OPENROUTER_API_KEY\` in this run — expected on a fork PR, since the"
+            echo "secret is never exposed to one under the \`pull_request\` trigger. The"
+            echo "\`quality\` job is unaffected and is still the only blocking check."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Start the LiteLLM proxy
+        if: steps.secret.outputs.ok == 'true'
+        run: docker compose -f proxy/docker-compose.yml up -d
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+
+      - name: Wait for the proxy
+        if: steps.secret.outputs.ok == 'true'
+        run: pnpm proxy:wait
+
+      - name: Restore this tier's committed baseline
+        if: steps.secret.outputs.ok == 'true'
+        run: |
+          mkdir -p results
+          f="baselines/${{ inputs.tier }}.json"
+          if [ -e "$f" ]; then
+            cp "$f" "results/repeat-baseline-${{ inputs.tier }}.json"
+          else
+            echo "no committed baseline at evals/$f — this run publishes raw results only"
+          fi
+
+      - name: Run the tier
+        if: steps.secret.outputs.ok == 'true'
+        env:
+          EVAL_BACKEND: openrouter
+          OPENROUTER_BASE_URL: http://localhost:4000
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          EVAL_MODEL: google/gemini-2.5-flash
+          EVAL_JUDGE_MODEL: google/gemini-2.5-flash
+        run: pnpm eval:repeat "${{ inputs.tier }}" -n 2 --label "candidate-${{ inputs.tier }}"
+
+      - name: Publish report + baseline comparison
+        if: steps.secret.outputs.ok == 'true'
+        run: |
+          name="${{ inputs.tier }}"
+          f="results/repeat-candidate-$name.json"
+          strip_ansi() { sed -E 's/\x1b\[[0-9;]*m//g'; }
+          {
+            echo "## Eval report — $name"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ ! -f "$f" ]; then
+            echo "(the run produced no results/repeat-candidate-$name.json)" >> "$GITHUB_STEP_SUMMARY"
+          elif [ -f "results/repeat-baseline-$name.json" ]; then
+            pnpm eval:delta "baseline-$name" "candidate-$name" 2>&1 | strip_ansi >> "$GITHUB_STEP_SUMMARY" || true
+          else
+            echo "(no committed baseline at evals/baselines/$name.json — raw results only)" >> "$GITHUB_STEP_SUMMARY"
+            strip_ansi < "$f" >> "$GITHUB_STEP_SUMMARY" || true
+          fi
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Warn when the harness or a grader itself changed
+        if: steps.secret.outputs.ok == 'true'
+        working-directory: ${{ github.workspace }}
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          [ -n "$BASE" ] || BASE="${{ github.event.before }}"
+          case "$BASE" in "" | 0000000000000000000000000000000000000000) exit 0 ;; esac
+          git diff --name-only "$BASE" HEAD | grep -q '^evals/src/' || exit 0
+          {
+            echo ""
+            echo "### ⚠️ evals/src changed"
+            echo "A grader or the harness changed — \`evals/baselines/${{ inputs.tier }}.json\` may no"
+            echo "longer be comparable to this run. Recalibrate:"
+            echo '`pnpm eval:repeat ${{ inputs.tier }} -n 2 --label ${{ inputs.tier }}`, then commit the JSON.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Through the wrapper, not `docker compose down` directly: compose interpolates the
+      # `environment:` block even on `down`, so the raw command hits
+      # `${OPENROUTER_API_KEY:?...}` and fails after the tier has already passed. The first live
+      # run (2026-08-27) failed exactly here on all three tiers. litellm-proxy.sh substitutes a
+      # placeholder for the teardown, which is the whole reason it exists.
+      - name: Tear down the proxy
+        if: always() && steps.secret.outputs.ok == 'true'
+        run: pnpm proxy:down

@@ -221,6 +221,28 @@
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 
+/* The eval case editor: the fixed input on the left, the expectations on the
+   right. `minmax(0, 1fr)` for the same reason as the overview cards — both
+   columns hold mono text with unbreakable tokens (a diff line, a JSON string),
+   and a plain `1fr` keeps `min-width: auto` and refuses to shrink under them.
+   `grid-template-columns` lives here and not in `styles.ts` because 900px
+   collapses it to one column; left inline it would win over the media query. */
+.dd-eval-case-cols {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+/* The compare modal's four old→new tiles: one row of four until 680px. */
+.dd-eval-compare-tiles {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+/* The eval dashboard's agent card: name and last-run line on the left, trend
+   and the three metrics on the right — until 680px, where they stack. */
+.dd-eval-agent-card {
+  flex-direction: row;
+  align-items: center;
+}
+
 /* The PR Brief's disclosures — a risk row's explanation, and the "N more"
    overflow under RISK AREAS and REVIEW FOCUS. A native <details> is the cheapest
    keyboard-reachable disclosure there is and needs no state, but its default
@@ -408,6 +430,14 @@
   .dd-card-actions > * {
     flex: 1;
   }
+  /* Four metric tiles in one row give each about 200px, which the 32px value
+     plus its delta overflows. Two-up keeps every number on one line. */
+  .dd-eval-metric-row {
+    flex-wrap: wrap;
+  }
+  .dd-eval-metric-row > * {
+    flex: 1 1 calc(50% - 7px);
+  }
 }
 
 @media (max-width: 680px) {
@@ -429,6 +459,22 @@
   .dd-card-meta {
     flex-wrap: wrap;
     row-gap: 8px;
+  }
+  /* The case editor's two columns one above the other: a diff and a JSON
+     expectation list side by side on a phone leave neither readable. */
+  .dd-eval-case-cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* The agent card's sparkline and three metrics drop under the name rather
+     than squeezing the name to two characters. */
+  .dd-eval-agent-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  /* Four old→new tiles two-up: `78% → 82% ▲4pt` needs about 160px to stay on
+     one line, and four across a phone gives it 70. */
+  .dd-eval-compare-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   /* A 360px list beside a reader leaves neither readable on a phone. */
   .dd-context-panes {

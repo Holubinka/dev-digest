@@ -2,7 +2,7 @@ import type { CSSProperties } from "react";
 
 /** Co-located styles for FindingCard (extracted from inline styles). */
 export const s = {
-  card: (focused: boolean, sevColor: string, muted: boolean): CSSProperties => ({
+  card: (focused: boolean, sevColor: string): CSSProperties => ({
     borderRadius: 8,
     // Every border colour and width is PER SIDE. `borderColor` and `borderWidth`
     // look like longhands next to `border`, but they are themselves shorthands
@@ -22,17 +22,31 @@ export const s = {
     borderLeftColor: sevColor,
     background: "var(--bg-elevated)",
     overflow: "hidden",
-    opacity: muted ? 0.6 : 1,
-    transition: "opacity .2s, border-color .12s, box-shadow .12s",
+    transition: "border-color .12s, box-shadow .12s",
     boxShadow: focused ? "0 0 0 1px " + sevColor : "none",
   }),
-  header: {
+  /**
+   * `opacity` used to live on `card` and dim the WHOLE card once decided —
+   * Accept/Dismiss included. Nothing there is actually `disabled`: a decided
+   * finding can still switch decisions (accept → dismiss and back) and the
+   * server accepts it every time, but a faded button reads as an inert one.
+   * Applied to `header` and `contentFade` only, never to `actions`, so a
+   * decided finding still visually de-emphasizes its title and body while its
+   * buttons stay full-opacity and obviously clickable.
+   */
+  header: (muted: boolean): CSSProperties => ({
     display: "flex",
     alignItems: "flex-start",
     gap: 12,
     padding: "14px 16px",
     cursor: "pointer",
-  } satisfies CSSProperties,
+    opacity: muted ? 0.6 : 1,
+    transition: "opacity .2s",
+  }),
+  contentFade: (muted: boolean): CSSProperties => ({
+    opacity: muted ? 0.6 : 1,
+    transition: "opacity .2s",
+  }),
   badgeWrap: { paddingTop: 1 } satisfies CSSProperties,
   headerMain: { flex: 1, minWidth: 0 } satisfies CSSProperties,
   titleRow: {

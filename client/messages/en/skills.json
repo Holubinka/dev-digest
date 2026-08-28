@@ -41,7 +41,8 @@
       "preview": "Preview",
       "context": "Project Context",
       "versions": "Versions",
-      "stats": "Stats"
+      "stats": "Stats",
+      "evals": "Evals"
     }
   },
   "create": {
@@ -190,5 +191,16 @@
     "noRate": "nothing judged yet",
     "unused": "No agent binds this skill yet, so there is nothing to count.",
     "loadError": "Could not load the stats."
+  },
+  "evals": {
+    "heading": "Cases this skill affected",
+    "hint": "Every eval case, across every agent, whose most recent run had this skill active. A case last run before this skill was bound, or never run at all, carries no record of it and is not listed here.",
+    "passingBadge": "{passing} / {total} passing",
+    "empty": "No eval case has this skill active in its last run yet.",
+    "emptyHint": "Bind this skill to an agent, then run that agent's eval set — a run that used the skill will show up here.",
+    "expectedGot": "expected {expected, plural, one {# finding} other {# findings}}, got {got}",
+    "passed": "passed",
+    "failed": "failed",
+    "loadError": "Could not load this skill's eval cases."
   }
 }

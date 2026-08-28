@@ -19,6 +19,9 @@ vi.mock("@/lib/hooks/skills", () => ({
   useSkillVersions: () => ({ data: [], isLoading: false, isError: false }),
   useRestoreSkillVersion: () => ({ mutate: vi.fn(), isPending: false }),
 }));
+vi.mock("@/lib/hooks/eval", () => ({
+  useSkillEvalCases: () => ({ data: { cases: [], passing: 0, total: 0 }, isLoading: false, isError: false }),
+}));
 
 import { SkillDetail } from "./SkillDetail";
 
@@ -109,6 +112,13 @@ describe("SkillDetail", () => {
     renderDetail();
     fireEvent.click(screen.getByText("Preview"));
     expect(nav.replace).toHaveBeenCalledWith("/skills/sk1?tab=preview");
+  });
+
+  it("renders the Evals tab's own content when selected, not another tab's", () => {
+    nav.params = new URLSearchParams("tab=evals");
+    renderDetail();
+    expect(screen.getByText("Cases this skill affected")).toBeInTheDocument();
+    expect(screen.queryByText("Save skill")).not.toBeInTheDocument();
   });
 
   it("falls back to Config when ?tab= names something that does not exist", () => {

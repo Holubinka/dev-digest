@@ -6,9 +6,13 @@ import React from "react";
 import { useTranslations } from "next-intl";
 import { Toggle, EmptyState } from "@devdigest/ui";
 import type { FindingRecord } from "@devdigest/shared";
+import { useRouter } from "next/navigation";
 import { FindingCard } from "@/components/finding-card";
 import type { SeverityLevel } from "../SeverityFilterBar";
 import { useFindingAction } from "@/lib/hooks/reviews";
+// The eval hooks module directly, never `lib/hooks` — that barrel is `export *`
+// over five domains, and this panel needs one mutation out of one of them.
+import { useEvalCaseFromFinding } from "@/lib/hooks/eval";
 import { KEY_TO_ACTION } from "./constants";
 import { visibleFindings } from "./helpers";
 import { s } from "./styles";
@@ -37,9 +41,24 @@ export function FindingsPanel({
   active?: boolean;
 }) {
   const t = useTranslations("prReview");
+  const router = useRouter();
   const action = useFindingAction();
+  const toEvalCase = useEvalCaseFromFinding();
   const [hideLow, setHideLow] = React.useState(false);
   const [focusIdx, setFocusIdx] = React.useState(0);
+
+  /**
+   * `created: false` is not an error — it means this finding already has a case,
+   * and the second click must land on it rather than report a conflict (AC-10).
+   * Both outcomes therefore navigate to the same place: the owning agent's Evals
+   * tab, with the case open. `owner_id` comes back on the case, so this panel
+   * never has to know which agent produced the finding.
+   */
+  const turnIntoEvalCase = (findingId: string) =>
+    toEvalCase.mutate(findingId, {
+      onSuccess: ({ case: c }) =>
+        router.push(`/agents/${c.owner_id}?tab=evals&case=${encodeURIComponent(c.id)}`),
+    });
 
   const shown = React.useMemo(
     () => visibleFindings(findings, hideLow, severity),
@@ -115,6 +134,8 @@ export function FindingsPanel({
               repoFullName={repoFullName}
               headSha={headSha}
               onAction={(act) => action.mutate({ findingId: f.id, action: act, prId })}
+              onTurnIntoEvalCase={() => turnIntoEvalCase(f.id)}
+              evalCasePending={toEvalCase.isPending && toEvalCase.variables === f.id}
             />
           ))
         )}

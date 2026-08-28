@@ -1,0 +1,50 @@
+# Workflow tier — the systemic evals (`pnpm eval:repeat workflow`): does CLAUDE.md route a task to
+# the right doc, does a skill actually activate, does a subagent actually get dispatched. It loads
+# the real on-disk harness (`settingSources: ["project"]`), so its inputs are the routing documents
+# themselves, not a skill or agent body.
+#
+# One workflow per tier on purpose. Skills, agents and workflow evals are re-run, muted and read
+# independently — a single evals.yml made every one of those touch the other two, and routed with
+# a `Detect what changed` bash step that parsed a diff at runtime. That routing is now the `paths:`
+# filter below: GitHub decides whether this tier is relevant before a runner starts. `CLAUDE.md` is
+# a symlink to `AGENTS.md` in every package here, which is why both spellings are listed.
+#
+# The blocking gate and the model run live in reusable workflows shared with the other two tiers,
+# so the split costs no duplicated YAML: evals-quality.yml and evals-tier.yml.
+name: evals · workflow
+
+on:
+  push:
+    branches: [main]
+    paths: &workflow_paths
+      - 'CLAUDE.md'
+      - 'AGENTS.md'
+      - '*/AGENTS.md'
+      - 'evals/workflow/**'
+      - 'evals/src/**'
+      - 'evals/baselines/workflow.json'
+      - 'evals/package.json'
+      - 'evals/pnpm-lock.yaml'
+      - '.github/workflows/evals-workflow.yml'
+      - '.github/workflows/evals-quality.yml'
+      - '.github/workflows/evals-tier.yml'
+  pull_request:
+    paths: *workflow_paths
+
+permissions:
+  contents: read
+
+concurrency:
+  group: evals-workflow-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    uses: ./.github/workflows/evals-quality.yml
+
+  model-run:
+    needs: quality
+    uses: ./.github/workflows/evals-tier.yml
+    with:
+      tier: workflow
+    secrets: inherit

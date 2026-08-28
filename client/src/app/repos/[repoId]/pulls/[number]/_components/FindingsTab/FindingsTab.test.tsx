@@ -23,6 +23,12 @@ vi.mock("../../../../../../../lib/hooks/reviews", () => ({
   useDeleteReview: () => ({ mutate: vi.fn(), isPending: false }),
   useRunEvents: () => ({ events: [], running: false }),
 }));
+// `FindingsPanel` also owns «Turn into eval case», which lands on the owning
+// agent's Evals tab — so it reads the router, and jsdom has no App Router.
+vi.mock("../../../../../../../lib/hooks/eval", () => ({
+  useEvalCaseFromFinding: () => ({ mutate: vi.fn(), isPending: false, variables: undefined }),
+}));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 
 import { FindingsTab } from "./FindingsTab";
 
