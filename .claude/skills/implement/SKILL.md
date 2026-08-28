@@ -59,7 +59,31 @@ that change worse, not safer.
    landed — tables that migrate but stay empty, contracts nobody constructs, registry entries
    with zero callers. One grep separates "how would this work" from the far cheaper "what is
    already wired". Hand what it found to every agent you dispatch, so none of them pays to
-   rediscover it.
+   rediscover it — as **shapes, not names**: "`formatCost` exists" saves a search, "`Agent` has
+   `description` and no icon field" saves a decision round-trip after the component is written.
+3. **Every factual claim you put in a dispatch is read from the file as you write it**, and carries
+   its `path:line`. Not from an `INSIGHTS.md` entry, not from the spec's summary of a file, not
+   from a grep over one directory — those are the three stale sources that produced five false
+   premises on the SPEC-05 run, each costing an agent a round of archaeology. Anything you cannot
+   address, write as a hypothesis in those words. `.claude/agents/README.md` § *Five habits* has
+   the measurement.
+4. **A design is transcribed once, before any dispatch, and the transcription is what the briefs
+   carry.** Four PNGs cost nineteen agent reads on SPEC-05 and a design walk written late did not
+   stop it — because every rule downstream tells an agent to distrust prose about a layout, rightly.
+   So it must not be prose. Open each image yourself and write the five-axis walk of
+   `client/AGENTS.md` § *A design is an acceptance criterion* — placement and hierarchy, the shape
+   of each value, every label in the design's own words, what each element does, what the design
+   shows that the contract cannot express — to `specs/assets/<SPEC>-DESIGN-WALK.md`, beside the
+   image. From then on that file is the design.
+   - **Intake first.** A subagent cannot see the conversation, so an image pasted into chat reaches
+     nobody. Save it to `specs/assets/<SPEC>-<element>.png` *before* the walk and refer to it by
+     that path forever after.
+   - **Route it.** The walk goes only into briefs for packages that own client files. A server
+     package gets no design at all, and given how many agents opened those PNGs, that alone is most
+     of the saving.
+   - **Let it heal.** An agent may open the image when the walk cannot answer its question — and
+     when it does it appends the missing row and says so. That makes the Nth read the last one
+     rather than the first of many.
 
 ## 3. Stage 1 — build
 
@@ -70,6 +94,21 @@ section closes with. Packages that neither block the other go in **one message**
 run concurrently. Give each agent its package id and nothing else — its own `### PN` block carries
 the contract it may assume, and the planner repeated it there precisely so no agent has to read
 another's steps.
+
+**Two or three agents in flight at once, never more, and the batch goes in one message.**
+Parallelism is a wall-clock lever, not a token one — each concurrent agent buys its own cold
+context, which is the most expensive thing a run pays for — so the cap is what stops it being
+neither. One message per batch is the token half: an orchestrator turn costs the same whether it
+dispatches one agent or three (`AGENTS.md` § *What a session costs*). A fourth package waits for a
+slot, and a plan with five simultaneously independent packages usually means the contract between
+them was never fixed.
+
+**A follow-up change to a surface goes back to the agent that built it.** `SendMessage` to that
+implementer, never a fresh dispatch: measured on SPEC-05, the resumed UI implementer did 393 turns
+of work with 34 scouting calls where a fresh one did 273 with 67. A cold agent buys the whole
+"where does everything live" pass again, and that pass is most of what a run pays for. Before you
+send, sweep the whole screen the request came from — half the resumes on that run were things
+already visible when the previous one was sent.
 
 ## 4. Stage 2 — run it
 
@@ -126,7 +165,10 @@ a careful diff, not a review that failed.
 ## 8. Stage 6 — close
 
 `doc-writer`, only when something shipped that a reader will need — it documents mechanisms, not
-every change.
+every change. **Say in your final report whether you dispatched it**, and when you did not, name
+the mechanism you judged nobody would have to read. SPEC-05 shipped a whole multi-agent review
+feature and dispatched none: not one of its 23 agents wrote a line under `docs/`, and because the
+skip was never stated, nobody got to disagree with it.
 
 Then run the `engineering-insights` skill for the session as a whole. Each agent recorded its own;
 what is left is what only you saw, crossing the stages.
@@ -175,3 +217,16 @@ else.
 run on `sonnet` because their output is advisory — a human reads every row and decides.
 `implementer` and `plan-verifier` stay on `opus` because their failures are silent: code that
 compiles and is wrong, and a `MET` row for something that never happened.
+
+**`effort` is that decision one notch finer, and every agent now states it** — `medium` on the
+three advisory ones, `high` on the five that produce code, a plan, a spec, a test or a verdict.
+`high` there is a **ceiling, not a raise**: without the field an agent inherits the session, and
+SPEC-05 ran **20 of its 23 agents at `xhigh`** for exactly that reason — not one of them declared
+an effort. Do not lower those five hoping to save tokens.
+Effort prices *thinking*, and thinking is not where a run's money goes: SPEC-05 produced 386 k
+output tokens against 477 M re-read: the model tier prices both, effort only the first.
+
+**The per-dispatch override is the cut that costs nothing.** `Agent`'s `model` parameter beats the
+frontmatter for one call, so mechanical work can drop a tier without touching the file — a fix
+round whose brief already carries `path:line`, the rule and the shape that satisfies it leaves
+little to reason about. Say in your report which dispatches you downgraded.

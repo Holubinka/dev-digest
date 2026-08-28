@@ -57,9 +57,18 @@ jobs:
         working-directory: reviewer-core
         run: npm ci
 
-      # Inlined rather than `pnpm test:integration`: server/package.json is
-      # skip-worktree, so we don't rely on the committed file carrying the split
-      # script. The `.it.test` filter selects exactly the 12 DB-backed files.
+      # `pnpm test:it`, not an inlined vitest call. The script carries
+      # `--no-file-parallelism`, and that flag is the difference between a green
+      # suite and an intermittent one: there are 23 `*.it.test.ts` files, each
+      # starts its own Postgres container, and in parallel they starve each other
+      # — measured 2026-08-28, three consecutive parallel runs failed on three,
+      # five and one test respectively, never the same names, while serial passed
+      # 197/197 twice. Inlining the command here is how the flag gets lost.
+      #
+      # (The older comment here said package.json was skip-worktree and could not
+      # be relied on. `git ls-files -v` reports `H` — it is an ordinary tracked
+      # file, and has been for long enough that nobody noticed.)
+      #
       # vitest's config gives these a 120s timeout for container spin-up; no API
       # keys needed — LLM/git are mocked.
-      - run: pnpm exec vitest run .it.test
+      - run: pnpm test:it

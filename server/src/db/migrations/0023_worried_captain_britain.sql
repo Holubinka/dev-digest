@@ -1,0 +1,2 @@
+DROP INDEX "agent_runs_ws_agent_ran_idx";--> statement-breakpoint
+CREATE INDEX "agent_runs_ws_agent_done_ran_idx" ON "agent_runs" USING btree ("workspace_id","agent_id","ran_at" DESC NULLS LAST) WHERE "agent_runs"."status" = 'done';

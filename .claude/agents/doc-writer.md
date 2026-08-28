@@ -4,6 +4,7 @@ description: Turns work that has already shipped into one document in the right 
 tools: Read, Grep, Glob, Edit, Write, Bash, Skill
 skills: mermaid-diagram
 model: sonnet
+effort: medium
 color: blue
 ---
 

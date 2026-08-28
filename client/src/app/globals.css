@@ -490,3 +490,62 @@
     height: auto;
   }
 }
+
+/* Multi-Agent Review — the results page's two grids and the clamp on a take's
+   note. All three live here rather than in `styles.ts` for the reason at the top
+   of this section: an inline style beats a stylesheet rule whatever the
+   selector, so a property a breakpoint changes must be declared ONLY here. */
+
+/* One column per agent. `grid-auto-flow: column` with a `minmax` track means the
+   count never has to be computed: the columns share the width until each is
+   240px, and past that the grid scrolls sideways with none of them hidden
+   (AC-53). The mockup switches to `overflow-x: auto` past five agents; a track
+   floor does the same thing without a magic number. */
+.dd-multiagent-columns {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(240px, 1fr);
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+/* One cell per take of a position. The COUNT is per position and arrives as
+   `--dd-takes` from the component; the track sizing is what the breakpoint
+   changes, and it is only ever declared here. */
+.dd-take-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--dd-takes, 1), minmax(0, 1fr));
+  gap: 1px;
+  background: var(--border);
+}
+
+/* An agent's note is a sentence from a model and can be a paragraph. Three lines
+   keep the takes of one position the same height without hiding which agent said
+   something; `-webkit-line-clamp` has no inline form that also sets the box
+   display and orientation, so it belongs in one place. */
+.dd-take-note {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+
+@media (max-width: 900px) {
+  /* Four takes side by side stop being readable long before the sidebar does:
+     each cell is a name, a verdict and a sentence. Stacked, every agent's take
+     keeps the full width and the position still reads top to bottom in the
+     agents' order. */
+  .dd-take-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 680px) {
+  /* On a phone a full-width column beats four that are each 240px of a 360px
+     viewport: the reader swipes one agent at a time instead of reading slivers. */
+  .dd-multiagent-columns {
+    grid-auto-columns: minmax(240px, 92%);
+  }
+}

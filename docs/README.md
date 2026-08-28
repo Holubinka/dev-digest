@@ -17,3 +17,4 @@ README — link to it instead of copying it.
 | [`agent-prompts/`](agent-prompts/README.md) | The built-in reviewer prompts and how to choose a model |
 | [`project-context.md`](project-context.md) | How a `.md` file in a cloned repo is written, becomes text in a review prompt, and is traced afterward |
 | [`onboarding-tour.md`](onboarding-tour.md) | How a repository's index becomes a five-section tour in one grounded model call, end to end across server, contract and client |
+| [`multi-agent-review.md`](multi-agent-review.md) | How a multi-agent run fans out over one shared pre-work step, builds its disagreement section, and what that fan-out measured in wall-clock time |

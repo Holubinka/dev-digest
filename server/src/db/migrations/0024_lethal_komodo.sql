@@ -1,0 +1,1 @@
+CREATE INDEX "agent_runs_ws_pr_ran_idx" ON "agent_runs" USING btree ("workspace_id","pr_id","ran_at" DESC NULLS FIRST);

@@ -78,7 +78,7 @@ that names it. Cross-package imports resolve to a sibling's **TypeScript source*
 ## server · test
 
 ```sh
-cd server && pnpm exec vitest run --exclude '**/*.it.test.ts'
+cd server && pnpm test:unit
 ```
 
 **A failure looks like** the Vitest summary; the finding carries its last twenty lines.

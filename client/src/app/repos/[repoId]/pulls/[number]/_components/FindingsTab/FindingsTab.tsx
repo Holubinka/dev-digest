@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback } from "react";
+import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { Icon, Badge, Button, SectionLabel, EmptyState } from "@devdigest/ui";
 import { RunStatus } from "../RunStatus";
@@ -13,6 +14,15 @@ import type { FindingRecord, ReviewRecord, RunSummary, PrCommit } from "@devdige
 
 interface FindingsTabProps {
   prId: string | null;
+  /**
+   * Where this PR's multi-agent comparison lives, or null when it has none.
+   *
+   * Non-blocking on purpose (AC-88, AC-89): starting a multi-run leaves the
+   * reader on this page, and this is the only thing that tells them the
+   * comparison exists. The page resolves it from the run just started or from
+   * the server, so it is still here after a reload.
+   */
+  multiRunHref?: string | null;
   liveRunIds: string[];
   reviewRunning: boolean;
   lethalTrifecta: FindingRecord[];
@@ -35,6 +45,7 @@ interface FindingsTabProps {
 
 export function FindingsTab({
   prId,
+  multiRunHref = null,
   liveRunIds,
   reviewRunning,
   lethalTrifecta,
@@ -116,6 +127,20 @@ export function FindingsTab({
 
   return (
     <section>
+      {/* Above the live run, and OUTSIDE it: a comparison from yesterday has no
+          live run to sit beside, and that is exactly the case this link exists
+          for. */}
+      {multiRunHref && (
+        <div style={s.multiRunLink}>
+          <Icon.Users size={15} style={{ color: "var(--accent)", flexShrink: 0 }} />
+          <span style={s.multiRunHint}>{t("multiRun.hint")}</span>
+          <Link href={multiRunHref} style={s.multiRunAnchor}>
+            {t("multiRun.open")}
+            <Icon.ArrowRight size={13} />
+          </Link>
+        </div>
+      )}
+
       {liveRunIds.length > 0 && (
         <div style={s.liveRunSection}>
           <SectionLabel

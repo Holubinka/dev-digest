@@ -55,6 +55,22 @@ export const NAV: NavGroup[] = [
       { key: "eval", label: "Eval Dashboard", icon: "Gauge", href: "/evals", gKey: "e" },
     ],
   },
+  {
+    // GLOBAL carries ONE row, not the four the mockup draws
+    // (`specs/assets/SPEC-05-multi-agent-review-configure-run.png` also shows
+    // Memory, Agent Performance and CI Runs). AC-90 asks for the single row and
+    // SPEC-05 § N7 puts the other three out of scope — they lead nowhere yet.
+    section: "GLOBAL",
+    items: [
+      // `key: "multi-agent"` is not a free choice: `activeKeyFor()`
+      // (`components/app-shell/helpers.ts:29`) already returns "multi-agent" for
+      // any /multi-agent path and `messages/en/shell.json` already holds
+      // `nav.multi-agent`, while the sidebar label is `t(`nav.${it.key}`)`. Any
+      // other key renders an untranslated row that never lights (AC-91). `g m`
+      // because p, o, d, s, a, c and , are taken.
+      { key: "multi-agent", label: "Multi-Agent Review", icon: "Users", href: "/repos/:repoId/multi-agent", gKey: "m" },
+    ],
+  },
 ];
 
 export const SETTINGS_ITEM: NavItemDef = {
@@ -94,6 +110,7 @@ export const SHORTCUTS: ShortcutDef[] = [
   { keys: "g s", label: "Go to Skills", group: "Navigation" },
   { keys: "g a", label: "Go to Agents", group: "Navigation" },
   { keys: "g c", label: "Go to Conventions", group: "Navigation" },
+  { keys: "g m", label: "Go to Multi-Agent Review", group: "Navigation" },
   { keys: "g e", label: "Go to Eval Dashboard", group: "Navigation" },
   { keys: "j / k", label: "Next / previous finding", group: "Findings" },
   { keys: "a", label: "Accept finding", group: "Findings" },

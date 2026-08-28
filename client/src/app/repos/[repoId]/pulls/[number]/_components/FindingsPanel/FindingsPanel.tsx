@@ -7,12 +7,12 @@ import { useTranslations } from "next-intl";
 import { Toggle, EmptyState } from "@devdigest/ui";
 import type { FindingRecord } from "@devdigest/shared";
 import { useRouter } from "next/navigation";
-import { FindingCard } from "../FindingCard";
+import { FindingCard } from "@/components/finding-card";
 import type { SeverityLevel } from "../SeverityFilterBar";
-import { useFindingAction } from "../../../../../../../lib/hooks/reviews";
+import { useFindingAction } from "@/lib/hooks/reviews";
 // The eval hooks module directly, never `lib/hooks` — that barrel is `export *`
 // over five domains, and this panel needs one mutation out of one of them.
-import { useEvalCaseFromFinding } from "../../../../../../../lib/hooks/eval";
+import { useEvalCaseFromFinding } from "@/lib/hooks/eval";
 import { KEY_TO_ACTION } from "./constants";
 import { visibleFindings } from "./helpers";
 import { s } from "./styles";

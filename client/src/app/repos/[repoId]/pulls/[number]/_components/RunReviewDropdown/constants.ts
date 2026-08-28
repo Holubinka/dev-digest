@@ -1,4 +1,5 @@
 /** Constants for RunReviewDropdown. */
 
-/** Dropdown menu width (px). */
-export const DROPDOWN_WIDTH = 250;
+/** Popover width (px). Wider than the old command list: each row is a checkbox
+    carrying an agent name and its model. */
+export const MENU_WIDTH = 300;

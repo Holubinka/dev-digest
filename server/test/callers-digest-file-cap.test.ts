@@ -84,6 +84,10 @@ function harness(spy: ReturnType<typeof repoIntelSpy>, fileCount: number) {
   } as unknown as Container;
 
   const repo = {
+    // `executeRuns` claims the row before it runs the job — a stub without this
+    // returns undefined, the claim reads as lost, and the job exits before it
+    // logs anything. Added when the multi-agent branch introduced the claim.
+    startAgentRun: async () => true,
     insertReview: async () => ({ id: 'rev-1' }),
     insertFindings: async () => [],
     markReviewed: async () => undefined,

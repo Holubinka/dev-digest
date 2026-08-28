@@ -9,6 +9,8 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
+    "test:unit": "vitest run --exclude '**/*.it.test.ts'",
+    "test:it": "vitest run .it.test --no-file-parallelism",
     "verify:l03": "vitest run test/smart-diff.test.ts",
     "verify:l06": "vitest run test/eval-scoring.test.ts test/eval-fragment.test.ts test/eval-batch.test.ts",
     "arch": "depcruise src --config --ignore-known",
