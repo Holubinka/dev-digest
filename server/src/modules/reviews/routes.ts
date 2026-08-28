@@ -1,12 +1,13 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { RunRequest } from '@devdigest/shared';
+import { MultiAgentRunRequest, RunRequest } from '@devdigest/shared';
 import type { RunEvent } from '@devdigest/shared';
 import { getContext } from '../_shared/context.js';
 import { IdParams } from '../_shared/schemas.js';
 import { NotFoundError } from '../../platform/errors.js';
 import { ReviewService } from './service.js';
+import { MultiRunService } from './multi-run-service.js';
 import { MAX_DIFF_CHARS, MAX_DIFF_BODY_BYTES } from './diff-review.js';
 
 /**
@@ -17,6 +18,15 @@ import { MAX_DIFF_CHARS, MAX_DIFF_BODY_BYTES } from './diff-review.js';
  *   GET    /runs/:id/trace                             → the single-document RunTrace
  *   GET    /pulls/:id/reviews                          → persisted reviews + findings for a PR
  *   POST   /findings/:id/(accept|dismiss)              → finding actions
+ *
+ * Multi-agent review (SPEC-05) — same module, because a slice of its own could
+ * not import `ReviewRunExecutor` (`no-cross-module`):
+ *   POST   /pulls/:id/multi-agent-run  {agentIds}      → MultiAgentRunCreated
+ *   POST   /multi-agent-runs/:id/rerun                 → MultiAgentRunCreated
+ *   GET    /multi-agent-runs/:id                       → MultiAgentRun
+ *   GET    /pulls/:id/multi-agent                      → MultiAgentRunRef | null
+ *   GET    /repos/:id/multi-agent-runs/latest          → MultiAgentRunRef | null
+ *   GET    /runs/last-successful                       → LastSuccessfulRun[]
  */
 const FINDING_ACTIONS = ['accept', 'dismiss'] as const;
 
@@ -38,6 +48,7 @@ export default async function reviewsRoutes(appBase: FastifyInstance) {
   const app = appBase.withTypeProvider<ZodTypeProvider>();
   const { container } = app;
   const service = new ReviewService(container);
+  const multiRuns = new MultiRunService(container);
 
   // ---- Run a review (manual trigger) -------------------------------
   // Tight per-route limit: each call can fan out to expensive LLM runs.
@@ -173,6 +184,71 @@ export default async function reviewsRoutes(appBase: FastifyInstance) {
     const ok = await service.deleteReview(workspaceId, req.params.id);
     if (!ok) throw new NotFoundError('Review not found');
     return { ok: true };
+  });
+
+  // =========================================================================
+  // Multi-Agent Review (SPEC-05)
+  // =========================================================================
+
+  // ---- Start a multi-run over a chosen SET of agents ----------------------
+  // 5/min, half of /pulls/:id/review's 10: one call here fans out to up to ten
+  // paid runs (§ Non-functional requirements). `.min(1)` is AC-27 and `.max(10)`
+  // is AC-30, both answered by the type provider as a 422 in the structured
+  // envelope BEFORE the handler runs — so nothing is created, which is what
+  // those two criteria actually require.
+  app.post(
+    '/pulls/:id/multi-agent-run',
+    {
+      schema: { params: IdParams, body: MultiAgentRunRequest },
+      config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+    },
+    async (req) => {
+      const { workspaceId } = await getContext(container, req);
+      return multiRuns.create(workspaceId, req.params.id, req.body.agentIds, req.log);
+    },
+  );
+
+  // ---- Re-run the stored set on the same PR (AC-114 … AC-117) -------------
+  // Its own route rather than a client-named repeat: AC-28 refuses an unknown
+  // agent id while AC-117 requires the survivors to run, and only a set read
+  // from storage can satisfy both. Same 5/min bucket, same fan-out.
+  app.post(
+    '/multi-agent-runs/:id/rerun',
+    {
+      schema: { params: IdParams },
+      config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+    },
+    async (req) => {
+      const { workspaceId } = await getContext(container, req);
+      return multiRuns.rerun(workspaceId, req.params.id, req.log);
+    },
+  );
+
+  // ---- The whole multi-run: columns, findings and positions (AC-98) -------
+  app.get('/multi-agent-runs/:id', { schema: { params: IdParams } }, async (req) => {
+    const { workspaceId } = await getContext(container, req);
+    return multiRuns.get(workspaceId, req.params.id);
+  });
+
+  // ---- Newest multi-run of one PR, or null (R54) --------------------------
+  // `null`, not 404: "this PR has never been compared" is a state the PR page
+  // renders, not a failure it reports, and a 404 would put an error toast on
+  // every PR that has not been through this feature.
+  app.get('/pulls/:id/multi-agent', { schema: { params: IdParams } }, async (req) => {
+    const { workspaceId } = await getContext(container, req);
+    return multiRuns.latestForPull(workspaceId, req.params.id);
+  });
+
+  // ---- Newest multi-run of one repo, or null (AC-94, same reason) ---------
+  app.get('/repos/:id/multi-agent-runs/latest', { schema: { params: IdParams } }, async (req) => {
+    const { workspaceId } = await getContext(container, req);
+    return multiRuns.latestForRepo(workspaceId, req.params.id);
+  });
+
+  // ---- Each agent's last successful run — the pre-run estimate (AC-17…23) -
+  app.get('/runs/last-successful', async (req) => {
+    const { workspaceId } = await getContext(container, req);
+    return multiRuns.lastSuccessfulRuns(workspaceId);
   });
 
   // ---- Finding actions (accept / dismiss) ---------------------------------

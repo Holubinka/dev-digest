@@ -23,8 +23,8 @@ Node ≥ 22 · Vitest 2 everywhere. Docker runs Postgres only; API and web run o
 ./scripts/e2e.sh                # hermetic e2e on isolated ports (5433/3101/3100) — local only, not CI
 
 cd server && pnpm db:migrate    # REQUIRED after clone — the server does not migrate on boot
-cd server && pnpm exec vitest run --exclude '**/*.it.test.ts'   # unit (hermetic)
-cd server && pnpm exec vitest run .it.test --fileParallelism=false  # integration — the flag is required locally, see TESTING.md
+cd server && pnpm test:unit     # unit (hermetic)
+cd server && pnpm test:it       # integration — testcontainers Postgres, runs FILES SERIALLY
 
 cd client && pnpm lint          # ESLint — client/ only; no other package has one
 ```
@@ -57,6 +57,45 @@ working tree. Only that hook enforces it; a push from your own terminal is untou
 A Track A gate failure (arch, lint, typecheck, tests, vendor mirror, skills registry) stops both
 the push and the PR. A critical found by a review subagent stops only the PR.
 
+## Evals gate what changes
+
+`evals/` (own `package.json`, **pnpm** — see its README) runs three tiers against
+`.claude/skills/*` and `.claude/agents/*`: a static structure gate, LLM-judged content quality,
+and trace-asserted workflow behavior (does `CLAUDE.md` route to the right doc, does a skill
+activate, does a subagent dispatch).
+
+```sh
+cd evals && pnpm eval:quality     # static SKILL.md/AGENTS.md gate — no model, CI-blocking
+cd evals && pnpm eval:workflow    # CLAUDE.md routing / dispatch / activation, the real harness
+cd evals && pnpm eval:skills      # skill content quality (LLM-judged)
+cd evals && pnpm eval:agents      # agent content quality (LLM-judged)
+cd evals && pnpm eval:repeat <pattern> -n 2 --label X   # stability of one change (n capped at 2)
+cd evals && pnpm eval:delta <baseline> <candidate>       # before vs after, per-practice
+cd evals && pnpm eval:benchmark <pattern> -n 5            # with vs without the artifact (lift)
+```
+
+| Change | Minimum check | CI workflow |
+|---|---|---|
+| `.claude/skills/**` | `eval:quality` + the matching skill eval | `evals-skills.yml` |
+| `.claude/agents/**` | the agent eval + the relevant workflow case | `evals-agents.yml` |
+| `CLAUDE.md` / routing rules | `eval:workflow` | `evals-workflow.yml` |
+| An eval case or a grader (`evals/src/**`) | recalibrate: `eval:repeat --label`, commit the JSON under `evals/baselines/` | all three |
+
+**One workflow per tier**, and the `paths:` filter of each is the routing — the table above, said
+again in a form GitHub enforces before a runner starts. A tier is re-run, muted or promoted to
+required on its own, without touching the other two. All three call the same two reusable
+workflows, so the split duplicates no YAML:
+
+- `evals-quality.yml` — `eval:quality`, no model, no secret, runs on a fork PR. **The only check
+  that blocks a merge**, and every tier waits on it before spending a model token.
+- `evals-tier.yml` — the model run for one tier (`with: { tier: skills | agents | workflow }`).
+  Advisory: it carries `continue-on-error`, publishes a report and a baseline diff to the job
+  summary, and has no secret on a fork PR by construction (`pull_request`, never
+  `pull_request_target`) — it checks for one and skips itself cleanly there.
+
+Full detail, and the anti-patterns a new case, grader or CI step must not reintroduce:
+`evals/README.md`.
+
 ## What a session costs
 
 Measured on the Intent Layer, 2026-08-06: **$440**, of which **$313 was re-reading context** and
@@ -76,10 +115,26 @@ again on every later turn: a printed review report costs $0.20 to generate and *
   and six agents read it whole.
 - **Batch independent commands into one call.** Every extra turn costs the same $0.23 whether it
   runs one command or five.
+- **Resume an agent; do not dispatch a fresh one.** Measured on SPEC-05, 2026-08-27: the implementer
+  that iterated one screen over six resumes did **393** turns of work with **34** scouting calls,
+  where a comparable implementer dispatched once, cold, did 273 turns with **67**. A fresh dispatch
+  buys the whole "where does everything live" pass again; a resume buys none of it.
+- **Two or three agents in flight, dispatched in one message.** Parallelism buys wall-clock, not
+  tokens — each concurrent agent pays for its own cold context. The cap bounds how many you buy at
+  once; the single message is what keeps the orchestrator from paying a turn per dispatch.
+- **Cite `path:line` read at the moment you write the sentence.** An unaddressed true fact costs
+  what a false one costs — the agent verifies either way. Quoting an `INSIGHTS.md` entry or the
+  spec's summary of a file is not a citation; open the code they point at.
 
 **Not on this list: proving a new test fails before leaving it green.** Two extra turns, and it
 caught a vacuous UTF-16 test, a `vi.mock` that had stopped intercepting, and a diff filter that
 would have been cosmetic. Cheap checks that catch real defects are not what to economise on.
+
+**Nor is skipping tests to save tokens.** Asked mid-run for no new tests, the SPEC-05 implementer
+wrote, ran and deleted **six** one-off test files instead of leaving three permanent ones, and
+every later round re-proved the same behaviour because nothing in the suite remembered it. The
+saving was real but local — no new test files in the diff — and it was paid for several times in
+scratch work. The cost of a test is not its first writing.
 
 ## Non-default conventions
 
@@ -113,8 +168,15 @@ would have been cosmetic. Cheap checks that catch real defects are not what to e
 
 ## Do not touch
 
-- `server/src/vendor/**`, `client/src/vendor/**` — vendored copies. Change the server
-  copy first, then mirror deliberately.
+- `server/src/vendor/shared/**`, `client/src/vendor/shared/**` — one contract in two physical
+  copies. Change the server copy first, then mirror deliberately; the `repo·vendor` gate compares
+  them and fails on drift.
+- `client/src/vendor/ui/**` is **deliberately not on this list.** It is our design kit, not a
+  vendored copy: there is no paired copy and no mirror gate, and giving a primitive a prop is how
+  a second caller reuses it instead of cloning it. Two costs come with the permission. ESLint
+  ignores all of `src/vendor/**`, so an edit there is unlinted — read it yourself. And every
+  consumer changes at once, so widen a primitive for a shape more than one caller needs, never for
+  one screen's spacing.
 - `server/clones/**` — runtime data from repo-intel cloning. Git-ignored, not a submodule.
 - `e2e/specs/*.flow.json` — live browser-test scenarios, not documentation. The one
   exception is the `test-writer` agent adding a flow, e2e being a suite it covers; the gate

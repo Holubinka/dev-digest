@@ -1,6 +1,6 @@
 {
-  "id": "579b7386-c8ea-42c3-9259-4e04ace77aa9",
-  "prevId": "39967f15-331f-4d91-b23f-d6c9923021e8",
+  "id": "ed9a71a5-ebd7-4101-a96c-f6741ef1c05c",
+  "prevId": "ea87b493-c4b2-44d5-ba84-5e2887b1a5e9",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -3390,30 +3390,6 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
-        },
-        "agent_version": {
-          "name": "agent_version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "last_polled_at": {
-          "name": "last_polled_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "workflow_present": {
-          "name": "workflow_present",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "observed_agent": {
-          "name": "observed_agent",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {},
@@ -3496,73 +3472,9 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
-        },
-        "repo": {
-          "name": "repo",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "workflow_run_id": {
-          "name": "workflow_run_id",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "agent": {
-          "name": "agent",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "duration_ms": {
-          "name": "duration_ms",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "head_sha": {
-          "name": "head_sha",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "bundle_version": {
-          "name": "bundle_version",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "verdict": {
-          "name": "verdict",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
         }
       },
-      "indexes": {
-        "ci_runs_repo_run_idx": {
-          "name": "ci_runs_repo_run_idx",
-          "columns": [
-            {
-              "expression": "repo",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "workflow_run_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
         "ci_runs_ci_installation_id_ci_installations_id_fk": {
           "name": "ci_runs_ci_installation_id_ci_installations_id_fk",
@@ -3700,7 +3612,35 @@
           "notNull": false
         }
       },
-      "indexes": {},
+      "indexes": {
+        "agent_runs_ws_agent_ran_idx": {
+          "name": "agent_runs_ws_agent_ran_idx",
+          "columns": [
+            {
+              "expression": "workspace_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "agent_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "ran_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "agent_runs_workspace_id_workspaces_id_fk": {
           "name": "agent_runs_workspace_id_workspaces_id_fk",
@@ -3748,6 +3688,98 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.multi_agent_run_items": {
+      "name": "multi_agent_run_items",
+      "schema": "",
+      "columns": {
+        "run_id": {
+          "name": "run_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "multi_run_id": {
+          "name": "multi_run_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "agent_id": {
+          "name": "agent_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "agent_name": {
+          "name": "agent_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "position": {
+          "name": "position",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "multi_agent_run_items_run_position_idx": {
+          "name": "multi_agent_run_items_run_position_idx",
+          "columns": [
+            {
+              "expression": "multi_run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "position",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "multi_agent_run_items_run_id_agent_runs_id_fk": {
+          "name": "multi_agent_run_items_run_id_agent_runs_id_fk",
+          "tableFrom": "multi_agent_run_items",
+          "tableTo": "agent_runs",
+          "columnsFrom": [
+            "run_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "multi_agent_run_items_multi_run_id_multi_agent_runs_id_fk": {
+          "name": "multi_agent_run_items_multi_run_id_multi_agent_runs_id_fk",
+          "tableFrom": "multi_agent_run_items",
+          "tableTo": "multi_agent_runs",
+          "columnsFrom": [
+            "multi_run_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.multi_agent_runs": {
       "name": "multi_agent_runs",
       "schema": "",
@@ -3777,9 +3809,65 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "finished_at": {
+          "name": "finished_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "concurrency": {
+          "name": "concurrency",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 3
+        },
+        "head_sha": {
+          "name": "head_sha",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         }
       },
-      "indexes": {},
+      "indexes": {
+        "multi_agent_runs_ws_ran_idx": {
+          "name": "multi_agent_runs_ws_ran_idx",
+          "columns": [
+            {
+              "expression": "workspace_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "ran_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "multi_agent_runs_pr_idx": {
+          "name": "multi_agent_runs_pr_idx",
+          "columns": [
+            {
+              "expression": "pr_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "multi_agent_runs_workspace_id_workspaces_id_fk": {
           "name": "multi_agent_runs_workspace_id_workspaces_id_fk",

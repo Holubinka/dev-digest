@@ -392,11 +392,52 @@ export const IndexStatus = z.object({
 export type IndexStatus = z.infer<typeof IndexStatus>;
 
 // ---- Run request (review trigger; owned by A2, contract lives here) ----
+
+/**
+ * Ceiling on the agents one multi-run may fan out to (SPEC-05 § Non-functional
+ * requirements, AC-30). An unbounded fan-out is an unbounded spend on a single
+ * click, and today nothing bounds it. A request naming more is refused whole.
+ */
+export const MAX_AGENTS_PER_MULTI_RUN = 10;
+
+/**
+ * How many runs of one multi-run execute at once, unless a stored multi-run says
+ * otherwise (SPEC-05 § AC-140, D26).
+ *
+ * Published HERE, beside the agent ceiling, because two screens name it and they
+ * are in different packages: Configure run states the ceiling a run WILL get
+ * (AC-141), and the server stamps this same number onto the row it creates
+ * (AC-142). The results page does NOT read it — it prints
+ * `MultiAgentRun.concurrency`, the ceiling that run actually had (AC-143,
+ * AC-144), so a comparison from last month is not redescribed by today's default.
+ *
+ * The same 3 that bounds this server's background job runner (`platform/jobs.ts`),
+ * rather than a second number meaning the same thing.
+ */
+export const DEFAULT_MULTI_RUN_CONCURRENCY = 3;
+
 export const RunRequest = z.object({
   agentId: z.string().optional(),
   all: z.boolean().optional(),
+  /**
+   * SPEC-05: the chosen SET. Non-empty and capped when present, absent
+   * otherwise — the two fields above are untouched, so `{}`, `{ agentId }` and
+   * `{ all: true }` keep parsing exactly as they did.
+   */
+  agentIds: z.array(z.string().uuid()).min(1).max(MAX_AGENTS_PER_MULTI_RUN).optional(),
 });
 export type RunRequest = z.infer<typeof RunRequest>;
+
+/**
+ * Body of POST /pulls/:id/multi-agent-run.
+ *
+ * Derived from `RunRequest` rather than restated, so the ceiling and the
+ * non-empty rule cannot drift between the two routes that enforce them; the
+ * `.required()` is what turns the optional set into the one field this route
+ * has no default for.
+ */
+export const MultiAgentRunRequest = RunRequest.pick({ agentIds: true }).required();
+export type MultiAgentRunRequest = z.infer<typeof MultiAgentRunRequest>;
 
 // ---- Structured API error envelope (returned by the API; UX taxonomy is FE) ----
 export const ApiErrorBody = z.object({

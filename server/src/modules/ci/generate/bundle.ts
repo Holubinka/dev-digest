@@ -8,7 +8,7 @@ import {
   RUNNER_PATH,
   workflowPathFor,
 } from '../constants.js';
-import { skillBlock } from '../../_shared/attached-skills.js';
+import { skillBlock } from '../../_shared/skill-prompt.js';
 import type { GeneratedBundle } from '../types.js';
 import { buildManifest, manifestToYaml } from './manifest.js';
 import { agentSlug as slugFor, disambiguate, slugify } from './slug.js';

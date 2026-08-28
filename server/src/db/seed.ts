@@ -24,7 +24,10 @@ const DEFAULT_MODEL = 'deepseek/deepseek-v4-flash';
  * demo repo (acme/payments-api), PR #482 with files/commits, a sample review
  * with a few findings, the five built-in agents, the skills two of them bind,
  * and the offline `devdigest/skills-lab` fixtures — all on the default
- * openrouter/deepseek-v4-flash provider+model.
+ * openrouter/deepseek-v4-flash provider+model, except Security Reviewer, which
+ * was eval-tuned to anthropic/claude-haiku-4.5 (better accuracy and cost than
+ * both deepseek-v4-flash and claude-sonnet-4.5 on its own eval set — see
+ * `server/INSIGHTS.md`).
  *
  * Course lessons populate the other tables (conventions, memory, eval, …) once
  * their features are built — they start empty here.
@@ -209,7 +212,7 @@ export async function seed(db: Db): Promise<{ workspaceId: string; userId: strin
       name: 'Security Reviewer',
       description: 'Flags secrets, injection, SSRF and the lethal trifecta before merge.',
       provider: DEFAULT_PROVIDER,
-      model: DEFAULT_MODEL,
+      model: 'anthropic/claude-haiku-4.5',
       systemPrompt: SECURITY_REVIEWER_PROMPT,
       enabled: true,
       version: 1,

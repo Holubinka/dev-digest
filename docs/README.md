@@ -18,3 +18,4 @@ README — link to it instead of copying it.
 | [`project-context.md`](project-context.md) | How a `.md` file in a cloned repo is written, becomes text in a review prompt, and is traced afterward |
 | [`onboarding-tour.md`](onboarding-tour.md) | How a repository's index becomes a five-section tour in one grounded model call, end to end across server, contract and client |
 | [`ledger-export-to-ci.md`](ledger-export-to-ci.md) | What Export to CI cost to build — agents, turns, tokens, where they went, and which comparison was deliberately not claimed |
+| [`multi-agent-review.md`](multi-agent-review.md) | How a multi-agent run fans out over one shared pre-work step, builds its disagreement section, and what that fan-out measured in wall-clock time |

@@ -29,6 +29,7 @@ vi.mock("next/navigation", () => ({
 const hooks = vi.hoisted(() => ({
   usePulls: vi.fn(),
   usePullDetail: vi.fn(),
+  useLatestMultiAgentRunForPull: vi.fn(),
 }));
 
 vi.mock("../../../../../lib/hooks", () => ({
@@ -42,6 +43,9 @@ vi.mock("../../../../../lib/hooks/reviews", () => ({
   useDeleteRun: () => ({ mutate: vi.fn() }),
   useCancelRun: () => ({ mutate: vi.fn(), isPending: false }),
 }));
+vi.mock("@/lib/hooks/multi-agent", () => ({
+  useLatestMultiAgentRunForPull: hooks.useLatestMultiAgentRunForPull,
+}));
 vi.mock("../../../../../lib/repo-context", () => ({
   useActiveRepo: () => ({ activeRepo: { id: "repo-1", full_name: "acme/payments-api" } }),
   useRepoNotFound: () => false,
@@ -50,9 +54,33 @@ vi.mock("../../../../../components/app-shell", () => ({
   AppShell: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 vi.mock("@/components/repo-not-found", () => ({ RepoNotFound: () => <div /> }));
-vi.mock("./_components/PrDetailHeader", () => ({ PrDetailHeader: () => <div /> }));
-vi.mock("./_components/FindingsTab", () => ({ FindingsTab: () => <div /> }));
-vi.mock("./_components/RunTraceDrawer", () => ({ default: () => <div /> }));
+// The header only has to be able to say "a run just started, here is its id" —
+// the picker itself is tested next door.
+vi.mock("./_components/PrDetailHeader", () => ({
+  PrDetailHeader: ({
+    onRunStart,
+    onRunsStarted,
+  }: {
+    onRunStart: () => void;
+    onRunsStarted: (started: { multiRunId: string; runIds: string[] }) => void;
+  }) => (
+    <button
+      onClick={() => {
+        onRunStart();
+        onRunsStarted({ multiRunId: "mr-fresh", runIds: ["run-1"] });
+      }}
+    >
+      start multi-run
+    </button>
+  ),
+}));
+// A real anchor, built from the href the PAGE resolved — the stand-in adds no
+// logic of its own, so what is asserted below is the page's answer.
+vi.mock("./_components/FindingsTab", () => ({
+  FindingsTab: ({ multiRunHref }: { multiRunHref?: string | null }) =>
+    multiRunHref ? <a href={multiRunHref}>Open the multi-agent comparison</a> : <div />,
+}));
+vi.mock("@/components/run-trace-drawer", () => ({ default: () => <div /> }));
 // The two that carry the jump: one end sends a path up, the other receives it.
 vi.mock("./_components/OverviewTab", () => ({
   OverviewTab: ({ onOpenFile }: { onOpenFile: (path: string, line?: number) => void }) => (
@@ -91,6 +119,7 @@ const PR = {
 beforeEach(() => {
   nav.replace.mockReset();
   nav.params = new URLSearchParams("");
+  hooks.useLatestMultiAgentRunForPull.mockReturnValue({ data: null });
   hooks.usePulls.mockReturnValue({ data: [{ number: 12, id: "pr-1" }], isLoading: false });
   hooks.usePullDetail.mockReturnValue({
     data: PR,
@@ -204,5 +233,74 @@ describe("PR detail — the line the jump carries", () => {
     renderPage();
 
     expect(screen.getByTestId("diff-tab")).toHaveAttribute("data-target-line", raw);
+  });
+});
+
+/**
+ * R54 — the link back to this PR's multi-agent comparison.
+ *
+ * The case that matters is the RELOAD: a reader who opens the PR tomorrow started
+ * nothing in this session, so an implementation holding the id in page state (or
+ * in a query parameter) shows them nothing, and a comparison that exists becomes
+ * unreachable from the only page that would send anyone looking for it. AC-88
+ * does not cover this — it speaks about the moment of launch.
+ */
+describe("PR detail — the way back to the multi-agent comparison", () => {
+  const MULTI_RUN_TAB = "tab=findings";
+
+  it("shows the link from the SERVER read alone, with no run started in this session", () => {
+    hooks.useLatestMultiAgentRunForPull.mockReturnValue({
+      data: { id: "mr-yesterday", pr_id: "pr-1", pr_number: 12, ran_at: "2026-08-25T10:00:00.000Z" },
+    });
+    nav.params = new URLSearchParams(MULTI_RUN_TAB);
+    renderPage();
+
+    expect(screen.getByRole("link", { name: /multi-agent comparison/i })).toHaveAttribute(
+      "href",
+      "/repos/repo-1/multi-agent/mr-yesterday",
+    );
+  });
+
+  it("shows no link when the PR has never been compared", () => {
+    nav.params = new URLSearchParams(MULTI_RUN_TAB);
+    renderPage();
+
+    expect(screen.queryByRole("link", { name: /multi-agent comparison/i })).toBeNull();
+  });
+
+  /**
+   * Precedence. The server was asked before the new run existed, so answering
+   * from it would point at the PREVIOUS comparison for as long as the invalidated
+   * query takes to come back — a link that is wrong exactly when it is pressed.
+   */
+  it("prefers the run just started over the older one the server knows about", () => {
+    hooks.useLatestMultiAgentRunForPull.mockReturnValue({
+      data: { id: "mr-yesterday", pr_id: "pr-1", pr_number: 12, ran_at: "2026-08-25T10:00:00.000Z" },
+    });
+    nav.params = new URLSearchParams(MULTI_RUN_TAB);
+    renderPage();
+
+    fireEvent.click(screen.getByText("start multi-run"));
+
+    expect(screen.getByRole("link", { name: /multi-agent comparison/i })).toHaveAttribute(
+      "href",
+      "/repos/repo-1/multi-agent/mr-fresh",
+    );
+  });
+
+  /**
+   * The id is NOT in the URL, and starting a run stays a single write. Two
+   * `setParam` calls race — each builds from the same captured `search` — which
+   * is what the page's own comment at :90-94 records.
+   */
+  it("writes the tab and nothing else when a run starts", () => {
+    renderPage();
+    fireEvent.click(screen.getByText("start multi-run"));
+
+    expect(nav.replace).toHaveBeenCalledTimes(1);
+    const url = new URL(nav.replace.mock.calls[0]![0] as string, "http://localhost");
+    expect(url.searchParams.get("tab")).toBe("findings");
+    expect(url.searchParams.has("multiRun")).toBe(false);
+    expect([...url.searchParams.keys()]).toEqual(["tab"]);
   });
 });

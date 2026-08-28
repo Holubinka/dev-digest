@@ -221,6 +221,28 @@
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 
+/* The eval case editor: the fixed input on the left, the expectations on the
+   right. `minmax(0, 1fr)` for the same reason as the overview cards — both
+   columns hold mono text with unbreakable tokens (a diff line, a JSON string),
+   and a plain `1fr` keeps `min-width: auto` and refuses to shrink under them.
+   `grid-template-columns` lives here and not in `styles.ts` because 900px
+   collapses it to one column; left inline it would win over the media query. */
+.dd-eval-case-cols {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+/* The compare modal's four old→new tiles: one row of four until 680px. */
+.dd-eval-compare-tiles {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+/* The eval dashboard's agent card: name and last-run line on the left, trend
+   and the three metrics on the right — until 680px, where they stack. */
+.dd-eval-agent-card {
+  flex-direction: row;
+  align-items: center;
+}
+
 /* The PR Brief's disclosures — a risk row's explanation, and the "N more"
    overflow under RISK AREAS and REVIEW FOCUS. A native <details> is the cheapest
    keyboard-reachable disclosure there is and needs no state, but its default
@@ -408,6 +430,14 @@
   .dd-card-actions > * {
     flex: 1;
   }
+  /* Four metric tiles in one row give each about 200px, which the 32px value
+     plus its delta overflows. Two-up keeps every number on one line. */
+  .dd-eval-metric-row {
+    flex-wrap: wrap;
+  }
+  .dd-eval-metric-row > * {
+    flex: 1 1 calc(50% - 7px);
+  }
 }
 
 @media (max-width: 680px) {
@@ -430,6 +460,22 @@
     flex-wrap: wrap;
     row-gap: 8px;
   }
+  /* The case editor's two columns one above the other: a diff and a JSON
+     expectation list side by side on a phone leave neither readable. */
+  .dd-eval-case-cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* The agent card's sparkline and three metrics drop under the name rather
+     than squeezing the name to two characters. */
+  .dd-eval-agent-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  /* Four old→new tiles two-up: `78% → 82% ▲4pt` needs about 160px to stay on
+     one line, and four across a phone gives it 70. */
+  .dd-eval-compare-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   /* A 360px list beside a reader leaves neither readable on a phone. */
   .dd-context-panes {
     flex-direction: column;
@@ -442,5 +488,64 @@
      as its own content. */
   .dd-context-page {
     height: auto;
+  }
+}
+
+/* Multi-Agent Review — the results page's two grids and the clamp on a take's
+   note. All three live here rather than in `styles.ts` for the reason at the top
+   of this section: an inline style beats a stylesheet rule whatever the
+   selector, so a property a breakpoint changes must be declared ONLY here. */
+
+/* One column per agent. `grid-auto-flow: column` with a `minmax` track means the
+   count never has to be computed: the columns share the width until each is
+   240px, and past that the grid scrolls sideways with none of them hidden
+   (AC-53). The mockup switches to `overflow-x: auto` past five agents; a track
+   floor does the same thing without a magic number. */
+.dd-multiagent-columns {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(240px, 1fr);
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+/* One cell per take of a position. The COUNT is per position and arrives as
+   `--dd-takes` from the component; the track sizing is what the breakpoint
+   changes, and it is only ever declared here. */
+.dd-take-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--dd-takes, 1), minmax(0, 1fr));
+  gap: 1px;
+  background: var(--border);
+}
+
+/* An agent's note is a sentence from a model and can be a paragraph. Three lines
+   keep the takes of one position the same height without hiding which agent said
+   something; `-webkit-line-clamp` has no inline form that also sets the box
+   display and orientation, so it belongs in one place. */
+.dd-take-note {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+
+@media (max-width: 900px) {
+  /* Four takes side by side stop being readable long before the sidebar does:
+     each cell is a name, a verdict and a sentence. Stacked, every agent's take
+     keeps the full width and the position still reads top to bottom in the
+     agents' order. */
+  .dd-take-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 680px) {
+  /* On a phone a full-width column beats four that are each 240px of a 360px
+     viewport: the reader swipes one agent at a time instead of reading slivers. */
+  .dd-multiagent-columns {
+    grid-auto-columns: minmax(240px, 92%);
   }
 }

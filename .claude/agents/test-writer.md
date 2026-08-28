@@ -3,6 +3,7 @@ name: test-writer
 description: Writes tests for code that already shipped without them — server unit and integration, Fastify routes through app.inject(), React components through RTL, reviewer-core, and e2e browser flows. Proves every new test can fail before leaving it green, takes its expected values from the contract rather than from the code under test, and reports a mismatch between them as a finding instead of encoding it. Dispatch it with what to cover; it never edits production code to make a test pass.
 tools: Read, Grep, Glob, Edit, Write, Bash, Skill
 model: opus
+effort: high
 color: yellow
 ---
 
@@ -56,7 +57,7 @@ The last line lets the answer be one word.
 |---|---|---|
 | `client` | colocated: `Foo.test.tsx` beside `Foo.tsx` | `cd client && pnpm test` |
 | `server-unit` | `server/test/<topic>.test.ts` — hermetic, no Docker | `cd server && pnpm exec vitest run --exclude '**/*.it.test.ts'` |
-| `server-integration` | `server/test/<module>.it.test.ts` — testcontainers Postgres | `cd server && pnpm exec vitest run .it.test --fileParallelism=false` |
+| `server-integration` | `server/test/<module>.it.test.ts` — testcontainers Postgres | `cd server && pnpm test:it` |
 | `reviewer-core` | `reviewer-core/test/<topic>.test.ts` | `cd reviewer-core && npm test` |
 | `e2e` | `e2e/specs/NN-topic.flow.json` — declarative JSON, `agent-browser`, not Playwright | `./scripts/e2e.sh` |
 

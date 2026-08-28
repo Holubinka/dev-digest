@@ -1,0 +1,44 @@
+# Agents tier — content quality of `.claude/agents/*`, LLM-judged (`pnpm eval:repeat agents`).
+#
+# One workflow per tier on purpose. Skills, agents and workflow evals are re-run, muted and read
+# independently — a single evals.yml made every one of those touch the other two, and routed with
+# a `Detect what changed` bash step that parsed a diff at runtime. That routing is now the `paths:`
+# filter below: GitHub decides whether this tier is relevant before a runner starts.
+#
+# The blocking gate and the model run live in reusable workflows shared with the other two tiers,
+# so the split costs no duplicated YAML: evals-quality.yml and evals-tier.yml.
+name: evals · agents
+
+on:
+  push:
+    branches: [main]
+    paths: &agents_paths
+      - '.claude/agents/**'
+      - 'evals/agents/**'
+      - 'evals/src/**'
+      - 'evals/baselines/agents.json'
+      - 'evals/package.json'
+      - 'evals/pnpm-lock.yaml'
+      - '.github/workflows/evals-agents.yml'
+      - '.github/workflows/evals-quality.yml'
+      - '.github/workflows/evals-tier.yml'
+  pull_request:
+    paths: *agents_paths
+
+permissions:
+  contents: read
+
+concurrency:
+  group: evals-agents-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    uses: ./.github/workflows/evals-quality.yml
+
+  model-run:
+    needs: quality
+    uses: ./.github/workflows/evals-tier.yml
+    with:
+      tier: agents
+    secrets: inherit

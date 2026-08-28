@@ -152,15 +152,36 @@
     {
       "idx": 21,
       "version": "7",
-      "when": 1787729144093,
-      "tag": "0021_outstanding_lockjaw",
+      "when": 1787730685887,
+      "tag": "0021_lame_bloodstorm",
       "breakpoints": true
     },
     {
       "idx": 22,
       "version": "7",
-      "when": 1787774773342,
-      "tag": "0022_keen_mandroid",
+      "when": 1787768953201,
+      "tag": "0022_sturdy_trauma",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1787832274793,
+      "tag": "0023_worried_captain_britain",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1787844043224,
+      "tag": "0024_lethal_komodo",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1787907644264,
+      "tag": "0025_ancient_carnage",
       "breakpoints": true
     }
   ]

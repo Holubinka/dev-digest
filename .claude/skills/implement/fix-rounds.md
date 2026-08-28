@@ -92,7 +92,7 @@ that had created all three from nothing.
 Then, above the findings, the three things a fix brief has no section for and always needs:
 
 - **the gate commands, with the documented workaround already applied** —
-  `cd server && pnpm exec vitest run .it.test --fileParallelism=false`, not "integration". Writing
+  `cd server && pnpm test:it`, not "integration". Writing
   the bare word cost this branch three full parallel runs on one round and three more on the next,
   a day apart, both agents ending at the same `server/INSIGHTS.md` entry;
 - **what already exists** — the same section the plan carries, because the brief has no plan to
@@ -109,6 +109,15 @@ of the round or only the part that is known — a numbered list reads as a bound
 
 Then dispatch **one `implementer` against the brief path**.
 It opens only that plan's `## Out of scope`, `## Constraints` and `## Gates` — the
+
+The header names the plan the branch was executing. Then dispatch **one `implementer` against the
+brief path, with `model: sonnet` on the `Agent` call**. That override beats the agent's `opus`
+frontmatter for this one dispatch, and a brief built to the shape above is what makes it safe: the
+address, the rule, the quote and the target shape are all decided already, so the round is an edit
+rather than a design. Downgrade the *round*, never the agent file — a build implementer starting
+from a plan is not this, and `SKILL.md` § 11 says why it stays on `opus`. Note the override in
+your report; if a finding turns out to need a decision rather than an edit, it was filter 3's and
+does not belong in the brief at all. It opens only that plan's `## Out of scope`, `## Constraints` and `## Gates` — the
 steps are done, and re-reading them is what would make a fix round cost as much as the build did —
 and it runs the touched modules' gates before reporting.
 

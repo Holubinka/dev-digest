@@ -96,4 +96,4 @@ jobs:
       # Inlined rather than `pnpm test:unit`: server/package.json is
       # skip-worktree (a local variant), so the committed package.json may
       # not carry the split scripts. Run vitest directly.
-      - run: pnpm exec vitest run --exclude '**/*.it.test.ts'
+      - run: pnpm test:unit

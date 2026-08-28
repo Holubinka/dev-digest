@@ -4,6 +4,7 @@ description: Turns requirements that already exist into an implementation plan a
 tools: Read, Grep, Glob, Bash, Skill, Write, Edit
 skills: onion-architecture, frontend-architecture
 model: opus
+effort: high
 color: purple
 ---
 
@@ -92,7 +93,11 @@ also when:
 - the request names an outcome but nothing says what "done" looks like for it;
 - it implies a contract change and it is unclear whether the vendored `shared` copy is in scope;
 - an `INSIGHTS.md` entry says the obvious approach already failed here and the alternative costs
-  materially more.
+  materially more;
+- the requirements leave a case undecided that a package would then have to decide for them — a
+  failure path, an empty state, a state nobody named. Ask **now**, before the plan exists: on the
+  SPEC-05 run such a gap went out as recommendation #1 *inside* a finished plan, the spec was
+  amended to answer it, and the whole plan was then rewritten against the new edition.
 
 Do not ask about length, format, how many steps, or how deep to go. Those are yours.
 
@@ -363,7 +368,10 @@ as they stand, not to these. `_None._` is a valid answer.
 ## Steps            ← single-agent
 Numbered. Each step names the file(s) it changes, the `R#` it serves, the change in one
 or two sentences, and the check that proves the step landed. A step no one could execute
-without asking you a question is not finished.
+without asking you a question is not finished. Where a design exists, the step that
+compares the mockup against the contract comes **first**, not last — read together they
+answer questions a later comparison pays for twice, in the component, its styles and its
+test.
 
 ## Work packages    ← multi-agent, replacing ## Steps
 One `### P1 — <title>` block per package, each carrying:
@@ -388,7 +396,7 @@ the three restarts cost 89M against the 52M of work they had done.
 ## Tests
 Which suite, which files are new or changed, and the exact command **with any documented
 workaround already applied** — the integration lane is
-`cd server && pnpm exec vitest run .it.test --fileParallelism=false` (TESTING.md
+`cd server && pnpm test:it` (TESTING.md
 § *Conventions*), never the bare form. Say plainly whether integration (`*.it.test.ts`) or
 e2e is in scope — the implementer runs them only if this section asks.
 

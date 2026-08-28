@@ -22,6 +22,7 @@ Reusable AI skills that provide specialized knowledge and workflows. Canonical l
 | [pr-self-review](pr-self-review/SKILL.md) | Repo | Review every open change against the repo's skills and gates before a PR; blocks on a critical |
 | [implement](implement/SKILL.md) | Repo | Carry an approved plan from `plans/` through build, run, verify, review and a bounded fix loop |
 | [run-retrospective](run-retrospective/SKILL.md) | Repo | What a multi-agent run cost and what it taught: billed tokens, dispatch order, what the agents duplicated |
+| [dependency-checker](dependency-checker/SKILL.md) | Repo | External npm deps (size, type, drift, unused) and the internal no-workspace package graph; graded findings and a prioritized summary |
 
 ## What Are Skills?
 

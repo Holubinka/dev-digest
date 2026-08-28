@@ -10,7 +10,7 @@ import type {
 import type { GitHubClient, RunnerBundle } from '../../vendor/shared/adapters.js';
 import type { Db } from '../../db/client.js';
 import type { AgentRow } from '../../db/rows.js';
-import type { LinkedSkillLike } from '../_shared/attached-skills.js';
+import type { LinkedSkillLike } from '../_shared/skill-prompt.js';
 import type { JobRunner } from '../../platform/jobs.js';
 import type { PinoLike } from '../../platform/run-logger.js';
 

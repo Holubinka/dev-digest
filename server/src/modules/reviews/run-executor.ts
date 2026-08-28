@@ -7,7 +7,7 @@ import {
 } from '@devdigest/reviewer-core';
 import { RunLogger } from '../../platform/run-logger.js';
 import type { ReviewRepository, FindingRow, PullRow, ReviewRow } from './repository.js';
-import { attachedSkills, skillBodiesFor, taskLine } from './helpers.js';
+import { attachedSkills, runWithConcurrency, skillBodiesFor, taskLine } from './helpers.js';
 import { buildPromptAssemblyLog, promptLogDetail } from './prompt-log.js';
 import { loadDiff } from './diff-loader.js';
 import type {
@@ -28,6 +28,19 @@ import type {
 type ProjectContextResult = Awaited<
   ReturnType<Container['projectContext']['resolveForRun']>
 >;
+
+/**
+ * `buildCallersDigest` queries `getCallerSignatures` once for the WHOLE diff and
+ * reuses that one digest on every map-reduce chunk (`run-executor.ts` builds it
+ * before `reviewPullRequest` even picks a mode) — so its cost is `changedFiles.length`,
+ * not "one file's worth", however many files a PR touches. `getCallerSignatures`
+ * bounds callers PER symbol (`MAX_CALLERS_PER_SYMBOL`); nothing bounded the file
+ * count feeding it, and a 166-file PR blew a single chunk's prompt past every
+ * model's context window (275558 requested tokens against a 200000 limit) before
+ * this cap existed. Same-shaped fix as `MAX_PLAN_FILES`/`MAX_ENV_VARS` elsewhere in
+ * this repo: name the bound, don't let it default to "however many the diff has".
+ */
+const MAX_CALLERS_DIGEST_FILES = 40;
 
 /** Thrown by a run when the user cancels it mid-flight (between map files). */
 export class RunCancelledError extends Error {
@@ -53,6 +66,20 @@ export type RunOutcome = {
   grounding: string;
   raw: Review;
 };
+
+/**
+ * The batch pre-work every job of one `executeRuns` call shares, carried as one
+ * value so `runJob` takes it as a single parameter. Nothing here is per-agent:
+ * that is precisely the property `test/reviews-repo-intel-once.test.ts` pins.
+ */
+interface BatchContext {
+  workspaceId: string;
+  pull: ReviewPull;
+  repo: ReviewRepo;
+  diff: UnifiedDiff;
+  intentSection: string | undefined;
+  readonly repoIntel: RepoIntelContext;
+}
 
 /**
  * What has to be resolved before the engine can be called. Every field except
@@ -116,6 +143,15 @@ export class ReviewRunExecutor {
     repo: ReviewRepo,
     jobs: { agent: ReviewAgent; runId: string }[],
     logger?: Logger,
+    /**
+     * How many agents may be in flight at once.
+     *
+     * THE DEFAULT OF 1 IS A CRITERION, NOT A FALLBACK (SPEC-05 § AC-35): the PR
+     * page's review button and `POST /reviews/diff` must keep running agents one
+     * at a time, in `jobs` order, publishing exactly the events they publish
+     * today. Only `MultiRunService` passes anything else.
+     */
+    opts: { concurrency?: number } = {},
   ): Promise<void> {
     // ONE logger fanned out over every queued run: shared pre-work (diff +
     // intent) is streamed into each target agent's Live Log and persisted into
@@ -132,105 +168,229 @@ export class ReviewRunExecutor {
     // mark the rows failed and persist the buffered log so it survives a reload.
     const failAll = async (msg: string) => {
       for (const { runId, agent } of jobs) {
-        await this.repo
-          .completeAgentRun(runId, {
-            status: 'failed',
-            durationMs: 0,
-            tokensIn: 0,
-            tokensOut: 0,
-            findingsCount: 0,
-            grounding: '0/0 passed',
-            error: msg,
-          })
-          .catch(() => undefined);
-        await this.repo
-          .saveRunTrace(runId, this.traceFromBuffer(runId, pull, agent, '0/0 passed'))
-          .catch(() => undefined);
-        this.container.runBus.complete(runId);
+        await this.failRunRow(runId, pull, agent, msg);
       }
     };
 
-    let diff: UnifiedDiff;
+    /*
+     * ONE GUARD OVER EVERY PRE-WORK STEP, and the reason it is a `try` around
+     * the whole region rather than a `catch` per step: a multi-run's rows are
+     * written `queued` BEFORE this method is called (`multi-run.repo.ts`
+     * `createMultiRun`), so anything that throws between here and the pool
+     * leaves ten rows nobody will ever move — the page shows columns that never
+     * progress until the reaper closes them, hours later. AC-38 is the opposite:
+     * a failed pre-work marks EVERY run of the multi-run failed with the same
+     * reason.
+     *
+     * Only the diff load was guarded when this was written, which was enough
+     * only by accident of which steps existed: `intentService.derive` answers
+     * `{ok:false}` instead of throwing, and `buildRepoIntelContext` has no
+     * `try` of its own — its three children each have one, so today it happens
+     * not to reject. Neither fact is a property a future step inherits, and
+     * `MultiRunService.launch`'s `.catch` only logs.
+     */
+    let ctx: BatchContext;
     try {
-      diff = await runLog.step('Loading PR diff', () => loadDiff(this.container, this.repo, workspaceId, pull, repo), {
-        kind: 'tool',
-      });
+      let diff: UnifiedDiff;
+      try {
+        diff = await runLog.step('Loading PR diff', () => loadDiff(this.container, this.repo, workspaceId, pull, repo), {
+          kind: 'tool',
+        });
+      } catch (err) {
+        // Rethrown, not handled: the step names itself in the reason the failed
+        // rows carry, and the guard below is the only place that fails them.
+        throw new Error(`Failed to load PR diff: ${(err as Error).message}`);
+      }
+      runLog.info(`Diff ready — ${diff.files.length} changed file(s); starting ${jobs.length} agent run(s)`);
+
+      // Intent is PRE-WORK: derived ONCE for every queued agent, streamed into
+      // each run's Live Log by the fanned-out logger, and cached on the PR. The
+      // deriver arrives as `container.intentService` — modules/reviews may not
+      // import modules/intent (`no-cross-module`), and the rendered section rides
+      // on the result so nothing here needs one. A failure degrades the prompt to
+      // exactly today's shape; it never fails a run.
+      let intentSection: string | undefined;
+      const derived = await runLog.step(
+        'Deriving PR intent',
+        () =>
+          this.container.intentService.derive({
+            workspaceId,
+            prId: pull.id,
+            onEvent: (kind, msg) => runLog.event(kind, msg),
+          }),
+        { kind: 'tool' },
+      );
+      if (derived.ok) {
+        intentSection = derived.section;
+        runLog.info(
+          `Intent ready — ${derived.record.confidence} confidence from ` +
+            `${derived.record.evidence.join(', ')}; ${derived.tokensIn}+${derived.tokensOut} tokens, ` +
+            `${derived.costUsd == null ? 'cost unknown' : `$${derived.costUsd.toFixed(4)}`}`,
+        );
+      } else {
+        runLog.info(`Intent unavailable — ${derived.reason}; reviewing without it`);
+      }
+
+      // Repo-intel is PRE-WORK too, for the same reason the diff is: it is keyed
+      // on the PR, not on the agent, so N agents were making 3N identical index
+      // queries and could disagree if the indexer wrote between two runs. Skipped
+      // entirely when no queued agent wants it — one agent asking is enough,
+      // since a second one opting out selects `NO_REPO_INTEL` rather than
+      // re-querying.
+      const repoIntel = jobs.some((j) => j.agent.repoIntel)
+        ? await this.buildRepoIntelContext(pull.repoId, diff, runLog)
+        : NO_REPO_INTEL;
+
+      ctx = { workspaceId, pull, repo, diff, intentSection, repoIntel };
     } catch (err) {
-      runLog.error(`Failed to load PR diff: ${(err as Error).message}`);
-      await failAll(`Failed to load PR diff: ${(err as Error).message}`);
+      const reason = (err as Error).message;
+      runLog.error(reason);
+      await failAll(reason);
       return;
     }
-    runLog.info(`Diff ready — ${diff.files.length} changed file(s); starting ${jobs.length} agent run(s)`);
 
-    // Intent is PRE-WORK: derived ONCE for every queued agent, streamed into
-    // each run's Live Log by the fanned-out logger, and cached on the PR. The
-    // deriver arrives as `container.intentService` — modules/reviews may not
-    // import modules/intent (`no-cross-module`), and the rendered section rides
-    // on the result so nothing here needs one. A failure degrades the prompt to
-    // exactly today's shape; it never fails a run.
-    let intentSection: string | undefined;
-    const derived = await runLog.step(
-      'Deriving PR intent',
-      () =>
-        this.container.intentService.derive({
-          workspaceId,
-          prId: pull.id,
-          onEvent: (kind, msg) => runLog.event(kind, msg),
-        }),
-      { kind: 'tool' },
+    await runWithConcurrency(jobs, opts.concurrency ?? 1, (job) =>
+      // `runJob` owns its own `try` (AC-36) and this `.catch` is what happens
+      // when that guard is the one that broke: `runWithConcurrency` never
+      // rejects, so without this line an unexpected throw would leave no trace
+      // anywhere — see the contract note on the pool in `helpers.ts`.
+      this.runJob(job, ctx, runLog, logger).catch((err: unknown) => {
+        logger?.error(
+          { runId: job.runId, agent: job.agent.name, prId: pull.id, err: (err as Error).message },
+          'review: agent job threw outside its own guard',
+        );
+      }),
     );
-    if (derived.ok) {
-      intentSection = derived.section;
-      runLog.info(
-        `Intent ready — ${derived.record.confidence} confidence from ` +
-          `${derived.record.evidence.join(', ')}; ${derived.tokensIn}+${derived.tokensOut} tokens, ` +
-          `${derived.costUsd == null ? 'cost unknown' : `$${derived.costUsd.toFixed(4)}`}`,
-      );
-    } else {
-      runLog.info(`Intent unavailable — ${derived.reason}; reviewing without it`);
-    }
+  }
 
-    // Repo-intel is PRE-WORK too, for the same reason the diff is: it is keyed
-    // on the PR, not on the agent, so N agents were making 3N identical index
-    // queries and could disagree if the indexer wrote between two runs. Skipped
-    // entirely when no queued agent wants it — one agent asking is enough,
-    // since a second one opting out selects `NO_REPO_INTEL` rather than
-    // re-querying.
-    const repoIntel = jobs.some((j) => j.agent.repoIntel)
-      ? await this.buildRepoIntelContext(pull.repoId, diff, runLog)
-      : NO_REPO_INTEL;
-
-    for (const { agent, runId } of jobs) {
-      const agentStart = Date.now();
-      logger?.info(
-        { runId, agent: agent.name, provider: agent.provider, model: agent.model, prId: pull.id },
-        `review: agent "${agent.name}" started (${agent.provider}/${agent.model})`,
-      );
-      try {
-        const outcome = await this.runOneAgent(
-          { workspaceId, pull, repo, diff, intentSection, repoIntel, agent, runId },
-          runLog,
-        );
+  /**
+   * One agent's slot in the pool. The `try/catch` moved here WITH the body it
+   * guards, and that is the point: AC-36 wants one agent's rejection to stay
+   * inside its own job so the remaining jobs keep draining, and a `catch` left
+   * behind at the call site would isolate nothing once the calls overlap.
+   */
+  private async runJob(
+    { agent, runId }: { agent: ReviewAgent; runId: string },
+    ctx: BatchContext,
+    runLog: RunLogger,
+    logger?: Logger,
+  ): Promise<void> {
+    const agentStart = Date.now();
+    logger?.info(
+      { runId, agent: agent.name, provider: agent.provider, model: agent.model, prId: ctx.pull.id },
+      `review: agent "${agent.name}" started (${agent.provider}/${agent.model})`,
+    );
+    /**
+     * Whether the row reached `running`, which is the same question as "does
+     * anything else own this row's failure?". Everything below the claim
+     * persists its own failure through `runOneAgent`; the claim itself does not,
+     * so a throwing UPDATE would otherwise leave the row `queued` with the job
+     * gone — the per-agent version of the orphan the pre-work guard closes.
+     */
+    let running = false;
+    try {
+      // A multi-run's rows are written `queued` and only become `running` when a
+      // slot opens (AC-33, AC-34), so this claim is also the LAST CHECKPOINT
+      // BEFORE ANY SPEND: `false` means the row left the in-flight set while the
+      // job waited — it was cancelled — and running it anyway is what makes
+      // Cancel on a 10-agent multi-run bill for the seven still behind the
+      // ceiling. Nothing else is owed on this path: `ReviewService.cancelRun`
+      // already marked the row and completed the bus.
+      //
+      // Inside the `try` because a throwing UPDATE is a failed run like any
+      // other; the widened reaper is what picks the row up if the process dies
+      // between here and the row.
+      if (!(await this.repo.startAgentRun(runId))) {
         logger?.info(
-          {
-            runId,
-            agent: agent.name,
-            findings: outcome.findings.length,
-            grounding: outcome.grounding,
-            durationMs: Date.now() - agentStart,
-          },
-          `review: agent "${agent.name}" done — ${outcome.findings.length} finding(s)`,
+          { runId, agent: agent.name, prId: ctx.pull.id },
+          `review: agent "${agent.name}" was cancelled before it started — not run`,
         );
-      } catch (err) {
-        // runOneAgent already persisted the failure/cancel (status + error +
-        // trace) and completed the bus; here we only log at the run level.
-        const cancelled = err instanceof RunCancelledError;
-        logger?.[cancelled ? 'info' : 'error'](
-          { runId, agent: agent.name, err: (err as Error).message, durationMs: Date.now() - agentStart },
-          `review: agent "${agent.name}" ${cancelled ? 'cancelled' : 'failed'}`,
-        );
+        return;
       }
+      running = true;
+      /* THE ONLY EVENT ON THE BUS THAT REPORTS A STATE, and it is here rather
+         than one line up because only a claim that RETURNED TRUE means the row
+         is now `running` — beside the call it would also fire for the run that
+         lost the claim to a cancel.
+
+         `forRun`, never `runLog`: everything above this point — the diff, the
+         intent — is published to EVERY run of the multi-run at once
+         (`platform/run-logger.ts:50`), while every one of those rows is still
+         `queued`. A client that read the fan-out as "this run started" would
+         paint the seven agents waiting behind the concurrency ceiling as
+         reviewing. This event is the one thing on the stream that is true of
+         exactly one run.
+
+         The state rides in `data` on purpose: `RunEvent.data` is already
+         optional and untyped, so the client gains a live status with no change
+         to `vendor/shared/contracts/trace.ts` and nothing to mirror into the
+         client's copy. Widening `RunEvent` with a typed `status` is the tidier
+         shape if a second state ever needs announcing; one does not justify
+         touching a contract that is vendored twice.
+
+         AC-35: `executeRuns` is shared with the PR page's button and
+         `POST /reviews/diff`, so this line now appears in a single run's Live
+         Log too. It adds a line; it changes no ordering, no numbering and no
+         count of steps — the drawer maps events 1:1 (`run-trace-drawer/helpers.ts:11`). */
+      runLog.forRun(runId).event('info', `Agent "${agent.name}" started`, { status: 'running' });
+      const outcome = await this.runOneAgent({ ...ctx, agent, runId }, runLog);
+      logger?.info(
+        {
+          runId,
+          agent: agent.name,
+          findings: outcome.findings.length,
+          grounding: outcome.grounding,
+          durationMs: Date.now() - agentStart,
+        },
+        `review: agent "${agent.name}" done — ${outcome.findings.length} finding(s)`,
+      );
+    } catch (err) {
+      // runOneAgent already persisted the failure/cancel (status + error +
+      // trace) and completed the bus; here we only log at the run level — unless
+      // the run never got that far, in which case this is the only writer left.
+      if (!running) {
+        await this.failRunRow(runId, ctx.pull, agent, `Failed to start the run: ${(err as Error).message}`);
+      }
+      const cancelled = err instanceof RunCancelledError;
+      logger?.[cancelled ? 'info' : 'error'](
+        { runId, agent: agent.name, err: (err as Error).message, durationMs: Date.now() - agentStart },
+        `review: agent "${agent.name}" ${cancelled ? 'cancelled' : 'failed'}`,
+      );
     }
+  }
+
+  /**
+   * Mark ONE run failed with a reason, persist whatever its log buffer holds,
+   * and close its stream — the whole of what a run that never reached the engine
+   * still owes the reader.
+   *
+   * Both writes swallow their own rejection ON PURPOSE: this runs on the failure
+   * path, and a repository that is refusing writes must not stop the remaining
+   * runs from being marked, nor the bus from being completed. The stream is what
+   * a watching page is waiting on, and leaving it open is what turns a failed run
+   * into a spinner that never stops.
+   */
+  private async failRunRow(
+    runId: string,
+    pull: ReviewPull,
+    agent: ReviewAgent,
+    msg: string,
+  ): Promise<void> {
+    await this.repo
+      .completeAgentRun(runId, {
+        status: 'failed',
+        durationMs: 0,
+        tokensIn: 0,
+        tokensOut: 0,
+        findingsCount: 0,
+        grounding: '0/0 passed',
+        error: msg,
+      })
+      .catch(() => undefined);
+    await this.repo
+      .saveRunTrace(runId, this.traceFromBuffer(runId, pull, agent, '0/0 passed'))
+      .catch(() => undefined);
+    this.container.runBus.complete(runId);
   }
 
   /**
@@ -648,9 +808,14 @@ export class ReviewRunExecutor {
    * found, or repo-intel errors) — `reviewPullRequest` omits the section in
    * that case (acceptance #10: flag off → identical prompt).
    *
-   * Compact format: one bullet per caller, grouped by file. Trimmed (limit 10
-   * rows per `getCallerSignatures` call) so the section stays under ~600
-   * tokens even on heavy PRs.
+   * Compact format: one bullet per caller, grouped by file. The `limit: 10`
+   * passed to `getCallerSignatures` bounds callers PER SYMBOL, not the total —
+   * a PR with hundreds of declared symbols across many files still gets one
+   * digest entry per symbol, so the "under ~600 tokens" this comment used to
+   * claim was never a real bound. `changedFiles` is capped at
+   * `MAX_CALLERS_DIGEST_FILES` for that reason: this digest is built ONCE for
+   * the whole diff and reused unchanged on every map-reduce chunk, so its size
+   * is what every chunk's prompt pays, not what one file's review needs.
    */
   private async buildCallersDigest(
     repoId: string,
@@ -658,8 +823,10 @@ export class ReviewRunExecutor {
     runLog: RunLogger,
     summary: string[],
   ): Promise<string | undefined> {
-    const changedFiles = diff.files.map((f) => f.path);
-    if (changedFiles.length === 0) return undefined;
+    const allChangedFiles = diff.files.map((f) => f.path);
+    if (allChangedFiles.length === 0) return undefined;
+    const changedFiles = allChangedFiles.slice(0, MAX_CALLERS_DIGEST_FILES);
+    const omitted = allChangedFiles.length - changedFiles.length;
     let rows;
     try {
       rows = await this.container.repoIntel.getCallerSignatures(repoId, changedFiles, 10);
@@ -681,7 +848,11 @@ export class ReviewRunExecutor {
       out.push(`### ${file}`);
       out.push(...lines);
     }
-    summary.push(`callers digest: ${rows.length} caller signature(s) attached`);
+    summary.push(
+      omitted > 0
+        ? `callers digest: ${rows.length} caller signature(s) attached (${omitted} changed file(s) past the ${MAX_CALLERS_DIGEST_FILES}-file cap were not queried)`
+        : `callers digest: ${rows.length} caller signature(s) attached`,
+    );
     return out.join('\n');
   }
 

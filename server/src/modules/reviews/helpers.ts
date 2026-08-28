@@ -3,19 +3,32 @@
  * their arguments — no DB / network / `this`).
  */
 
-import type { Finding, ReviewRecord } from '@devdigest/shared';
-import {
-  attachedSkills,
-  skillBlock,
-  type LinkedSkillLike,
-} from '../_shared/attached-skills.js';
+import { AgentColumnStatus } from '@devdigest/shared';
+import type {
+  AgentColumn,
+  Finding,
+  MultiAgentRun,
+  MultiAgentRunRef,
+  ReviewRecord,
+} from '@devdigest/shared';
 import type { FindingRow, ReviewRow } from './repository.js';
+import type { MultiRunItemDetail, MultiRunRow } from './repository/multi-run.repo.js';
 import type { AgentRow, PullRow, RepoRow } from '../../db/rows.js';
 import type { ReviewAgent, ReviewPull, ReviewRepo } from './types.js';
 
 // reduceReviews + sliceDiff live in @devdigest/reviewer-core (pure engine logic
 // shared with the CI runner); re-exported here for backward-compatible imports.
 export { reduceReviews, sliceDiff } from '@devdigest/reviewer-core';
+
+// The skill-body assembly moved to `_shared/skill-prompt.ts` when the eval batch
+// runner needed the same two filters, and is re-exported here the same way — the
+// import runs INTO `_shared`, which `no-cross-module` allows, unlike the reverse.
+export {
+  attachedSkills,
+  skillBodiesFor,
+  skillBlock,
+  type LinkedSkillLike,
+} from '../_shared/skill-prompt.js';
 
 export interface ReviewDtoFinding extends Finding {
   review_id: string;
@@ -113,20 +126,6 @@ export function reviewToDto(
   };
 }
 
-// The two filters and the label live in `_shared/` because `modules/ci` applies
-// the same rule when it publishes a bundle; re-exported here so every existing
-// import of this module keeps working.
-export {
-  attachedSkills,
-  skillBlock,
-  type LinkedSkillLike,
-} from '../_shared/attached-skills.js';
-
-/** The ordered skill bodies for the prompt's `## Skills / rules` slot. */
-export function skillBodiesFor(links: LinkedSkillLike[]): string[] {
-  return attachedSkills(links).map((l) => skillBlock(l.skill.name, l.skill.body));
-}
-
 /**
  * Build the per-run task instruction line for a PR.
  *
@@ -182,3 +181,199 @@ export const toReviewAgent = (row: AgentRow): ReviewAgent => ({
   ciFailOn: row.ciFailOn,
   repoIntel: row.repoIntel,
 });
+
+/**
+ * `agent_runs.status` → the five states a column header can render.
+ *
+ * The column is `text()` with no enum at the database level, so every value ever
+ * written by any version of this code can come back out of it. Anything outside
+ * the five reads as `failed` rather than as itself: a header with no state at
+ * all is unreadable, and "failed" is the honest reading of a run in a state this
+ * code no longer understands. `null` — a row created before `status` was always
+ * written — lands there too.
+ */
+export function columnStatus(raw: string | null): AgentColumnStatus {
+  const parsed = AgentColumnStatus.safeParse(raw);
+  return parsed.success ? parsed.data : 'failed';
+}
+
+/**
+ * Longest model-written rationale or suggested fix a multi-run response carries
+ * per finding; the rest is elided and SAID to be elided.
+ *
+ * `SPEC-05 § Non-functional requirements` bounds the body at 2 MB over 10 agents
+ * × 50 findings and names which dimension gives way: "різати текст обґрунтувань,
+ * а не кількість знахідок" — cut the rationale text, never the count, because
+ * showing part of a list in silence is what AC-177 forbids. The same paragraph
+ * puts the EXPECTED rationale at ~2 KB, so the cap is twice that: ordinary model
+ * output is never touched, and a model that answers with a megabyte cannot make
+ * the body grow with it.
+ *
+ * What this bounds is each FIELD, not the whole response. At the stated load the
+ * body is ≈1 MB and the cap never fires; a pathological run of 500 findings that
+ * every one of them hits still exceeds 2 MB, and pulling it under would mean
+ * dropping findings — the one thing the requirement rules out.
+ */
+export const MULTI_RUN_TEXT_CHARS = 4_000;
+
+/**
+ * And the title, which is short by nature and load-bearing by accident: it is
+ * the input to the position grouping (`conflicts.ts`), whose pair scan is
+ * quadratic in findings per file and linear in title tokens. An unbounded title
+ * is therefore not only body size, it is the 250 ms grouping budget.
+ */
+export const MULTI_RUN_TITLE_CHARS = 300;
+
+/**
+ * Cut a string to `max` CODE POINTS, not UTF-16 units: `String.slice` counts
+ * units, so a boundary inside an astral character leaves an orphaned surrogate
+ * in the JSON response. The suffix is the "and say that it was cut" half of the
+ * requirement — a bare `…` is indistinguishable from a `…` the model wrote.
+ */
+export function clampModelText(text: string, max: number): string {
+  const chars = [...text];
+  if (chars.length <= max) return text;
+  return `${chars.slice(0, max).join('')}… [truncated, ${chars.length - max} more characters]`;
+}
+
+/**
+ * One item of a multi-run → the column the results page draws (AC-47…AC-52).
+ *
+ * `agent_id` is read off the RUN, not off the item: `agent_runs.agent_id` is
+ * `ON DELETE SET NULL`, so it is null exactly when the agent has been deleted,
+ * which is the fact `agent_deleted` states in words. `agent_name` comes off the
+ * ITEM, where it was snapshotted at creation — that is the only reason a deleted
+ * agent's column can still be named (AC-118).
+ *
+ * THE ONE PLACE the multi-run's model-written text is clamped, and it has to
+ * stay the one place: `MultiRunService.get` builds the conflict takes from these
+ * columns rather than from a second read, so a rationale cut here is cut in the
+ * take that quotes it too (AC-71). Clamping in `findingRowToDto` instead would
+ * reach the PR page, whose findings are one review's worth and are not what the
+ * multi-run's ceiling is about.
+ */
+export function toAgentColumn(detail: MultiRunItemDetail): AgentColumn {
+  const { item, run, agentExists, review, findings } = detail;
+  return {
+    run_id: item.runId,
+    agent_id: run?.agentId ?? null,
+    agent_name: item.agentName,
+    agent_deleted: !agentExists,
+    provider: run?.provider ?? null,
+    model: run?.model ?? null,
+    status: columnStatus(run?.status ?? null),
+    // Clamped for the same reason the findings are: this is a raw provider or
+    // diff-loader message, and ten of them ride one response.
+    error: run?.error == null ? null : clampModelText(run.error, MULTI_RUN_TEXT_CHARS),
+    verdict: review?.verdict ?? null,
+    score: run?.score ?? null,
+    // `reduceReviews` joins one partial PER CHANGED FILE, so this grows with a
+    // file count the PR author picks — the same unbounded shape as a rationale.
+    summary: review?.summary == null ? null : clampModelText(review.summary, MULTI_RUN_TEXT_CHARS),
+    duration_ms: run?.durationMs ?? null,
+    cost_usd: run?.costUsd ?? null,
+    findings: findings.map((row) => {
+      const dto = findingRowToDto(row);
+      return {
+        ...dto,
+        title: clampModelText(dto.title, MULTI_RUN_TITLE_CHARS),
+        rationale: clampModelText(dto.rationale, MULTI_RUN_TEXT_CHARS),
+        suggestion:
+          dto.suggestion == null ? dto.suggestion : clampModelText(dto.suggestion, MULTI_RUN_TEXT_CHARS),
+      };
+    }),
+  };
+}
+
+/**
+ * The multi-run's summary duration, and WHICH of the three things that number is
+ * (AC-41, AC-156, AC-158, D28).
+ *
+ * Never derived from the runs' `duration_ms`. That derivation is the defect D28
+ * removed: five agents at a ceiling of three reported "5.1s total" where 8.9 s
+ * had passed, because the longest single run is not the wait — the queue between
+ * waves and the shared pre-work are invisible in it.
+ *
+ * `now` is a parameter so this stays a pure transform with no clock of its own
+ * (`onion-architecture` § the Core ring).
+ */
+export function summaryDuration(
+  ranAt: Date,
+  finishedAt: Date | null,
+  /** A run is still non-terminal, or this process is still finishing the fan-out. */
+  stillGoing: boolean,
+  now: number = Date.now(),
+): { ms: number | null; kind: MultiAgentRun['total_duration_kind'] } {
+  // A recorded completion wins over the runs' states: it is the measurement, and
+  // it cannot move afterwards — not even when one of the runs is deleted (AC-159).
+  if (finishedAt) {
+    return { ms: Math.max(0, finishedAt.getTime() - ranAt.getTime()), kind: 'measured' };
+  }
+  // Still going: time gone SO FAR, and the caller must not caption it "total"
+  // (AC-156). It refreshes when the page re-reads, which this page does once per
+  // run that reaches a terminal state.
+  if (stillGoing) return { ms: Math.max(0, now - ranAt.getTime()), kind: 'elapsed' };
+  // Every run terminal, no completion recorded: the process died and the reaper
+  // closed the rows long afterwards (`run.repo.ts` marks orphans on boot without
+  // writing a duration). `now - ranAt` would measure that downtime, so there is
+  // no number to give (AC-158).
+  return { ms: null, kind: 'interrupted' };
+}
+
+/** Enough to LINK to a multi-run, and deliberately not enough to draw one. */
+export const toMultiAgentRunRef = (row: {
+  multiRun: MultiRunRow;
+  prNumber: number;
+}): MultiAgentRunRef => ({
+  id: row.multiRun.id,
+  pr_id: row.multiRun.prId,
+  pr_number: row.prNumber,
+  ran_at: row.multiRun.ranAt.toISOString(),
+});
+
+/**
+ * Run `fn` over `items` with at most `limit` calls in flight, and never reject.
+ *
+ * At `limit === 1` this IS the `for (… of …) await` loop it replaces: one worker
+ * pulls from a shared cursor, so items are started in array order and item N+1
+ * begins only after N has settled. That equivalence is what lets the executor's
+ * existing callers keep their behaviour byte for byte (SPEC-05 § AC-35), and
+ * `test/reviews-concurrency-default.test.ts` observes it rather than trusting it.
+ *
+ * NOT `p-queue`, which is already a dependency: the guarantee above has to be
+ * provable from the outside, and p-queue schedules through its own ticks, so a
+ * test of it observes the scheduler rather than this ordering.
+ *
+ * A rejecting `fn` is swallowed HERE, not by the caller: AC-36 needs one agent's
+ * failure to leave the pool draining, and a rejection escaping a worker would
+ * abandon every item that worker had not yet pulled. Persisting that failure is
+ * the callback's own business — it already knows what a failure means.
+ *
+ * THE SWALLOW STAYS AND IT IS NOT ALLOWED TO BE SILENT. Reviewed on 2026-08-27
+ * and kept: never-reject is the property the pool exists for, and this file is
+ * the Core ring — pure over its arguments, holding no logger it could report to,
+ * which is exactly why the swallow cannot be turned into a log HERE. What that
+ * costs is real: a bug escaping `runJob`'s own guard would vanish without a
+ * line anywhere, and an `agent_runs` row left `queued` with it. So every caller
+ * attaches its own `.catch` to `fn` before handing it over — `run-executor.ts`
+ * `executeRuns` does, and a new caller that forgets is choosing silence.
+ */
+export async function runWithConcurrency<T>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  if (items.length === 0) return;
+  // `Math.max(1, …)` so a nonsensical 0 or -1 degrades to sequential rather
+  // than to a pool of zero workers that silently runs nothing at all.
+  const workers = Math.max(1, Math.min(Math.trunc(limit), items.length));
+  let cursor = 0;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const index = cursor++;
+      if (index >= items.length) return;
+      await fn(items[index]!).catch(() => undefined);
+    }
+  };
+  await Promise.all(Array.from({ length: workers }, () => worker()));
+}

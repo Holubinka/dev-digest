@@ -58,11 +58,13 @@ argument behind the `## What already exists` rules now in
 `.claude/agents/implementation-planner.md`.
 
 **A documented workaround, omitted from a brief, cost six runs.** Writing `integration` instead of
-`pnpm exec vitest run .it.test --fileParallelism=false` cost three full ~3-minute runs on one
-round and three more on the next, two different agents, one day apart, both arriving at the same
-`server/INSIGHTS.md` entry. The flag now travels with the command in `AGENTS.md`, `TESTING.md`,
-both package READMEs and the plan template. Measured separately: 79 files run serially in 18.6 s
-against 4.3 s in parallel — so the flag is a real cost, deliberately paid.
+the serial form of the integration command cost three full ~3-minute runs on one round and three
+more on the next, two different agents, one day apart, both arriving at the same
+`server/INSIGHTS.md` entry. This branch answered it by carrying the flag in every document that
+names the command; `main` answered the same lesson better, by putting it inside a package script
+(`pnpm test:it`), so no brief can omit what it never has to type. That is the version kept.
+Measured separately: 79 files run serially in 18.6 s against 4.3 s in parallel — a real cost,
+deliberately paid.
 
 ## What was NOT measured, and is therefore not claimed
 

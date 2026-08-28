@@ -95,6 +95,8 @@ function failingHarness(onComplete: (row: Record<string, unknown>) => void) {
     insertReview: async () => {
       throw new Error('invalid byte sequence for encoding "UTF8": 0x00');
     },
+    // The pool's claim succeeds — these rows are in flight.
+    startAgentRun: async () => true,
     completeAgentRun: async (_id: string, row: Record<string, unknown>) => onComplete(row),
     saveRunTrace: async () => undefined,
     getPrFiles: async () => [],
@@ -120,6 +122,8 @@ function harness(spy: ReturnType<typeof repoIntelSpy>) {
     insertReview: async () => ({ id: 'rev-1' }),
     insertFindings: async () => [],
     markReviewed: async () => undefined,
+    // The pool's claim succeeds — these rows are in flight.
+    startAgentRun: async () => true,
     completeAgentRun: async () => undefined,
     saveRunTrace: async () => undefined,
     getPrFiles: async () => [],

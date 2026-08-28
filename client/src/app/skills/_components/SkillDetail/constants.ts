@@ -7,16 +7,18 @@ export interface DetailTab {
 }
 
 /**
- * Detail tabs. Evals is absent on purpose — the `eval` tables are provisioned
- * and empty until a later lesson, and a tab that can only render zeros is worse
- * than no tab. Stats is here because every number it shows is derived from rows
- * that already exist: bindings, runs, and accepted/dismissed findings.
+ * Detail tabs. Stats and Evals are both here because every number either shows
+ * is derived from rows that already exist: Stats from bindings, runs and
+ * accepted/dismissed findings; Evals from `eval_cases`/`eval_runs`, the
+ * reciprocal of an agent's own Evals tab — which cases this skill actually
+ * shaped, not which agents nominally bind it (D4, L06).
  */
 export const TABS: readonly DetailTab[] = [
   { key: "config", labelKey: "detail.tabs.config", icon: "Settings" },
   { key: "preview", labelKey: "detail.tabs.preview", icon: "Eye" },
   { key: "context", labelKey: "detail.tabs.context", icon: "FileText" },
   { key: "stats", labelKey: "detail.tabs.stats", icon: "BarChart" },
+  { key: "evals", labelKey: "detail.tabs.evals", icon: "Gauge" },
   { key: "versions", labelKey: "detail.tabs.versions", icon: "History" },
 ];
 

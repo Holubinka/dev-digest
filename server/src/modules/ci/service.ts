@@ -15,7 +15,7 @@ import {
   PUBLISH_BRANCH,
   workflowPathFor,
 } from './constants.js';
-import { attachedSkills } from '../_shared/attached-skills.js';
+import { attachedSkills } from '../_shared/skill-prompt.js';
 import { buildBundle } from './generate/bundle.js';
 import { findYamlProblem } from './generate/yaml-lint.js';
 import { agentSlug as agentSlugFor } from './generate/slug.js';
@@ -243,7 +243,7 @@ export class CiService {
         ciFailOn: agent.ciFailOn,
       },
       // The same two filters the studio applies before a body becomes an
-      // instruction (`_shared/attached-skills.ts`). Without them a globally
+      // instruction (`_shared/skill-prompt.ts`). Without them a globally
       // disabled skill, and a body the injection detector flagged, were
       // published into someone else's repository and executed by the runner
       // while this agent ignored them here.

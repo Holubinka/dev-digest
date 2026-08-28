@@ -64,6 +64,37 @@ describe("nav — Onboarding Tour", () => {
   });
 });
 
+describe("nav — Eval Dashboard", () => {
+  const lab = NAV.find((g) => g.section === "SKILLS LAB")?.items ?? [];
+  const row = navItems.find((item) => item.key === "eval");
+
+  it("sits in SKILLS LAB with the key `activeKeyFor` and shell.json already use", () => {
+    // `key: "eval"` is load-bearing twice over: `activeKeyFor()` returns "eval"
+    // for a path starting `/eval`, and `messages/en/shell.json` holds
+    // `nav.eval`. A different key leaves the row unhighlighted on its own
+    // screen and its label untranslated.
+    expect(lab.map((i) => i.key)).toContain("eval");
+    expect(row?.href).toBe("/evals");
+  });
+
+  it("sits last in SKILLS LAB, the order the mockup fixes", () => {
+    // Placement, not presence — the sidebar renders this array in order, so
+    // only an index assertion can hold the mockup's order.
+    const keys = lab.map((i) => i.key);
+    expect(keys.indexOf("conventions")).toBeLessThan(keys.indexOf("eval"));
+    expect(keys.indexOf("eval")).toBe(keys.length - 1);
+  });
+
+  it("is reachable by `g e`, and the `?` modal says so", () => {
+    expect(row?.gKey).toBe("e");
+    expect(SHORTCUTS).toContainEqual({
+      keys: "g e",
+      label: "Go to Eval Dashboard",
+      group: "Navigation",
+    });
+  });
+});
+
 describe("nav — Project Context", () => {
   const row = navItems.find((item) => item.key === "context");
 
@@ -82,6 +113,38 @@ describe("nav — Project Context", () => {
     expect(SHORTCUTS).toContainEqual({
       keys: "g d",
       label: "Go to Project Context",
+      group: "Navigation",
+    });
+  });
+});
+
+describe("nav — Multi-Agent Review", () => {
+  const global = NAV.find((g) => g.section === "GLOBAL")?.items ?? [];
+  const row = navItems.find((item) => item.key === "multi-agent");
+
+  it("gives GLOBAL exactly one row, the one AC-90 names", () => {
+    // Presence AND count. The mockup
+    // (`specs/assets/SPEC-05-multi-agent-review-configure-run.png`) draws four
+    // GLOBAL rows — Memory, Agent Performance and CI Runs beside this one — and
+    // SPEC-05 § N7 puts all three out of scope. "Contains the row" passes with a
+    // dead link shipped next to it; this does not.
+    expect(global.map((i) => i.key)).toEqual(["multi-agent"]);
+    expect(row?.label).toBe("Multi-Agent Review");
+  });
+
+  it("uses the key `activeKeyFor` and shell.json already fixed", () => {
+    // `activeKeyFor()` returns "multi-agent" for any /multi-agent path and
+    // `messages/en/shell.json` holds `nav.multi-agent`. A different key leaves
+    // the row unhighlighted (AC-91) and its label untranslated.
+    expect(row?.href).toBe("/repos/:repoId/multi-agent");
+    expect(row?.icon).toBe("Users");
+  });
+
+  it("is reachable by `g m`, and the `?` modal says so", () => {
+    expect(row?.gKey).toBe("m");
+    expect(SHORTCUTS).toContainEqual({
+      keys: "g m",
+      label: "Go to Multi-Agent Review",
       group: "Navigation",
     });
   });

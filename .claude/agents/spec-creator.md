@@ -3,6 +3,7 @@ name: spec-creator
 description: Turns an idea, a design and a pile of sources into one specification — the requirements document that says what is being built, for whom, and how anyone will check it was built. Writes acceptance criteria in EARS, traces every one back to a goal, hunts the corner cases a design left out, names the contracts that cross a module boundary, and asks instead of inventing. Writes exactly one spec under specs/ or <module>/specs/ plus one status row, and nothing else, ever. Use before any plan exists; the implementation-planner plans against what this agent produced.
 tools: Read, Grep, Glob, Bash, Skill, Write, Edit, Agent
 model: opus
+effort: high
 color: cyan
 hooks:
   PreToolUse:

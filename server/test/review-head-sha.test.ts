@@ -124,6 +124,10 @@ function harness() {
     markReviewed: async (prId: string, sha: string) => {
       marked.push({ prId, sha });
     },
+    // The executor claims the run before it calls the engine, and a `false`
+    // answer means the row is no longer in flight — the job is then skipped.
+    // This row is in flight, so the claim succeeds.
+    startAgentRun: async () => true,
     completeAgentRun: async () => undefined,
     saveRunTrace: async () => undefined,
     getPrFiles: async () => [],

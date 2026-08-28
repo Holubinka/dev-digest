@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { Verdict, Finding } from './findings.js';
 import { EvalRun, EvalOwnerKind, Conformance, Provider, CiFailOn } from './knowledge.js';
+import { Severity, FindingCategory } from './findings.js';
+import { EvalCase } from './knowledge.js';
 
 /**
  * A4 — Eval / CI / Compose / Conformance API contracts (L06).
@@ -87,6 +89,250 @@ export const EvalDashboard = z.object({
   alert: z.string().nullable(),
 });
 export type EvalDashboard = z.infer<typeof EvalDashboard>;
+
+// ---------------------------------------------------------------------------
+// Eval — expectations, the run envelope, and the screens' read models
+// ---------------------------------------------------------------------------
+
+/** What an expectation asserts: the finding must appear, or must not. */
+export const EvalExpectationPolarity = z.enum(['must_find', 'must_not_flag']);
+export type EvalExpectationPolarity = z.infer<typeof EvalExpectationPolarity>;
+
+/**
+ * One expectation inside a case's `expected_output`.
+ *
+ * Coordinates mirror `Finding` (`file` + `start_line`/`end_line`) because a
+ * finding credits an expectation on same path + intersecting range only:
+ * `severity`, `category` and `title` are stored and displayed, never consulted.
+ */
+export const EvalExpectation = z
+  .object({
+    file: z.string().min(1),
+    start_line: z.number().int(),
+    end_line: z.number().int(),
+    polarity: EvalExpectationPolarity.default('must_find'),
+    severity: Severity.nullish(),
+    category: FindingCategory.nullish(),
+    title: z.string().nullish(),
+  })
+  // .strict(), not Zod's default strip: an expectation carrying unknown fields
+  // must be REFUSED so the case editor can say what is wrong with it, instead
+  // of silently saving a trimmed copy the author never wrote.
+  .strict();
+export type EvalExpectation = z.infer<typeof EvalExpectation>;
+/** Caller-facing input type — `.default()` fields stay optional. */
+export type EvalExpectationInput = z.input<typeof EvalExpectation>;
+
+/** A case's whole `expected_output`. The 50-record ceiling is an NFR. */
+export const EvalExpectations = z.array(EvalExpectation).max(50);
+export type EvalExpectations = z.infer<typeof EvalExpectations>;
+/** Caller-facing input type — `polarity` stays optional in each element. */
+export type EvalExpectationsInput = z.input<typeof EvalExpectations>;
+
+/**
+ * The batch-level result, written into EVERY row of the batch on completion.
+ * Stored rather than recomputed on read, so deleting a case cannot move a past
+ * batch's numbers. Absent (`null` in the envelope) when every case errored.
+ */
+export const EvalBatchAggregate = z.object({
+  batch_id: z.string(),
+  completed_at: z.string(),
+  cases: z.number().int(),
+  passed: z.number().int(),
+  errored: z.number().int(),
+  recall: z.number().min(0).max(1),
+  precision: z.number().min(0).max(1),
+  citation_accuracy: z.number().min(0).max(1),
+  cost_usd: z.number().nullable(),
+  duration_ms: z.number().int(),
+  /** The cases this batch ran — what makes a like-for-like comparison answerable. */
+  case_ids: z.array(z.string()),
+});
+export type EvalBatchAggregate = z.infer<typeof EvalBatchAggregate>;
+
+/** The `actual_output` jsonb of one `eval_runs` row. */
+export const EvalRunEnvelope = z.object({
+  batch_id: z.string(),
+  agent_id: z.string(),
+  agent_version: z.number().int(),
+  provider: Provider,
+  model: z.string(),
+  skills: z.array(z.object({ id: z.string(), name: z.string() })),
+  /** Findings the citation gate KEPT, capped; `findings_truncated` flags the cap. */
+  findings: z.array(Finding),
+  findings_truncated: z.boolean(),
+  /** How many findings reached the gate, and how many it dropped. */
+  returned: z.number().int(),
+  dropped: z.number().int(),
+  error: z.string().nullable(),
+  aggregate: EvalBatchAggregate.nullable(),
+});
+export type EvalRunEnvelope = z.infer<typeof EvalRunEnvelope>;
+
+/** A case as the Evals tab lists it: the case plus its last run's outcome. */
+export const EvalCaseRow = z.object({
+  id: z.string(),
+  name: z.string(),
+  owner_kind: EvalOwnerKind,
+  owner_id: z.string(),
+  notes: z.string().nullish(),
+  expected_count: z.number().int(),
+  /** `null` is the third state the tab renders: never run. */
+  last_run: z
+    .object({
+      ran_at: z.string(),
+      pass: z.boolean().nullable(),
+      recall: z.number().nullable(),
+      precision: z.number().nullable(),
+      citation_accuracy: z.number().nullable(),
+      findings_count: z.number().int(),
+      /** The linked skills active in the prompt for this run (D4 — skill
+       *  binding does not bump the agent version, so this is the only record
+       *  of which skills actually shaped the result). Empty array, not null,
+       *  when the agent had no skills linked at run time. */
+      skills: z.array(z.object({ id: z.string(), name: z.string() })),
+    })
+    .nullable(),
+});
+export type EvalCaseRow = z.infer<typeof EvalCaseRow>;
+
+/** One owner's case set, plus the `N / M passing` badge the heading carries. */
+export const EvalCaseSet = z.object({
+  cases: z.array(EvalCaseRow),
+  passing: z.number().int(),
+  total: z.number().int(),
+});
+export type EvalCaseSet = z.infer<typeof EvalCaseSet>;
+
+/**
+ * A case as a SKILL's own Evals tab lists it — the reciprocal of `EvalCaseRow`.
+ * `EvalCaseRow.owner_id` is already the agent id when `owner_kind` is
+ * `'agent'`; `agent_name` is the one field a skill-centric list needs that the
+ * agent-centric one does not, since every row here spans a different agent.
+ */
+export const SkillEvalCaseRow = EvalCaseRow.extend({
+  agent_name: z.string(),
+});
+export type SkillEvalCaseRow = z.infer<typeof SkillEvalCaseRow>;
+
+/**
+ * Every case, across every agent, whose LATEST run had this skill active
+ * (D4 — skill binding does not bump the agent version, so a run's own
+ * envelope is the only record of which skills actually shaped it). A case
+ * last run before the skill was bound, or never run, carries no skills and is
+ * correctly absent here — this is not "agents currently bound", it is
+ * "cases this skill actually affected".
+ */
+export const SkillEvalCaseSet = z.object({
+  cases: z.array(SkillEvalCaseRow),
+  passing: z.number().int(),
+  total: z.number().int(),
+});
+export type SkillEvalCaseSet = z.infer<typeof SkillEvalCaseSet>;
+
+/** One completed batch, as the dashboard tables and the comparison show it. */
+export const EvalBatchSummary = z.object({
+  batch_id: z.string(),
+  agent_id: z.string(),
+  agent_name: z.string(),
+  agent_version: z.number().int(),
+  ran_at: z.string(),
+  cases: z.number().int(),
+  passed: z.number().int(),
+  errored: z.number().int(),
+  recall: z.number().min(0).max(1),
+  precision: z.number().min(0).max(1),
+  citation_accuracy: z.number().min(0).max(1),
+  cost_usd: z.number().nullable(),
+  duration_ms: z.number().int(),
+});
+export type EvalBatchSummary = z.infer<typeof EvalBatchSummary>;
+
+/** The outcome of running one whole case set. */
+export const EvalBatchResult = z.object({
+  batch_id: z.string(),
+  agent_id: z.string(),
+  agent_version: z.number().int(),
+  result: EvalRun,
+  errored: z.number().int(),
+  aggregate: EvalBatchAggregate.nullable(),
+});
+export type EvalBatchResult = z.infer<typeof EvalBatchResult>;
+
+/** Turning a decided finding into a case. `created: false` — it already existed. */
+export const EvalCaseFromFinding = z.object({
+  case: EvalCase,
+  created: z.boolean(),
+});
+export type EvalCaseFromFinding = z.infer<typeof EvalCaseFromFinding>;
+
+/** One agent's card on the Eval Dashboard. */
+export const EvalDashboardCard = z.object({
+  agent_id: z.string(),
+  agent_name: z.string(),
+  provider: Provider,
+  model: z.string(),
+  cases_total: z.number().int(),
+  latest: EvalBatchSummary.nullable(),
+  trend: z.array(EvalTrendPoint),
+});
+export type EvalDashboardCard = z.infer<typeof EvalDashboardCard>;
+
+/** The whole Eval Dashboard: every agent that has cases, plus recent batches. */
+export const EvalDashboardAll = z.object({
+  cards: z.array(EvalDashboardCard),
+  recent: z.array(EvalBatchSummary),
+});
+export type EvalDashboardAll = z.infer<typeof EvalDashboardAll>;
+
+/** One agent's own dashboard: the metric cards and trend, plus its batch table. */
+export const EvalAgentDashboard = z.object({
+  dashboard: EvalDashboard,
+  batches: z.array(EvalBatchSummary),
+});
+export type EvalAgentDashboard = z.infer<typeof EvalAgentDashboard>;
+
+/** Two batches compared, old (`a`) → new (`b`). */
+export const EvalCompare = z.object({
+  a: EvalBatchSummary,
+  b: EvalBatchSummary,
+  /** b − a. Unlike the metrics themselves, a delta spans [-1, 1]. */
+  delta: z.object({
+    recall: z.number(),
+    precision: z.number(),
+    citation_accuracy: z.number(),
+    cost_usd: z.number().nullable(),
+  }),
+  /** `changed_lines` is computed server-side; the client only highlights them. */
+  prompt: z.object({
+    changed: z.boolean(),
+    a_version: z.number().int(),
+    b_version: z.number().int(),
+    a_text: z.string(),
+    b_text: z.string(),
+    changed_lines: z.array(z.number().int()),
+  }),
+  /** False when the two batches ran case sets differing in size or membership. */
+  like_for_like: z.boolean(),
+  case_diff: z.object({
+    only_in_a: z.array(z.string()),
+    only_in_b: z.array(z.string()),
+  }),
+});
+export type EvalCompare = z.infer<typeof EvalCompare>;
+
+/** «Run all agents»: the batches that ran, and the agents skipped, by name. */
+export const EvalRunAllResult = z.object({
+  batches: z.array(EvalBatchResult),
+  skipped: z.array(
+    z.object({
+      agent_id: z.string(),
+      agent_name: z.string(),
+      reason: z.string(),
+    }),
+  ),
+});
+export type EvalRunAllResult = z.infer<typeof EvalRunAllResult>;
 
 // ===========================================================================
 // Compose Review

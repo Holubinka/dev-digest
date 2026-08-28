@@ -112,6 +112,53 @@ export type {
 } from "@devdigest/shared";
 
 /**
+ * Eval pipeline (SPEC-05) — the case set, the run envelope and the three
+ * screens' read models. Types only, never the schemas: nothing on the dashboard
+ * validates a response, and `lib/api.ts` does not parse.
+ *
+ * `EvalExpectations` is the one exception and it is imported directly from
+ * `@devdigest/shared` by the case editor, not re-exported here: that screen
+ * genuinely runs `.safeParse()` on hand-edited JSON to block a save (AC-19), so
+ * it needs the schema object rather than the type.
+ *
+ * `AgentVersion` rides along because «Promote vN» reads a version's config
+ * snapshot before applying it — it is an agents contract serving an eval flow.
+ */
+export type {
+  EvalCase,
+  EvalCaseInput,
+  EvalOwnerKind,
+  EvalRun,
+  EvalPerTrace,
+  EvalRunRecord,
+  EvalRunResult,
+  EvalTrendPoint,
+  EvalDashboard,
+  EvalExpectation,
+  EvalExpectationInput,
+  EvalExpectationPolarity,
+  EvalExpectations,
+  EvalExpectationsInput,
+  EvalBatchAggregate,
+  EvalRunEnvelope,
+  EvalCaseRow,
+  EvalCaseSet,
+  SkillEvalCaseRow,
+  SkillEvalCaseSet,
+  EvalBatchSummary,
+  EvalBatchResult,
+  EvalCaseFromFinding,
+  EvalDashboardCard,
+  EvalDashboardAll,
+  EvalAgentDashboard,
+  EvalCompare,
+  EvalRunAllResult,
+  Agent,
+  AgentVersion,
+  AgentVersionConfig,
+} from "@devdigest/shared";
+
+/**
  * Export to CI (SPEC-05) — the wizard's request, the agent's installations and
  * the CI Runs page.
  *

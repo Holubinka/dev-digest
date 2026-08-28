@@ -1,8 +1,14 @@
 import type { Container } from '../../platform/container.js';
 import type { UnifiedDiff } from '@devdigest/shared';
-import { diffFromPatches } from '../../adapters/git/diff-parser.js';
+import { loadPrDiff, diffFromPrFiles } from '../_shared/pr-diff.js';
 import type { ReviewRepository } from './repository.js';
 import type { ReviewPull, ReviewRepo } from './types.js';
+
+// The body moved to `_shared/pr-diff.ts` so `modules/eval` can cut a case's
+// fragment from the same diff without a `no-cross-module` violation. Behaviour
+// is unchanged and this signature is unchanged: `run-executor.ts` calls
+// `loadDiff(container, repo, workspaceId, pull, repo)` and must keep compiling.
+export { diffFromPrFiles };
 
 /**
  * Load the unified diff for a PR. Prefers a real `git diff base...head`; falls
@@ -16,20 +22,5 @@ export async function loadDiff(
   pull: ReviewPull,
   repoRow: ReviewRepo,
 ): Promise<UnifiedDiff> {
-  try {
-    const diff = await container.git.diff(
-      { owner: repoRow.owner, name: repoRow.name },
-      pull.base,
-      pull.headSha,
-    );
-    if (diff.files.length > 0) return diff;
-  } catch {
-    /* fall through to pr_files reconstruction */
-  }
-  return diffFromPrFiles(repo, pull.id);
-}
-
-/** Reconstruct a UnifiedDiff from persisted pr_files patches. */
-export async function diffFromPrFiles(repo: ReviewRepository, prId: string): Promise<UnifiedDiff> {
-  return diffFromPatches(await repo.getPrFiles(prId));
+  return loadPrDiff({ git: container.git, reviewRepo: repo }, pull, repoRow);
 }
