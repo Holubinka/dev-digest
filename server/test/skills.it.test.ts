@@ -102,13 +102,13 @@ d('/skills', () => {
     >;
     const row = list.find((s) => s.id === id)!;
     expect(row).not.toHaveProperty('body');
-    expect(row).toMatchObject({ name: 'Heavy', agent_count: 0, injection: [] });
+    expect(row).toMatchObject({ name: 'Heavy', agents: 0, injection: [] });
     // The whole page must not be paying for a body nobody renders.
     expect(JSON.stringify(list)).not.toContain('xxxxxxxxxx');
 
     const detail = (await app.inject({ method: 'GET', url: `/skills/${id}` })).json();
     expect(detail.body).toContain('# Heavy');
-    expect(detail).toMatchObject({ agent_count: 0, injection: [] });
+    expect(detail).toMatchObject({ agents: 0, injection: [] });
     await app.close();
   });
 
@@ -369,9 +369,9 @@ d('/skills', () => {
 
     const card = (await app.inject({ method: 'GET', url: '/skills' })).json() as Array<{
       id: string;
-      agent_count: number;
+      agents: number;
     }>;
-    expect(card.find((s) => s.id === id)?.agent_count).toBe(0);
+    expect(card.find((s) => s.id === id)?.agents).toBe(0);
     await app.close();
   });
 
@@ -407,7 +407,7 @@ d('/skills', () => {
     ).json().id as string;
 
     const before = (await app.inject({ method: 'GET', url: '/skills' })).json();
-    expect(before.find((s: { id: string }) => s.id === skillId).agent_count).toBe(0);
+    expect(before.find((s: { id: string }) => s.id === skillId).agents).toBe(0);
 
     await app.inject({
       method: 'POST',
@@ -415,7 +415,7 @@ d('/skills', () => {
       payload: { skill_ids: [skillId] },
     });
     const after = (await app.inject({ method: 'GET', url: '/skills' })).json();
-    expect(after.find((s: { id: string }) => s.id === skillId).agent_count).toBe(1);
+    expect(after.find((s: { id: string }) => s.id === skillId).agents).toBe(1);
 
     expect((await app.inject({ method: 'DELETE', url: `/skills/${skillId}` })).statusCode).toBe(200);
     const links = await pg.handle.db

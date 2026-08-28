@@ -72,7 +72,7 @@ export function SkillCard({
             {t("injection.badge")}
           </Badge>
         )}
-        <span style={s.agents}>{t("page.agentCount", { count: sk.agent_count })}</span>
+        <span style={s.agents}>{t("page.agentCount", { count: sk.agents })}</span>
       </div>
     </div>
   );
