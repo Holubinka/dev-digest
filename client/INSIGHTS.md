@@ -1121,6 +1121,61 @@ in the component test, and a loop in `app/evals/_components/format.test.ts` that
 `labelKey` against the imported `messages/en/eval.json`. The second is the cheap one — it needs no
 render and catches the same class of bug for any table of `{ value, labelKey }` pairs.
 
+### A fixture that disagrees with the server hides the exact bug it was written to catch
+
+**Symptom.** `ExportWizard.test.tsx`'s `bundle()` marked every file except the workflow
+`editable: false`. The reducer picked the Preview step's default file with
+`action.files.find((f) => f.editable)`, the test passed, and the shipped screen opened on
+`.devdigest/agents/<slug>.yaml` instead of the workflow — AC-20, broken in production and green in
+CI. Found 2026-08-26 by review, not by a test.
+
+**Cause.** `server/src/modules/ci/generate/bundle.ts` marks the manifest, **every skill** and
+`memory.jsonl` editable too, and puts the workflow **last**; only `runner.mjs` and `.gitattributes`
+are generated. So `find(f => f.editable)` is the manifest in every real bundle and the workflow
+only in that fixture. Nothing compares a client fixture to the server that produces it: the client
+mocks `@/lib/hooks/ci` at the module boundary, so `pnpm typecheck` sees a well-typed `CiFile[]` and
+is satisfied.
+
+**Fix.** Select by PATH (`WORKFLOW_PATH` in the wizard's `constants.ts`), and correct the fixture in
+the same change — a wrong fixture left behind makes the next regression just as invisible. **Verify
+a fixture's shape against the route, not against the contract**: `curl`ing
+`POST /agents/:id/export-ci` prints the real `editable` flags in five seconds, and that is what
+settled this one. The check that the fixture is now honest is that reverting the reducer alone
+turns two pre-existing tests red.
+
+### A hook mock with `isError: false` hardcoded cannot fail, so no test can see a failure state
+
+**Symptom.** `ExportWizard.test.tsx` mocked `useExportCi` as a frozen literal —
+`{ mutateAsync, isPending: false, isError: false, error: null }`. Sixteen tests passed while the
+Configure step swallowed a failed regeneration with `.catch(() => {})`: nothing could render the
+failure, and nothing could assert one either. 2026-08-26.
+
+**Cause.** A real `useMutation` does two things when `mutateAsync` rejects — it sets `isError` and
+it re-renders. A literal does neither, so a rejection moves nothing on screen even when the
+component reads `isError` correctly.
+
+**Fix.** Give the mock the one piece of state it is mocking:
+`vi.mock("@/lib/hooks/ci", async () => { const { useState } = await import("react"); … })`, with
+`mutateAsync` setting the error on rejection, clearing it on success, and `isError: error !== null`.
+Thirteen lines. `useState` is legal in there because the mocked hook is called from the component's
+own body, the `await import` sidesteps the hoisting TDZ that `vi.hoisted` exists for, and every
+existing test is unaffected because they all resolve.
+
+### A confirmed change and the state it invalidates must land in one dispatch, not one on each side of an `await`
+
+**Symptom.** AC-32's dialog promises that a Configure change discards the hand edit.
+`ExportWizard.applyChange` dispatched the new triggers synchronously and cleared `edits` only from
+the `files` dispatch on success, so a regeneration that failed left the NEW triggers beside the OLD
+edit — and `Install` published that edit, carrying the previous `types:` list, against a config it
+no longer matched, with nothing on screen saying so. The failure path is ordinary: the export routes
+allow 10 requests a minute and `applyChange` fires one on every chip toggle and every radio click.
+
+**Fix.** `reducer.ts` `case "config"` clears `edits` itself (2026-08-26) — the setting and the loss
+the reader just confirmed are one decision, so they land together whatever the network then does,
+and the regeneration is left doing only what it is for: replacing `files`. The general form: when a
+`.catch()` is empty, ask what the success path was going to clean up — that is exactly what the
+failure path now keeps.
+
 ## Codebase Patterns
 
 ### A security predicate gets exported, not restated — `hasDotSegment` is the dot-segment rule
@@ -2167,6 +2222,21 @@ treat a green `pnpm test` as no evidence at all about types: the client's three 
 `lint`, `typecheck` and `test`, and only the middle one reads these files as types.
 
 
+### A bare `{value}` in a next-intl message is stringified, not number-formatted
+
+**Symptom.** `Unable to find an element with the text: 100,000 bytes` on an assertion against
+`exportWizard.fileSize` (`messages/en/ci.json`, `"{bytes} bytes"`). The element really does exist —
+it reads `100000 bytes`. Hit 2026-08-26 on `ExportWizard.test.tsx`.
+
+**Cause.** ICU treats a bare `{bytes}` as a plain argument and calls `String()` on it. Grouping
+separators come from the `number` type — `{bytes, number}` — which is what `Intl.NumberFormat`
+would have given. next-intl does not add it for you because the argument may not be a number.
+
+**Fix.** Assert the ungrouped form, or write `{bytes, number}` in the message if the screen wants
+`100,000`. Decide it when the key is written: changing the message later moves the assertion in
+every test that reads it.
+
+
 ## Recurring Errors & Fixes
 
 ### `pnpm typecheck` fails on routes that do not exist on the branch you are standing on
@@ -3011,6 +3081,67 @@ and mocks only `lib/hooks/reviews`. The grep above finds the first file and miss
 component that mounts the changed one transitively has no `next/navigation` mock to extend, so
 there is nothing to grep for. The reliable move after touching a mid-tree component is
 `pnpm test` over the whole suite rather than the file you edited — 17s here, and it named both.
+
+### `pnpm dev` loses port 3000 to another worktree, and the page you then curl is that worktree's
+
+**Symptom.** `curl localhost:3000/ci-runs` answered `404` with a 72 KB HTML body that looked like
+the app — right shell, right nav, the `ci` namespace embedded in the flight payload — but carried
+the PREVIOUS version of `messages/en/ci.json` and no route I had just added. Two round trips went
+into "why is my page not registered" before the log was read. Hit 2026-08-26.
+
+**Cause.** `package.json` pins `next dev -p 3000`, and a dev server from another
+`emdash/worktrees/**` checkout of this repo already held the port. `next dev` does not fall back to
+a free port: it prints `Failed to start server / EADDRINUSE` and exits, and because the launch was
+backgrounded the message went to the log rather than to the terminal. Every later `curl` reached
+the OTHER worktree — same app, different commit — so nothing about the response said "wrong server".
+
+**Fix.** `lsof -nP -iTCP:3000 -sTCP:LISTEN` before believing anything served on 3000, and read the
+dev log rather than the HTTP status. To exercise a route without taking someone else's server down,
+run `pnpm exec next dev -p 3210` (the `dev` script's `-p 3000` is not overridable through pnpm) and
+kill only the PID `lsof` reports for that port.
+
+Hit a second time the same day, 2026-08-26, by the fix round for the same plan — and the API side
+of it too: `curl localhost:3001/health` answered `ok` from
+`/Users/Vitalik/WebstormProjects/dev-digest`, a different checkout of this repo entirely.
+`lsof -ti tcp:3001` then `lsof -a -p <pid> -d cwd -Fn` names the directory a listener is serving
+from, which is the one question `/health` cannot answer. Both servers came up clean on
+`API_PORT=3002` + `next dev -p 3100`.
+
+
+### Selecting a bundle file by PATH fails open to the manifest, and every gate stays green
+
+**Symptom.** On 2026-08-27 the wizard's `reducer.ts` still picked the workflow with
+`files.find((f) => f.path === WORKFLOW_PATH) ?? action.files[0]` while the server had moved to a
+per-agent name, `.github/workflows/devdigest-review-<slug>.yml` (AC-135). Nothing threw. The
+Preview step simply opened on `.devdigest/agents/<slug>.yaml`, and `editedWorkflow` stopped
+finding the hand edit, so Install published the generated file over what the reader typed.
+
+**Cause.** The `?? files[0]` fallback. A path match that no longer matches returns `undefined`,
+and the fallback turns a failed lookup into a *plausible* answer — the first entry of the bundle,
+which is the manifest. `lint`, `typecheck` and RTL all passed, because the test fixture carried
+the same stale constant the reducer did: the fixture and the code agreed with each other and
+both disagreed with the server.
+
+**Fix.** Select by what a file IS, not where it was written — `CiFile.role` (`eval-ci.ts`), so
+`files.find((f) => f.role === "workflow")`. Reverting just that one line to a path comparison
+fails **11** of the 22 wizard tests, which is the check worth running when touching it. More
+generally: when a fixture and a client constant restate a server value, a mutation test is the
+only thing that can tell you they are both wrong.
+
+### A client constant "kept in step with" a server constant is a defect waiting for the server to change
+
+**Symptom.** `ExportWizard/constants.ts` carried `WORKFLOW_PATH` under a comment saying it was
+"kept in step with `server/src/modules/ci/constants.ts`". It was the fourth copy of that path
+across three packages, and it silently stopped being in step the day the server derived the name
+from the agent's slug.
+
+**Fix.** Delete the copy and have the server say it. Two shapes did the job here, both worth
+reaching for before adding a literal: a discriminator on the item (`CiFile.role`) when the client
+must FIND something, and a plain field on the response (`CiExport.removals`, AC-145) when the
+client must NAME something. `MAX_DOC_CHARS` shows the third case — importing the value from
+`@devdigest/shared` is already an established pattern here, so a client-side literal is rarely
+the only option.
+
 
 ## Open Questions
 

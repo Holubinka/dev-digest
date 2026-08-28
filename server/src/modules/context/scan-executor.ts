@@ -1,5 +1,12 @@
 import type { ContextContainer, ContextRepo, ScannedDoc } from './types.js';
-import { contentHash, kindForRoot, renderDoc, rootFor, truncateCodePoints } from './helpers.js';
+import {
+  contentHash,
+  isExcludedBundlePath,
+  kindForRoot,
+  renderDoc,
+  rootFor,
+  truncateCodePoints,
+} from './helpers.js';
 import { resolveContextSettings } from './settings.js';
 import {
   DOC_EXTENSIONS,
@@ -64,6 +71,11 @@ export class ContextScanExecutor {
         // today; if it ever does, counting it under a root nobody configured is
         // worse than leaving it out.
         if (root === undefined) continue;
+        // An exported CI bundle is this system's own output, so a review that read
+        // its agent's skill back as project context would be grounding itself in
+        // what it wrote. Skipped here rather than at the root, because every other
+        // document under `.devdigest/` is the reason that root is unconditional.
+        if (isExcludedBundlePath(file.path)) continue;
         let text: string;
         try {
           text = await this.container.git.readFile(ref, file.path, MAX_DOC_BYTES);

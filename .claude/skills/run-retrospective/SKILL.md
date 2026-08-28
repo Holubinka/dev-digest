@@ -109,6 +109,28 @@ The test for "durable": would this change how the **next** brief is written? "Ag
 plan" is not a lesson. "Ten agents read a plan whose per-package contracts existed so that none of
 them would have to" is.
 
+**A lesson that lands only here is filed once and applied never**, and this skill has measured its
+own version of that. On 2026-08-26 a retrospective recorded, in these words: *"put the gate
+commands in the brief with the known workaround already applied."* Both briefs written the next day
+said only `integration`, and an implementer burned three full parallel runs rediscovering the same
+documented flake. The report was read, agreed with, and not applied — because a report is not
+something a brief-writer opens while writing a brief.
+
+So route each durable lesson to the artefact that is **already open at the moment it would be
+needed**, and say in the report where you put it:
+
+| The lesson is about | It lands in |
+|---|---|
+| A command that needs a flag | the command itself, wherever it is canonical — `AGENTS.md`, `TESTING.md`, `gates.md` |
+| What a brief must carry | the template that writes it — the plan skeleton in `implementation-planner.md`, `fix-rounds.md` § *The brief* |
+| How many agents, at what tier, in what order | `.claude/skills/implement/SKILL.md` |
+| What an agent should do on receiving something | that agent's own file under `.claude/agents/` |
+| A trap in one module's code | that module's `INSIGHTS.md` |
+
+`INSIGHTS.md` is the right home for a fact about the system and the wrong one for a rule about the
+process: nothing in the pipeline requires a brief-writer to read it first. And it is a rule, not a
+report, only once the next run's brief carries it without anyone remembering to.
+
 ## 4. What the numbers do not say, and what to do about it
 
 The script sees tool calls and tokens. It does not see whether an agent was *right*. Four things

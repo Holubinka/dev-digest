@@ -32,11 +32,25 @@ export interface RetryOptions {
   onRetry?: (attempt: number, err: unknown) => void;
 }
 
-function defaultIsRetryable(err: unknown): boolean {
-  const status =
+/**
+ * The HTTP status an error carries, however it spelled it.
+ *
+ * Three copies of this existed and each was missing a different branch:
+ * `octokit.ts` had no `statusCode`, the runner's `retry.ts` had no
+ * `response.status`. An error shaped the way one of them did not expect is
+ * "no status at all" — which reads as not-a-404 to a caller checking for one,
+ * and as not-retryable to a caller checking for a 5xx.
+ */
+export function httpStatusOf(err: unknown): number | undefined {
+  return (
     (err as { status?: number })?.status ??
     (err as { statusCode?: number })?.statusCode ??
-    (err as { response?: { status?: number } })?.response?.status;
+    (err as { response?: { status?: number } })?.response?.status
+  );
+}
+
+export function defaultIsRetryable(err: unknown): boolean {
+  const status = httpStatusOf(err);
   if (typeof status === 'number') return status === 429 || status >= 500;
   // network-ish errors
   const code = (err as { code?: string })?.code;

@@ -158,6 +158,28 @@ export type {
   AgentVersionConfig,
 } from "@devdigest/shared";
 
+/**
+ * Export to CI (SPEC-05) — the wizard's request, the agent's installations and
+ * the CI Runs page.
+ *
+ * Types only, as everywhere else here: nothing on these screens validates, and
+ * `CiExportInput` is re-exported in its `z.input` form (`CiExportInputBody`)
+ * because the wizard sends a body whose `.default()` fields are optional.
+ * `CiResultArtifact` is deliberately absent — the artifact is the runner's and
+ * the ingest's shape, and no client surface reads one.
+ */
+export type {
+  CiTarget,
+  CiFile,
+  CiExportInputBody,
+  CiExport,
+  CiInstallation,
+  CiInstallationListItem,
+  CiUnconfirmedReason,
+  CiRun,
+  CiRunStatus,
+} from "@devdigest/shared";
+
 /** UI-only view model for a PR list row (derives display fields from PrMeta). */
 export interface PrRowView {
   number: number;

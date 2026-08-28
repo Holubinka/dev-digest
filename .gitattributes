@@ -11,3 +11,23 @@
 # a migration that recreates every table. Migration 0011 is two `CREATE INDEX`
 # lines; its snapshot is 3475.
 server/src/db/migrations/meta/*.json linguist-generated=true
+
+# Images are binary. `git diff --stat` already reports them as `Bin N -> M bytes`,
+# but tools that count lines themselves — review UIs, `wc -l`, "lines changed"
+# badges — read the newline bytes inside the compressed stream and report a
+# screenshot as thousands of changed lines. On 2026-08-26 the five design PNGs
+# under `specs/assets/` were counted as 19 206 lines against ~10 400 lines of
+# actual code, which is what a reader saw first. Marking them `binary` is the
+# explicit form of what git already infers, and it is what those tools read.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+
+# npm writes this; nobody reads it. `agent-runner` uses npm (not pnpm) like
+# `reviewer-core`, `e2e` and `mcp`, so its lockfile is a committed 2 017-line
+# generated file that would otherwise dominate the diff of any change near it.
+agent-runner/package-lock.json linguist-generated=true

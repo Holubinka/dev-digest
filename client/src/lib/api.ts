@@ -5,6 +5,20 @@
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:3001";
 
+/**
+ * The message to put in front of a reader, from anything a mutation threw.
+ *
+ * `ApiError` already carries a normalised message; a raw `Error` is the
+ * unexpected case and its own message is still better than nothing. The empty
+ * string is the caller's cue to fall back to a translated line — three screens
+ * wrote this same function out before it lived here.
+ */
+export function errorMessage(err: unknown): string {
+  if (err instanceof ApiError) return err.message;
+  if (err instanceof Error) return err.message;
+  return "";
+}
+
 export class ApiError extends Error {
   status: number;
   code?: string;

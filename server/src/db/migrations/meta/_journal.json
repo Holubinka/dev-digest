@@ -176,6 +176,13 @@
       "when": 1787844043224,
       "tag": "0024_lethal_komodo",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1787907644264,
+      "tag": "0025_ancient_carnage",
+      "breakpoints": true
     }
   ]
 }

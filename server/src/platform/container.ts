@@ -8,6 +8,7 @@ import type {
   LLMProvider,
   SkillFetcher,
   PromptTemplates,
+  RunnerBundle,
 } from '@devdigest/shared';
 import type { AppConfig } from './config.js';
 import type { Db } from '../db/client.js';
@@ -37,6 +38,8 @@ import type { BlastReader } from '../modules/blast/types.js';
 import { BlastService } from '../modules/blast/service.js';
 import { BlastRepository } from '../modules/blast/repository.js';
 import type { BriefReader } from '../modules/brief/types.js';
+import type { CiReader } from '../modules/ci/types.js';
+import { CiService } from '../modules/ci/service.js';
 import { BriefService } from '../modules/brief/service.js';
 import { BriefRepository } from '../modules/brief/repository.js';
 import type { OnboardingGenerator, OnboardingReader } from '../modules/onboarding/types.js';
@@ -55,6 +58,7 @@ import { type DepGraph, DepCruiseGraph } from '../adapters/depgraph/index.js';
 import { type Tokenizer, TiktokenTokenizer } from '../adapters/tokenizer/index.js';
 import { HttpSkillFetcher } from '../adapters/skill-fetch/index.js';
 import { FilePromptTemplates } from '../adapters/prompts/file-templates.js';
+import { FileRunnerBundle } from '../adapters/runner-bundle/index.js';
 
 /**
  * DI container. One per app instance. Holds config, db, the JobRunner,
@@ -100,6 +104,8 @@ export interface ContainerOverrides {
   blast?: BlastReader;
   /** Risk Brief (10) — injectable for the same reason every other service here is. */
   brief?: BriefReader;
+  /** Export to CI (16) — same reason, and its routes' tests inject canned rows. */
+  ci?: CiReader;
   /** Onboarding Tour (11) — the routes' own tests inject a canned page and record. */
   onboarding?: OnboardingReader;
   /**
@@ -122,6 +128,11 @@ export interface ContainerOverrides {
   skillFetcher?: SkillFetcher;
   /** Instruction templates — tests inject canned text instead of reading `src/prompts`. */
   prompts?: PromptTemplates;
+  /**
+   * The built CI runner (16) — tests inject a fixture instead of requiring
+   * `agent-runner/dist`, which is git-ignored and absent until it is built.
+   */
+  runnerBundle?: RunnerBundle;
 }
 
 export class Container {
@@ -151,6 +162,7 @@ export class Container {
   private _intentService?: IntentDeriver;
   private _blastService?: BlastReader;
   private _briefService?: BriefReader;
+  private _ciService?: CiReader;
   private _onboardingService?: OnboardingReader;
   private _onboardingGenerator?: OnboardingGenerator;
   private _projectContext?: ProjectContextResolver;
@@ -159,6 +171,7 @@ export class Container {
   private _tokenizer?: Tokenizer;
   private _skillFetcher?: SkillFetcher;
   private _prompts?: PromptTemplates;
+  private _runnerBundle?: RunnerBundle;
   private _priceBook?: PriceBook;
 
   constructor(config: AppConfig, db: Db, private overrides: ContainerOverrides = {}) {
@@ -193,6 +206,19 @@ export class Container {
     if (this.overrides.prompts) return this.overrides.prompts;
     this._prompts ??= new FilePromptTemplates();
     return this._prompts;
+  }
+
+  /**
+   * The built `.devdigest/runner.mjs` the export commits into a target
+   * repository. A port for the reason `prompts` is one — the implementation
+   * reads the filesystem and the generator may not — and the reason it is
+   * injectable is that `agent-runner/dist` is a BUILD OUTPUT: without an
+   * override every test of the export would need `npm run build` to have run.
+   */
+  get runnerBundle(): RunnerBundle {
+    if (this.overrides.runnerBundle) return this.overrides.runnerBundle;
+    this._runnerBundle ??= new FileRunnerBundle();
+    return this._runnerBundle;
   }
 
   get agentsRepo(): AgentsRepository {
@@ -296,6 +322,21 @@ export class Container {
   get briefService(): BriefReader {
     if (this.overrides.brief) return this.overrides.brief;
     return (this._briefService ??= new BriefService(this, new BriefRepository(this.db)));
+  }
+
+  /**
+   * Export to CI (16). MEMOISED, for the reason `briefService` is: `CiService`
+   * carries the `ingests` map that hands `POST /ci/runs/refresh` its `errors[]`,
+   * and while the route plugin constructed its own instance that handoff was
+   * held by REGISTRATION COUNT rather than by construction — a second
+   * `app.register` would have re-registered the ingest job with a new
+   * instance's closure while the old one read its own empty map and reported
+   * zero poll errors. `INSIGHTS.md` records the identical shape for
+   * `BriefService.inFlight`, and no gate can see it.
+   */
+  get ciService(): CiReader {
+    if (this.overrides.ci) return this.overrides.ci;
+    return (this._ciService ??= new CiService(this));
   }
 
   /**

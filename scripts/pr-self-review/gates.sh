@@ -48,6 +48,9 @@ client	typecheck	cd client && pnpm typecheck
 client	test	cd client && pnpm test
 reviewer-core	typecheck	cd reviewer-core && npm run typecheck
 reviewer-core	test	cd reviewer-core && npm test
+agent-runner	typecheck	cd agent-runner && npm run typecheck
+agent-runner	test	cd agent-runner && npm test
+agent-runner	build	cd agent-runner && npm run build
 repo	vendor	diff -r server/src/vendor/shared client/src/vendor/shared
 ROWS
 )"

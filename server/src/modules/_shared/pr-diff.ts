@@ -1,5 +1,5 @@
 import type { UnifiedDiff } from '@devdigest/shared';
-import { parseUnifiedDiff } from '../../adapters/git/diff-parser.js';
+import { diffFromPatches } from '../../adapters/git/diff-parser.js';
 
 /**
  * Loading a pull request's unified diff — the one way, for every slice.
@@ -78,19 +78,18 @@ export async function loadPrDiff(
   return diffFromPrFiles(source.reviewRepo, pull.id);
 }
 
-/** Reconstruct a UnifiedDiff from persisted pr_files patches. */
+/**
+ * Reconstruct a UnifiedDiff from persisted pr_files patches.
+ *
+ * The reconstruction itself is `diffFromPatches`, beside the parser, because
+ * `agent-runner` performs the identical one over the GitHub API's per-file
+ * patches. The grounding gate checks findings against the new-side line numbers
+ * these produce, so a studio review and a CI review reconstructing differently
+ * would ground differently.
+ */
 export async function diffFromPrFiles(
   repo: PrDiffSource['reviewRepo'],
   prId: string,
 ): Promise<UnifiedDiff> {
-  const files = await repo.getPrFiles(prId);
-  const parts: string[] = [];
-  for (const f of files) {
-    if (!f.patch) continue;
-    parts.push(`diff --git a/${f.path} b/${f.path}`);
-    parts.push(`--- a/${f.path}`);
-    parts.push(`+++ b/${f.path}`);
-    parts.push(f.patch);
-  }
-  return parseUnifiedDiff(parts.join('\n'));
+  return diffFromPatches(await repo.getPrFiles(prId));
 }

@@ -98,10 +98,11 @@ stage of this pipeline with a clean report at each one. It is a skill the human 
 dispatch, and it takes an effort level — `/code-review high` on a feature, the default on a
 smaller change.
 
-### Five habits that outrank every agent here
+### Six habits that outrank every agent here
 
 The first two are commands you run yourself before dispatching; the third and fourth are what you
-put into the dispatch; the fifth is *which agent* you put it into.
+put into the dispatch; the fifth is *which agent* you put it into, and the sixth is how much of it
+you dispatch at once.
 
 **Grep the nouns of the request, before any `researcher`.** This repo carries scaffolding for
 course lessons that have not landed — tables that migrate but stay empty, contracts nobody
@@ -129,8 +130,31 @@ meant to replace still costs a read of that document. Quote the contract into th
 of pointing at it, name the `path:line` you already established rather than the file to go looking
 in, and tell each agent what its siblings were told so it does not re-derive their half.
 
+**Paste it; do not describe it — the difference was measured at roughly ten times.** Export to CI
+sent two briefs of the same shape to the same role, hours apart. One **pasted** the failing
+artifact and the `"fork": true` response it contained; the other **described** the same class of
+problem and gave paths to look at. The first spent **4** scout calls before its first write and 1M
+cache-read; the second **39** and 14M. The receiving agent explained it better than any rule can:
+pasted output is a *proof* it only has to quote, while a description is a proof it must first
+reproduce and then confirm is where you said it was.
+
+Three corollaries, each of which cost this repo real turns:
+
+- **The fact, never the category.** "Bound the numeric fields" sends an agent to the schema, the
+  contract and the migration. "`findings_count` and `duration_ms` are `integer`,
+  `workflow_run_id` is `bigint`, `cost_usd` is `doublePrecision` and needs no bound" is one line
+  and needs nothing opened.
+- **A command carries its known workaround.** Writing `integration` instead of
+  `pnpm test:it`, whose script carries the serial flag, cost six ~3-minute runs across two
+  rounds, two different agents, one day apart, both ending at the same `INSIGHTS.md` entry.
+- **A list of five reads as a boundary, and a paste reads as current.** Say whether an enumerated
+  list is the whole of the work or the part that is known, and give a state snapshot two dates:
+  when it was captured, and what you know has happened since.
+
 Run `run-retrospective` after a multi-agent run to see which facts got bought more than once. The
-answer is what the next brief should carry.
+answer is what the next brief should carry — and it must land in the artefact that is open when the
+brief is written, not only in the retrospective. A lesson filed in a report is filed once and
+applied never: that one was measured too.
 
 **Open the file while you write the sentence — «cite» alone was not enough.** That rule was filed
 after the SPEC-05 run's first retrospective and then broken **five times in the same session, by
@@ -176,6 +200,12 @@ Two rules follow, and the second is the one that makes the first survive a bad d
   unclear" rule here (§ *Editing an agent here*). Its default assumption goes in that block, so the
   reply can be one word.
 
+Hand it to the agents that need it *open*, and say which those are. An image costs roughly 650 KB
+per read: on Export to CI one preview PNG was opened by six agents, of which two had a reason —
+the implementer building the screens and `plan-verifier` comparing them element by element under
+its Rule 7. The one defect an image would have caught on that run was found by `/code-review`,
+which never opened it.
+
 Anything visual ends where it started: **compare the built screen against the source material
 before calling it done** — and open it *before* the first line of code, not after. Both design
 questions of the SPEC-05 run were visible before that first line and were asked after it, costing a
@@ -215,6 +245,17 @@ Then **sweep the whole screen before you send one.** Of those six resumes, three
 that could not have been known earlier — a human looking at a screen that did not exist yet. The
 other three (GitHub links, `Tabs` width, an inert button's tooltip) were one request, and all three
 were visible at the moment of the first.
+
+**Size the dispatch: two heavy agents, and a tier per package.** Concurrency and effort are the
+two knobs nothing downstream can correct. Export to CI ran three `xhigh` implementers at once,
+hit the session limit mid-package, and paid **89M to restart against 52M of work done** —
+recovering and repairing came to 45 % of the run against 26 % for building the feature. Two
+concurrent heavy agents is slower in wall-clock and strictly cheaper than three plus three
+restarts. On the same run 18 of 20 agents ran at the top tier, and one of them spent 112 turns and
+10M on a two-file predicate plus a `continue`, while the `/code-review` that returned the run's
+single most valuable finding ran at `high`. Reserve the top tier for where a plausible wrong answer
+is expensive and silent — contracts, schema, ingest, anything writing into a third-party repo — and
+make every heavy agent leave a progress note so a kill costs a read instead of a survey.
 
 The last four sit in no script — they are dispatched by a human, or by the main agent when the
 work calls for it. `architecture-reviewer` in particular is **not** a Track B agent:
@@ -441,6 +482,7 @@ judge this stage's output. See § *How skills reach an agent* for why the field 
 |---|---|
 | **In** | a path to a plan under `plans/`, plus the work package (`P1`) when the plan's `**Execution:**` is `multi-agent`; or a fix brief under `.reviews/` naming findings against code that already landed — nothing else, no conversation |
 | **Out** | code and tests in the modules the plan names |
+| | `.reviews/<branch>/progress-<PN>.md`, appended as each step lands — the restart brief a session limit would otherwise cost 89M to rebuild |
 | | an appended entry in the relevant module's `INSIGHTS.md`, via `engineering-insights` |
 | | `Planned <date>` → `Implemented <date>` in the plan folder's `README.md`, once gates pass |
 | | a Ukrainian report: steps ✅/⚠️/⛔, changed files, skills actually loaded, a gates table with real output, deviations, what it left to the human |
@@ -459,7 +501,8 @@ judge this stage's output. See § *How skills reach an agent* for why the field 
 | Manual module registration, `SecretsProvider` over `process.env`, migrations not on boot | [`server/AGENTS.md`](../../server/AGENTS.md); [`server/README.md`](../../server/README.md) |
 | TanStack Query hooks over `fetch` in a component; responsive rules in `app/globals.css` | [`client/AGENTS.md`](../../client/AGENTS.md) |
 | `reviewer-core` has two runtime deps and emits no JS | [`reviewer-core/AGENTS.md`](../../reviewer-core/AGENTS.md) |
-| The `*.it.test.ts` suffix and the unit/integration split | [`TESTING.md`](../../TESTING.md) |
+| The `*.it.test.ts` suffix and the unit/integration split — `pnpm test:unit` / `pnpm test:it`, the second serial by script | [`TESTING.md`](../../TESTING.md) |
+| The progress note, reading by range rather than by file, and treating a paste as evidence with a date | `INSIGHTS.md` § *A brief that calls its own facts "a guide, not the truth" buys back the work it was saving*, § *An enumerated list in a brief reads as the whole of the work*, § *A resume brief needs two timestamps* |
 | `engineering-insights` before reporting complete | [`AGENTS.md`](../../AGENTS.md) § *Read when* |
 | Reporting that `.claude/agents/**` trips no gate rather than implying one ran | `INSIGHTS.md` § *A subagent asking a clarifying question has to end its turn to ask it* (closing paragraph) |
 | Declaring no `skills:`, and reaching all twelve with `Skill` | `INSIGHTS.md` § *`skills:` … it loads nothing* **Correction, 2026-08-05** — the field preloads on the dispatch path, so a declared skill is paid for on every run whether it is opened or not, and no skill in this set applies to every plan. Its body carried the superseded 2026-08-04 reading until 2026-08-13, which made every skill it opened a double load |

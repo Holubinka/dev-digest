@@ -11,8 +11,12 @@ import type {
   OpenPrPayload,
   CommitFilesPayload,
   IssueMeta,
+  WorkflowRunRef,
+  WorkflowArtifactRef,
 } from '@devdigest/shared';
-import { withRetry, withTimeout } from '../../platform/resilience.js';
+import { ValidationError } from '../../platform/errors.js';
+import { httpStatusOf as statusOf, withRetry, withTimeout } from '../../platform/resilience.js';
+import { refuseOversizedDownload, refuseUnusableArtifact } from './artifact-guard.js';
 
 const TIMEOUT = 30_000;
 
@@ -32,6 +36,7 @@ const PAGE_SIZE = 100;
  * been changed in a file it was never shown.
  */
 const MAX_PR_FILES = 1000;
+
 const MAX_PR_COMMITS = 250;
 
 /**
@@ -354,16 +359,30 @@ export class OctokitGitHubClient implements GitHubClient {
 
           // New tree layered on the parent's tree (so unrelated files are kept).
           const parentCommit = await g.getCommit({ owner, repo: name, commit_sha: parentSha });
+          const removals = await this.presentPaths(repo, parentSha, payload.deletions ?? []);
           const tree = await g.createTree({
             owner,
             repo: name,
             base_tree: parentCommit.data.tree.sha,
-            tree: payload.files.map((f) => ({
-              path: f.path,
-              mode: '100644',
-              type: 'blob',
-              content: f.contents,
-            })),
+            tree: [
+              ...payload.files.map((f) => ({
+                path: f.path,
+                mode: '100644' as const,
+                type: 'blob' as const,
+                content: f.contents,
+              })),
+              // A tree entry whose `sha` is null removes the path from the base
+              // tree — the only way to delete inside the commit that writes the
+              // rest (AC-146), since the Contents API deletes in a commit of its
+              // own. `sha: null` is not in Octokit's generated tree-entry type,
+              // which models the create-a-blob half only.
+              ...removals.map((path) => ({
+                path,
+                mode: '100644' as const,
+                type: 'blob' as const,
+                sha: null as unknown as string,
+              })),
+            ],
           });
 
           const commit = await g.createCommit({
@@ -397,6 +416,40 @@ export class OctokitGitHubClient implements GitHubClient {
     );
   }
 
+  /**
+   * Of `paths`, the ones the parent commit actually carries.
+   *
+   * WHY THIS READ EXISTS. `createTree` is asked for an end state, and the caller
+   * — a pure generator that reads nothing — cannot know what the target
+   * repository holds, so it asks for the legacy workflow to be gone whether or
+   * not it was ever there. Whether GitHub accepts `sha: null` for a path that is
+   * NOT in the base tree is undocumented and was not verifiable here; a 422
+   * would fail every publication into every repository that never had the file,
+   * which is most of them. One `getContent` per removal makes the outcome
+   * independent of that answer.
+   *
+   * It reads one named path and never a tree, which is the cheap half of the
+   * alternative SPEC-05 § D23 rejected ("delete only if unmodified" also needs
+   * the file's CONTENT and a comparison against what DevDigest would generate).
+   */
+  private async presentPaths(repo: RepoRef, ref: string, paths: string[]): Promise<string[]> {
+    const found: string[] = [];
+    for (const path of paths) {
+      try {
+        await this.octokit.rest.repos.getContent({
+          owner: repo.owner,
+          repo: repo.name,
+          path,
+          ref,
+        });
+        found.push(path);
+      } catch (err) {
+        if (statusOf(err) !== 404) throw err;
+      }
+    }
+    return found;
+  }
+
   async findOpenPr(repo: RepoRef, branch: string): Promise<{ url: string } | null> {
     return withRetry(() =>
       withTimeout(
@@ -410,6 +463,114 @@ export class OctokitGitHubClient implements GitHubClient {
           });
           const pr = res.data[0];
           return pr ? { url: pr.html_url } : null;
+        })(),
+        TIMEOUT,
+      ),
+    );
+  }
+
+  async listWorkflowRuns(
+    repo: RepoRef,
+    workflowFile: string,
+    opts: { perPage?: number } = {},
+  ): Promise<WorkflowRunRef[] | null> {
+    return withRetry(() =>
+      withTimeout(
+        (async () => {
+          let res;
+          try {
+            res = await this.octokit.rest.actions.listWorkflowRuns({
+              owner: repo.owner,
+              repo: repo.name,
+              workflow_id: workflowFile,
+              per_page: Math.min(opts.perPage ?? 20, PAGE_SIZE),
+            });
+          } catch (err) {
+            if (statusOf(err) !== 404) throw err;
+            // 404 HERE IS TWO DIFFERENT ANSWERS. GitHub returns it both for "no
+            // workflow by that file name" and for "this token cannot see this
+            // repository", with the same body. Only the first is an answer the
+            // ingest may record as `workflow_present = false` (AC-147); the
+            // second is a failed poll and owes the reader a named error
+            // (AC-83), so the repository is asked for before the 404 is
+            // believed. One extra call, and only on the 404 path.
+            await this.octokit.rest.repos.get({ owner: repo.owner, repo: repo.name });
+            return null;
+          }
+          return res.data.workflow_runs.map((run) => ({
+            id: run.id,
+            head_sha: run.head_sha,
+            status: run.status ?? 'unknown',
+            conclusion: run.conclusion ?? null,
+            // GitHub lists every PR a run belongs to; a `pull_request` run has
+            // exactly one, and an empty list means the run was not a PR's.
+            pr_number: run.pull_requests?.[0]?.number ?? null,
+            html_url: run.html_url,
+            run_started_at: run.run_started_at ?? null,
+            updated_at: run.updated_at ?? null,
+            repository: run.repository.full_name,
+          }));
+        })(),
+        TIMEOUT,
+      ),
+    );
+  }
+
+  async listRunArtifacts(repo: RepoRef, runId: number): Promise<WorkflowArtifactRef[]> {
+    return withRetry(() =>
+      withTimeout(
+        (async () => {
+          const res = await this.octokit.rest.actions.listWorkflowRunArtifacts({
+            owner: repo.owner,
+            repo: repo.name,
+            run_id: runId,
+            per_page: PAGE_SIZE,
+          });
+          return res.data.artifacts.map((a) => ({
+            id: a.id,
+            name: a.name,
+            size_in_bytes: a.size_in_bytes,
+            expired: a.expired,
+          }));
+        })(),
+        TIMEOUT,
+      ),
+    );
+  }
+
+  /**
+   * The size is checked TWICE, against two numbers GitHub reports separately.
+   *
+   * `getArtifact` is what makes the refusal free: an over-sized archive is
+   * never requested, so its bytes are never held — the same order
+   * `parseSkillArchive` gets from fflate's filter. The second check is not
+   * redundant, because the declared size is metadata and the body is what
+   * actually arrived; only the first one is cheap.
+   *
+   * A refusal is a `ValidationError` and not an `ExternalServiceError` on
+   * purpose: `withRetry` retries a 5xx, and downloading a too-large artifact
+   * three more times is the opposite of refusing it.
+   */
+  async downloadArtifact(repo: RepoRef, artifactId: number, maxBytes: number): Promise<Uint8Array> {
+    return withRetry(() =>
+      withTimeout(
+        (async () => {
+          const meta = await this.octokit.rest.actions.getArtifact({
+            owner: repo.owner,
+            repo: repo.name,
+            artifact_id: artifactId,
+          });
+          refuseUnusableArtifact(artifactId, meta.data, maxBytes);
+
+          const res = await this.octokit.rest.actions.downloadArtifact({
+            owner: repo.owner,
+            repo: repo.name,
+            artifact_id: artifactId,
+            archive_format: 'zip',
+          });
+          const bytes = new Uint8Array(res.data as ArrayBuffer);
+          refuseOversizedDownload(artifactId, bytes, maxBytes);
+          return bytes;
         })(),
         TIMEOUT,
       ),

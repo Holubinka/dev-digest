@@ -78,6 +78,11 @@ every line you open is paid again on each of your turns, not once. What you may 
 provide is in your own package's **Contract** block; the planner repeats it there precisely so you
 never have to open theirs.
 
+The same arithmetic governs the code. `grep -n` for the two facts you need and `sed -n '40,80p'`
+the range around them; open a file whole when you are about to rewrite it whole. An implementer on
+this branch, asked afterwards where its money went, named exactly this: *"я читав цілі файли там,
+де потрібні були два факти, і кожен такий файл потім оплачувався на кожному наступному ході."*
+
 Execute your package only. The files another package lists under **Owns** are not yours to write,
 even when a step of yours would be easier if they were; that split is what keeps two agents out of
 the same file.
@@ -95,6 +100,23 @@ ends. A finding you cannot satisfy without changing a contract, moving a boundar
 scope is the same case as a step that contradicts the plan: stop and report it, because that
 needs a decision rather than an edit. Everything below on gates, skills and the report applies
 unchanged, and you still never flip a status row for a fix round.
+
+**Evidence pasted into your input is evidence.** Command output, a `path:line` with the line
+itself quoted, an artifact's JSON — cite it, do not reproduce it. A brief that pastes what it
+knows is the cheapest thing that reaches you, and re-deriving it is how a fix round comes to cost
+more than the build did.
+
+What a paste does not carry is a date. It is a snapshot of *state*, and states move: on this
+branch two of five pasted items had already been fixed by another agent before the brief was
+opened — a `TS2322` that no longer reproduced, and two tests described as "to be written" that
+were on disk and green. So re-check the one or two facts your own work turns on — the test the
+brief calls red, the file it calls missing — and take the rest as given.
+
+**A numbered list in a brief is not automatically the whole of the work.** If the brief does not
+say whether its list is exhaustive or only the part that was known, read the plan's or spec's
+criteria for the same area before you call the package done, and say in your report which reading
+you took. A list of five reads as a boundary; on this branch a sixth item lived in the spec and
+nobody built it.
 
 **A claim in your dispatch that carries no `path:line` is a hypothesis, and you may treat it as
 one.** Settle it with the single cheapest command that can — a `grep`, a `sed -n` on the line — and
@@ -212,6 +234,13 @@ Each of these is invisible to typecheck and costs a gate failure or a runtime cr
 - **A server test that uses `test/helpers/pg.ts` must be named `*.it.test.ts`.** That suffix is
   what keeps it out of the unit run.
 - **Migrations do not run on boot.** After a schema change: `cd server && pnpm db:migrate`.
+- **A mock hard-coded to the success branch cannot show a failure.** `isError: false` written as a
+  literal in a hook mock makes every error-path assertion in that file vacuous — it passes because
+  the failure is unreachable, not because the code handles it. Read the mock before you write a
+  test against it, and fix the mock rather than the assertion.
+- **Ports 3000 and 3001 may belong to another checkout.** This repo is worked on in several
+  worktrees at once, and `pnpm dev` will happily serve someone else's page at the URL you expect.
+  Check with `lsof -i :3001` before starting anything, and bring your own API up on 3002+.
 
 ## Gates — run what you touched
 
@@ -232,11 +261,41 @@ later stages.
 `cd server && pnpm test` is **not** the unit run — it includes `*.it.test.ts` and will try to
 start testcontainers. Use the `--exclude` form above.
 
-Integration tests (`cd server && pnpm exec vitest run .it.test`) and the e2e suite
-(`./scripts/e2e.sh`) run **only if the plan's `## Tests` section asks for them.**
+Integration tests (`cd server && pnpm test:it`) and the
+e2e suite (`./scripts/e2e.sh`) run **only if the plan's `## Tests` section asks for them.** That
+flag is not optional locally, and leaving it off is the most-repeated waste this pipeline has
+measured — see below.
+
+**A gate that fails strangely is a documented flake until you have checked.** Before you run the
+same suite a second time, `grep` the module's `INSIGHTS.md` for the symptom; before a third, you
+are rediscovering something. The integration lane is the standing example: run in parallel on one
+machine it reports a misleading `404` from an unrelated route, which is `server/INSIGHTS.md` § *The
+misleading 404 came back on 2026-08-14, with a different cause and the same amplifier*, and the
+cure is `pnpm test:it`, whose script runs the files serially. Two agents each spent three full runs
+finding that entry the slow way, a day apart.
 
 A gate that fails is not a finding to report and move past. Fix it, or if fixing it would take
 you outside the plan, stop and report with the failing output.
+
+## Write the progress note as you go
+
+A session limit can end you mid-package. The code you wrote survives on disk; everything you knew
+about it does not. Measured on Export to CI: three implementers killed together had produced 52M
+of work, and the three restarts cost **89M** — most of it spent re-establishing what the killed
+agents already knew.
+
+So keep `.reviews/<branch>/progress-<PN>.md` — the fix-brief directory, gitignored for the same
+`worktreeHash` reason — and append to it as each step lands, not at the end:
+
+- the step number, and `done` / `partial — <what remains>`;
+- the files you wrote, as pasted `git status --short` output rather than from memory;
+- each gate you ran and its result;
+- anything that cost you more than a couple of turns to establish: a `path:line`, a command that
+  finally worked, a fact that contradicted the plan.
+
+Paste output; do not describe it. A successor re-verifies a list it was handed as "a guide", and
+quotes a pasted `grep -n`. On this branch that difference was the gap between 4 scout calls and 39
+for the same class of task.
 
 ## Before you report complete
 

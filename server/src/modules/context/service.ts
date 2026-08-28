@@ -26,6 +26,7 @@ import {
   contentHash,
   dedupePaths,
   effectiveSet,
+  isExcludedBundlePath,
   kindForRoot,
   renderDoc,
   rootFor,
@@ -37,12 +38,14 @@ import {
   writeZone,
   type BudgetCandidate,
   type WriteMode,
+  type WriteZoneRefusal,
 } from './helpers.js';
 import { resolveContextSettings } from './settings.js';
 import { ContextScanExecutor } from './scan-executor.js';
 import {
   CONTEXT_SCAN_JOB_KIND,
   DEVDIGEST_ROOT,
+  EXCLUDED_DEVDIGEST_SUBROOTS,
   MAX_DOC_BYTES,
   MAX_DOC_CHARS,
   MAX_DOC_FILE_BYTES,
@@ -653,6 +656,14 @@ export class ContextService implements ProjectContextResolver {
    * document is no longer there to STAY in the list and report itself, and
    * `missing` is the word the editor already uses for the same condition — a
    * saved path the current scan does not hold.
+   *
+   * The bundle refusal is here and not only in the scan because `AC-107` is a
+   * property of the assembled prompt, not of `repo_docs`: a row under
+   * `.devdigest/skills/` written before the exclusion existed, or by any writer
+   * of that table added later, is still in `scannedPaths` and would still be
+   * read. `refused` and not `missing`, because the file is there and the answer
+   * is that this feature will not send it — the same word the sanitiser above
+   * uses for the same kind of no.
    */
   private async readCandidate(
     repo: { owner: string; name: string },
@@ -662,6 +673,7 @@ export class ContextService implements ProjectContextResolver {
     // The stored path was sanitised when it was saved; re-checking it here costs
     // one string scan and closes the gap left by any other writer of the table.
     if (!sanitizeDocPath(path)) return { path, failure: 'refused' };
+    if (isExcludedBundlePath(path)) return { path, failure: 'refused' };
     if (!scannedPaths.has(path)) return { path, failure: 'missing' };
     let text: string;
     try {
@@ -805,14 +817,29 @@ function baseName(filename: string): string {
 }
 
 /** A zone refusal, in the words of the mode that produced it. Always a 400. */
-function zoneError(refusal: 'outside_devdigest' | 'outside_roots', mode: WriteMode): AppError {
-  return refusal === 'outside_devdigest'
-    ? new AppError(
+function zoneError(refusal: WriteZoneRefusal, mode: WriteMode): AppError {
+  switch (refusal) {
+    case 'outside_devdigest':
+      return new AppError(
         'invalid_path',
         `A new ${mode === 'folder' ? 'folder' : 'document'} must be under ${DEVDIGEST_ROOT}/`,
         400,
-      )
-    : new AppError('invalid_path', 'That path is not under a configured scan root', 400);
+      );
+    case 'ci_bundle':
+      // Named, not generic: the folder exists and is writable, so "not under a
+      // scan root" would be a lie and "already exists" would be a different
+      // conversation. What is true is that an export owns these two folders.
+      return new AppError(
+        'invalid_path',
+        `${bundleFolders()} hold the exported CI bundle, which DevDigest generates — a ` +
+          'document there is not project context and no review reads it',
+        400,
+      );
+    // No `default`: the declared return type is what makes a new refusal a
+    // compile error here rather than a generic message in production.
+    case 'outside_roots':
+      return new AppError('invalid_path', 'That path is not under a configured scan root', 400);
+  }
 }
 
 /**
@@ -838,6 +865,11 @@ function writeError(err: unknown): unknown {
       // caller: the path they named is not one this feature will write.
       return new AppError('invalid_path', 'That path cannot be written in this repository', 400);
   }
+}
+
+/** `.devdigest/skills/ and .devdigest/agents/`, from the one list that defines them. */
+function bundleFolders(): string {
+  return EXCLUDED_DEVDIGEST_SUBROOTS.map((sub) => `${DEVDIGEST_ROOT}/${sub}/`).join(' and ');
 }
 
 /** An ISO-8601 string from the port → a `Date`, or null if it is not one. */
