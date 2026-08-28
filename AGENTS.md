@@ -23,8 +23,8 @@ Node ≥ 22 · Vitest 2 everywhere. Docker runs Postgres only; API and web run o
 ./scripts/e2e.sh                # hermetic e2e on isolated ports (5433/3101/3100) — local only, not CI
 
 cd server && pnpm db:migrate    # REQUIRED after clone — the server does not migrate on boot
-cd server && pnpm exec vitest run --exclude '**/*.it.test.ts'   # unit (hermetic)
-cd server && pnpm exec vitest run .it.test                      # integration (testcontainers Postgres)
+cd server && pnpm test:unit     # unit (hermetic)
+cd server && pnpm test:it       # integration — testcontainers Postgres, runs FILES SERIALLY
 
 cd client && pnpm lint          # ESLint — client/ only; no other package has one
 ```

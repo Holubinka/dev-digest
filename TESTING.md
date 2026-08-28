@@ -117,8 +117,8 @@ cd reviewer-core && npm test
 cd mcp           && npm run typecheck && npm test   # no CI workflow — this is the gate
 
 # server — the unit/integration split (see note below)
-cd server && pnpm exec vitest run --exclude '**/*.it.test.ts'   # unit, no Docker
-cd server && pnpm exec vitest run .it.test                      # integration, needs Docker
+cd server && pnpm test:unit   # unit, no Docker
+cd server && pnpm test:it     # integration, needs Docker — and runs the files SERIALLY
 cd server && pnpm test                                          # both
 
 # browser e2e (needs the full stack + agent-browser CLI)
@@ -133,8 +133,16 @@ bash scripts/pr-self-review/test/run.sh
 ## Conventions
 
 - **Integration tests end in `*.it.test.ts`.** The unit lane excludes that glob
-  (`vitest run --exclude '**/*.it.test.ts'`); the integration lane selects only
-  it (`vitest run .it.test`). A DB-backed test that imports `test/helpers/pg.ts`
+  (`pnpm test:unit`); the integration lane selects only it (`pnpm test:it`).
+
+  **The integration lane runs its files one at a time, and that is load-bearing.**
+  There are 23 `*.it.test.ts` files and each starts its own Postgres container;
+  in parallel they starve each other and the suite fails intermittently — three
+  tests on one run, five on the next, one on the third, never the same names.
+  Measured 2026-08-28: parallel failed on all three consecutive runs, serial
+  passed 197/197 twice. `--no-file-parallelism` lives inside `pnpm test:it` so
+  it cannot be forgotten; the unit lane keeps its parallelism, where it is worth
+  5s against 19s. A DB-backed test that imports `test/helpers/pg.ts`
   must use the `.it.test.ts` suffix.
 - **`server/package.json` may be held under `skip-worktree` locally** (a local variant
   diverges from the committed file). That is a per-clone git flag — it is not committed

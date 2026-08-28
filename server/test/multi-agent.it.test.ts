@@ -386,15 +386,23 @@ d('SPEC-05 multi-agent review (Testcontainers pg)', () => {
       expect(created.statusCode).toBe(200);
 
       // Saturate the ceiling: three at the engine, the fourth still waiting.
-      let runs: (typeof t.agentRuns.$inferSelect)[] = [];
+      //
+      // Waits on `gated.calls`, NOT on three `running` rows, and the difference
+      // is a real race rather than a style choice: `startAgentRun` writes
+      // `running` and only then does the job reach the provider
+      // (`run-executor.ts`), so a third row can say `running` while only two
+      // calls have arrived — and the assertion below is about the calls. Polling
+      // the counter is also strictly stronger: a job that reached the engine has
+      // necessarily already written its row.
       for (let i = 0; i < 400; i++) {
-        runs = await pg.handle.db
-          .select()
-          .from(t.agentRuns)
-          .where(eq(t.agentRuns.prId, pr.id));
-        if (runs.filter((r) => r.status === 'running').length === 3) break;
+        if (gated.calls === 3) break;
         await new Promise((r) => setTimeout(r, 25));
       }
+      const runs = await pg.handle.db
+        .select()
+        .from(t.agentRuns)
+        .where(eq(t.agentRuns.prId, pr.id));
+      expect(runs.filter((r) => r.status === 'running')).toHaveLength(3);
       expect(runs.filter((r) => r.status === 'queued')).toHaveLength(1);
       queuedRunId = runs.find((r) => r.status === 'queued')!.id;
       // Three agents are open at the engine; the waiting one has cost nothing yet.
