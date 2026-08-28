@@ -12,7 +12,6 @@ import { AgentManifest, type CiFailOn, type Provider, type ReviewStrategy } from
 
 export interface ManifestInput {
   name: string;
-  provider: Provider;
   model: string;
   systemPrompt: string;
   strategy: ReviewStrategy;
@@ -22,10 +21,31 @@ export interface ManifestInput {
   skillSlugs: string[];
 }
 
+/**
+ * The provider the manifest records, and the only one it may record.
+ *
+ * NOT the agent's — it is set here rather than passed in, so the type makes the
+ * wrong value unrepresentable instead of relying on every caller to override
+ * it. `agent-runner/src/review.ts` ships exactly one provider
+ * (`createProvider` returns an `OpenRouterProvider` unconditionally, because
+ * every extra SDK is bytes in a diff a human has to merge), so a manifest
+ * saying `openai` described a run that did not happen: the file in the target
+ * repository, which is the record of what reviewed the pull request, disagreed
+ * with what reviewed it.
+ *
+ * What this does NOT fix, and is worth knowing: the MODEL is still the agent's.
+ * An agent configured `openai` + `gpt-4.1` now exports an honest
+ * `provider: openrouter` beside a model id OpenRouter does not serve, and the
+ * run fails at the first call rather than silently reviewing under the wrong
+ * configuration. Failing loudly is the improvement; refusing the export, or
+ * mapping the model id, is a product decision nobody has taken.
+ */
+const CI_PROVIDER: Provider = 'openrouter';
+
 export function buildManifest(input: ManifestInput): AgentManifest {
   return AgentManifest.parse({
     name: input.name,
-    provider: input.provider,
+    provider: CI_PROVIDER,
     model: input.model,
     system_prompt: input.systemPrompt,
     skills: input.skillSlugs,

@@ -234,7 +234,6 @@ export class CiService {
       agent: {
         id: agent.id,
         name: agent.name,
-        provider: agent.provider,
         model: agent.model,
         systemPrompt: agent.systemPrompt,
         strategy: agent.strategy,

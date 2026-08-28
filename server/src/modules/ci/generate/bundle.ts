@@ -26,7 +26,6 @@ import { renderWorkflow, type PostAs } from './workflow.js';
 export interface BundleAgent {
   id: string;
   name: string;
-  provider: Provider;
   model: string;
   systemPrompt: string;
   strategy: ReviewStrategy;
@@ -59,7 +58,6 @@ export function buildBundle(input: BundleInput): GeneratedBundle {
 
   const manifest = buildManifest({
     name: input.agent.name,
-    provider: input.agent.provider,
     model: input.agent.model,
     systemPrompt: input.agent.systemPrompt,
     strategy: input.agent.strategy,

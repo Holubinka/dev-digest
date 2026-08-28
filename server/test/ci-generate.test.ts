@@ -145,10 +145,30 @@ describe('what each file is (AC-19, AC-21, AC-23, AC-95, AC-96)', () => {
 });
 
 describe('the manifest (AC-25, AC-26)', () => {
+  it('records openrouter whatever the agent is configured with', () => {
+    // The runner ships exactly one provider — `createProvider` in
+    // `agent-runner/src/review.ts` returns an `OpenRouterProvider`
+    // unconditionally — so a manifest naming another one describes a run that
+    // never happens. The committed file is the record of what reviewed the
+    // pull request, and it has to be true.
+    const yaml = manifestToYaml(
+      buildManifest({
+        name: 'Anthropic-configured agent',
+        model: 'claude-sonnet-4',
+        systemPrompt: 'x',
+        strategy: 'auto',
+        ciFailOn: 'never',
+        skillSlugs: [],
+      }),
+    );
+    expect(yaml).toContain('provider: openrouter');
+    expect(yaml).not.toContain('anthropic');
+    expect(yaml).not.toContain('openai');
+  });
+
   it('validates against AgentManifest and carries the agent’s current ci_fail_on', () => {
     const manifest = buildManifest({
       name: AGENT.name,
-      provider: AGENT.provider,
       model: AGENT.model,
       systemPrompt: AGENT.systemPrompt,
       strategy: AGENT.strategy,
@@ -177,7 +197,6 @@ describe('the manifest (AC-25, AC-26)', () => {
     const yaml = manifestToYaml(
       buildManifest({
         name: 'A',
-        provider: 'openai',
         model: 'gpt-4.1',
         systemPrompt: '    indented first line\nsecond line',
         strategy: 'auto',
@@ -194,7 +213,6 @@ describe('the manifest (AC-25, AC-26)', () => {
     const yaml = manifestToYaml(
       buildManifest({
         name: 'no',
-        provider: 'openai',
         model: '4.1',
         systemPrompt: 'x',
         strategy: 'auto',
