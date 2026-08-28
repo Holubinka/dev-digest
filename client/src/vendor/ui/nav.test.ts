@@ -64,6 +64,37 @@ describe("nav — Onboarding Tour", () => {
   });
 });
 
+describe("nav — Eval Dashboard", () => {
+  const lab = NAV.find((g) => g.section === "SKILLS LAB")?.items ?? [];
+  const row = navItems.find((item) => item.key === "eval");
+
+  it("sits in SKILLS LAB with the key `activeKeyFor` and shell.json already use", () => {
+    // `key: "eval"` is load-bearing twice over: `activeKeyFor()` returns "eval"
+    // for a path starting `/eval`, and `messages/en/shell.json` holds
+    // `nav.eval`. A different key leaves the row unhighlighted on its own
+    // screen and its label untranslated.
+    expect(lab.map((i) => i.key)).toContain("eval");
+    expect(row?.href).toBe("/evals");
+  });
+
+  it("sits last in SKILLS LAB, the order the mockup fixes", () => {
+    // Placement, not presence — the sidebar renders this array in order, so
+    // only an index assertion can hold the mockup's order.
+    const keys = lab.map((i) => i.key);
+    expect(keys.indexOf("conventions")).toBeLessThan(keys.indexOf("eval"));
+    expect(keys.indexOf("eval")).toBe(keys.length - 1);
+  });
+
+  it("is reachable by `g e`, and the `?` modal says so", () => {
+    expect(row?.gKey).toBe("e");
+    expect(SHORTCUTS).toContainEqual({
+      keys: "g e",
+      label: "Go to Eval Dashboard",
+      group: "Navigation",
+    });
+  });
+});
+
 describe("nav — Project Context", () => {
   const row = navItems.find((item) => item.key === "context");
 

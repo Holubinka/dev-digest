@@ -29,6 +29,19 @@ type ProjectContextResult = Awaited<
   ReturnType<Container['projectContext']['resolveForRun']>
 >;
 
+/**
+ * `buildCallersDigest` queries `getCallerSignatures` once for the WHOLE diff and
+ * reuses that one digest on every map-reduce chunk (`run-executor.ts` builds it
+ * before `reviewPullRequest` even picks a mode) — so its cost is `changedFiles.length`,
+ * not "one file's worth", however many files a PR touches. `getCallerSignatures`
+ * bounds callers PER symbol (`MAX_CALLERS_PER_SYMBOL`); nothing bounded the file
+ * count feeding it, and a 166-file PR blew a single chunk's prompt past every
+ * model's context window (275558 requested tokens against a 200000 limit) before
+ * this cap existed. Same-shaped fix as `MAX_PLAN_FILES`/`MAX_ENV_VARS` elsewhere in
+ * this repo: name the bound, don't let it default to "however many the diff has".
+ */
+const MAX_CALLERS_DIGEST_FILES = 40;
+
 /** Thrown by a run when the user cancels it mid-flight (between map files). */
 export class RunCancelledError extends Error {
   constructor() {
@@ -648,9 +661,14 @@ export class ReviewRunExecutor {
    * found, or repo-intel errors) — `reviewPullRequest` omits the section in
    * that case (acceptance #10: flag off → identical prompt).
    *
-   * Compact format: one bullet per caller, grouped by file. Trimmed (limit 10
-   * rows per `getCallerSignatures` call) so the section stays under ~600
-   * tokens even on heavy PRs.
+   * Compact format: one bullet per caller, grouped by file. The `limit: 10`
+   * passed to `getCallerSignatures` bounds callers PER SYMBOL, not the total —
+   * a PR with hundreds of declared symbols across many files still gets one
+   * digest entry per symbol, so the "under ~600 tokens" this comment used to
+   * claim was never a real bound. `changedFiles` is capped at
+   * `MAX_CALLERS_DIGEST_FILES` for that reason: this digest is built ONCE for
+   * the whole diff and reused unchanged on every map-reduce chunk, so its size
+   * is what every chunk's prompt pays, not what one file's review needs.
    */
   private async buildCallersDigest(
     repoId: string,
@@ -658,8 +676,10 @@ export class ReviewRunExecutor {
     runLog: RunLogger,
     summary: string[],
   ): Promise<string | undefined> {
-    const changedFiles = diff.files.map((f) => f.path);
-    if (changedFiles.length === 0) return undefined;
+    const allChangedFiles = diff.files.map((f) => f.path);
+    if (allChangedFiles.length === 0) return undefined;
+    const changedFiles = allChangedFiles.slice(0, MAX_CALLERS_DIGEST_FILES);
+    const omitted = allChangedFiles.length - changedFiles.length;
     let rows;
     try {
       rows = await this.container.repoIntel.getCallerSignatures(repoId, changedFiles, 10);
@@ -681,7 +701,11 @@ export class ReviewRunExecutor {
       out.push(`### ${file}`);
       out.push(...lines);
     }
-    summary.push(`callers digest: ${rows.length} caller signature(s) attached`);
+    summary.push(
+      omitted > 0
+        ? `callers digest: ${rows.length} caller signature(s) attached (${omitted} changed file(s) past the ${MAX_CALLERS_DIGEST_FILES}-file cap were not queried)`
+        : `callers digest: ${rows.length} caller signature(s) attached`,
+    );
     return out.join('\n');
   }
 

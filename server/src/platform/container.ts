@@ -26,6 +26,7 @@ import { estimateCost } from '../adapters/llm/pricing.js';
 import { PriceBook } from './price-book.js';
 import { ConfigError } from './errors.js';
 import { AgentsRepository } from '../modules/agents/repository.js';
+import { SkillsRepository } from '../modules/skills/repository.js';
 import { ReviewRepository } from '../modules/reviews/repository.js';
 import { PullsRepository } from '../modules/pulls/repository.js';
 import { SettingsRepository } from '../modules/settings/repository.js';
@@ -47,6 +48,9 @@ import { IntentRepository } from '../modules/intent/repository.js';
 import type { ProjectContextResolver } from '../modules/context/types.js';
 import { ContextService } from '../modules/context/service.js';
 import { ContextRepository } from '../modules/context/repository.js';
+import type { EvalReader } from '../modules/eval/types.js';
+import { EvalService } from '../modules/eval/service.js';
+import { EvalRepository } from '../modules/eval/repository.js';
 import { type DepGraph, DepCruiseGraph } from '../adapters/depgraph/index.js';
 import { type Tokenizer, TiktokenTokenizer } from '../adapters/tokenizer/index.js';
 import { HttpSkillFetcher } from '../adapters/skill-fetch/index.js';
@@ -109,6 +113,8 @@ export interface ContainerOverrides {
    * no clone and no `repo_docs` row at all.
    */
   projectContext?: ProjectContextResolver;
+  /** Eval pipeline (L06) — injectable for the same reason every service here is. */
+  eval?: EvalReader;
   /** repo-intel T3 adapters — only the indexer pipeline reads these. */
   depgraph?: DepGraph;
   tokenizer?: Tokenizer;
@@ -136,7 +142,9 @@ export class Container {
   // runs). Constructed here, in the composition root, so consuming modules use
   // `container.agentsRepo` instead of reaching into another module's folder.
   private _agentsRepo?: AgentsRepository;
+  private _skillsRepo?: SkillsRepository;
   private _reviewRepo?: ReviewRepository;
+  private _evalRepo?: EvalRepository;
   private _pullsRepo?: PullsRepository;
   private _settingsRepo?: SettingsRepository;
   private _repoIntel?: RepoIntel;
@@ -146,6 +154,7 @@ export class Container {
   private _onboardingService?: OnboardingReader;
   private _onboardingGenerator?: OnboardingGenerator;
   private _projectContext?: ProjectContextResolver;
+  private _evalService?: EvalReader;
   private _depgraph?: DepGraph;
   private _tokenizer?: Tokenizer;
   private _skillFetcher?: SkillFetcher;
@@ -190,8 +199,23 @@ export class Container {
     return (this._agentsRepo ??= new AgentsRepository(this.db));
   }
 
+  get skillsRepo(): SkillsRepository {
+    return (this._skillsRepo ??= new SkillsRepository(this.db));
+  }
+
   get reviewRepo(): ReviewRepository {
     return (this._reviewRepo ??= new ReviewRepository(this.db));
+  }
+
+  /**
+   * Exposed so `modules/reviews` can re-sync a finding-derived eval case's
+   * polarity when the finding's accept/dismiss decision changes after the
+   * case was made — the cross-module edge `no-cross-module` requires going
+   * through the container for (see `evalService` below, the mirror of this
+   * for the opposite direction: `EvalContainer.reviewRepo`).
+   */
+  get evalRepo(): EvalRepository {
+    return (this._evalRepo ??= new EvalRepository(this.db));
   }
 
   /**
@@ -307,6 +331,26 @@ export class Container {
   get onboardingGenerator(): OnboardingGenerator {
     if (this.overrides.onboardingGenerator) return this.overrides.onboardingGenerator;
     return (this._onboardingGenerator ??= new OnboardingGenerateExecutor(this));
+  }
+
+  /**
+   * Eval pipeline (L06). MEMOISED, for the reason `briefService` and
+   * `onboardingService` are, and the argument is at its strongest here:
+   * `EvalService` carries the single-flight map keyed by agent id that AC-28
+   * ("a batch is already running for this agent") and AC-35 ("the launching
+   * screen refuses to start the same set twice") rest on, and a map on a second
+   * instance is not the same lock. Constructing it in `eval/routes.ts` would
+   * make that correctness depend on module registration running exactly once,
+   * and every case in a batch is a PAID model call — the failure mode is a
+   * doubled bill, silently, with `pnpm arch` unable to see the difference.
+   *
+   * The repository is built HERE, like every other service's: naming a concrete
+   * type is the composition root's job, and it is what keeps `Db` off
+   * `EvalContainer`, the port `EvalService` codes against.
+   */
+  get evalService(): EvalReader {
+    if (this.overrides.eval) return this.overrides.eval;
+    return (this._evalService ??= new EvalService(this, new EvalRepository(this.db)));
   }
 
   /**

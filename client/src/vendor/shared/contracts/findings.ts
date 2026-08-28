@@ -59,6 +59,27 @@ export const Finding = z.object({
   // Lethal-trifecta variant fields (present only when kind === 'lethal_trifecta')
   trifecta_components: z.array(TrifectaComponent).nullish(),
   evidence: z.array(TrifectaEvidence).nullish(),
+  /**
+   * A short verbatim excerpt of the cited line(s), copied exactly from the
+   * diff. Optional so existing findings without one keep validating. The
+   * grounding gate uses it to self-check `start_line`/`end_line`: copying text
+   * is a far easier task for a model than counting lines in a hunk, so a
+   * mismatch between what this quotes and what the line number claims is a
+   * stronger signal than the number alone (`reviewer-core/src/grounding.ts`).
+   */
+  quote: z
+    .string()
+    .nullish()
+    .describe(
+      'A COPY-PASTE, character-for-character excerpt of the exact line(s) cited — not a ' +
+        'paraphrase or a description. Copy it from the diff text exactly as shown, including ' +
+        'its original leading whitespace/indentation. Never use "…" or "..." to elide part of ' +
+        'it, and never truncate it — if the full line is too long to quote whole, pick ONE ' +
+        'shorter real line from the same citation and quote that instead of shortening a ' +
+        "longer one. A quote that cannot be found verbatim in the file is worse than no quote: " +
+        'it fails a mechanical check and the finding is dropped before any human sees it. Keep ' +
+        'it under roughly 500 characters (a handful of lines at most).',
+    ),
 });
 export type Finding = z.infer<typeof Finding>;
 

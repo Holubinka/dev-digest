@@ -10,6 +10,7 @@ import { SkillTypeBadge } from "@/components/skill-type";
 import { useSkill, useUpdateSkill } from "@/lib/hooks/skills";
 import { ConfigTab } from "./_components/ConfigTab";
 import { ContextTab } from "./_components/ContextTab";
+import { EvalsTab } from "./_components/EvalsTab";
 import { PreviewTab } from "./_components/PreviewTab";
 import { StatsTab } from "./_components/StatsTab";
 import { VersionsTab } from "./_components/VersionsTab";
@@ -107,6 +108,7 @@ export function SkillDetail({ id }: { id: string }) {
         {tab === "preview" && <PreviewTab skill={skill} />}
         {tab === "context" && <ContextTab skill={skill} />}
         {tab === "stats" && <StatsTab skill={skill} />}
+        {tab === "evals" && <EvalsTab skill={skill} />}
         {tab === "versions" && <VersionsTab skill={skill} />}
         {tab === "config" && <ConfigTab skill={skill} />}
       </div>

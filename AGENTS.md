@@ -57,6 +57,45 @@ working tree. Only that hook enforces it; a push from your own terminal is untou
 A Track A gate failure (arch, lint, typecheck, tests, vendor mirror, skills registry) stops both
 the push and the PR. A critical found by a review subagent stops only the PR.
 
+## Evals gate what changes
+
+`evals/` (own `package.json`, **pnpm** — see its README) runs three tiers against
+`.claude/skills/*` and `.claude/agents/*`: a static structure gate, LLM-judged content quality,
+and trace-asserted workflow behavior (does `CLAUDE.md` route to the right doc, does a skill
+activate, does a subagent dispatch).
+
+```sh
+cd evals && pnpm eval:quality     # static SKILL.md/AGENTS.md gate — no model, CI-blocking
+cd evals && pnpm eval:workflow    # CLAUDE.md routing / dispatch / activation, the real harness
+cd evals && pnpm eval:skills      # skill content quality (LLM-judged)
+cd evals && pnpm eval:agents      # agent content quality (LLM-judged)
+cd evals && pnpm eval:repeat <pattern> -n 2 --label X   # stability of one change (n capped at 2)
+cd evals && pnpm eval:delta <baseline> <candidate>       # before vs after, per-practice
+cd evals && pnpm eval:benchmark <pattern> -n 5            # with vs without the artifact (lift)
+```
+
+| Change | Minimum check | CI workflow |
+|---|---|---|
+| `.claude/skills/**` | `eval:quality` + the matching skill eval | `evals-skills.yml` |
+| `.claude/agents/**` | the agent eval + the relevant workflow case | `evals-agents.yml` |
+| `CLAUDE.md` / routing rules | `eval:workflow` | `evals-workflow.yml` |
+| An eval case or a grader (`evals/src/**`) | recalibrate: `eval:repeat --label`, commit the JSON under `evals/baselines/` | all three |
+
+**One workflow per tier**, and the `paths:` filter of each is the routing — the table above, said
+again in a form GitHub enforces before a runner starts. A tier is re-run, muted or promoted to
+required on its own, without touching the other two. All three call the same two reusable
+workflows, so the split duplicates no YAML:
+
+- `evals-quality.yml` — `eval:quality`, no model, no secret, runs on a fork PR. **The only check
+  that blocks a merge**, and every tier waits on it before spending a model token.
+- `evals-tier.yml` — the model run for one tier (`with: { tier: skills | agents | workflow }`).
+  Advisory: it carries `continue-on-error`, publishes a report and a baseline diff to the job
+  summary, and has no secret on a fork PR by construction (`pull_request`, never
+  `pull_request_target`) — it checks for one and skips itself cleanly there.
+
+Full detail, and the anti-patterns a new case, grader or CI step must not reintroduce:
+`evals/README.md`.
+
 ## What a session costs
 
 Measured on the Intent Layer, 2026-08-06: **$440**, of which **$313 was re-reading context** and

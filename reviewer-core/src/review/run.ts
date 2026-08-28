@@ -29,8 +29,19 @@ import { reduceReviews, scoreFromFindings, sliceDiff } from './reduce.js';
 
 /** Default map-reduce threshold (matches the server's FILE_MAP_THRESHOLD_LINES). */
 export const DEFAULT_MAP_THRESHOLD_LINES = 400;
-/** Default structured-output reprompt retries (matches REVIEW_MAX_RETRIES). */
-export const DEFAULT_REVIEW_MAX_RETRIES = 2;
+/**
+ * Default structured-output reprompt retries — 3 total attempts (`maxRetries + 1`,
+ * see `openrouter.ts`).
+ *
+ * Was 2 (3 attempts). Raised after a captured failure on
+ * `ssrf-in-webhook-forwarding-exfiltrates-api-token…` (claude-haiku-4.5, 2026-08-25):
+ * attempt 1 ignored the schema and wrote a markdown report instead of JSON; attempt 2
+ * was valid JSON with the CORRECT finding (file/line/quote all right) but missing 4
+ * required fields; attempt 3 added them but got `category`/`confidence` wrong
+ * (a free-text label instead of the enum, a string instead of a number) — visibly
+ * converging, one attempt short. `reviewer-core/INSIGHTS.md` has the full raw-response trace.
+ */
+export const DEFAULT_REVIEW_MAX_RETRIES = 3;
 
 export type ReviewStrategy = 'auto' | 'single-pass' | 'map-reduce';
 export type ReviewMode = 'single-pass' | 'map-reduce';

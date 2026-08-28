@@ -817,6 +817,53 @@ that grounding would actually keep — stopped the overflow, so the assertion th
 reached inside the task loop. When a bound test fails after a fix, read whether it was measuring
 the bound or the thing overflowing it before touching the number.
 
+### A route-level tenancy test can pass with the repository's workspace filter deleted
+
+**Symptom.** Writing L06's foreign-workspace case (2026-08-23) I asserted, over HTTP, that a
+second workspace's agent answers 404 on six routes and that its completed batch appears in
+neither `GET /eval-dashboard` nor `GET /eval-batches/compare`. Then I deleted
+`c.workspace_id = ${workspaceId}` from `EvalRepository.completedBatches` to check the test was
+not vacuous. **Every assertion stayed green.**
+**Cause.** `EvalService.dashboard` builds its cards from `agentsRepo.list(workspaceId)` and skips
+any `owner_id` not in that map; `compare` calls `agentsRepo.getById(workspaceId, …)` and answers
+404 when it misses. Both are correct — and both are a SECOND lock that hides whether the first
+one exists. The primary defence for `eval_runs` is the join, because that table has no
+`workspace_id` of its own (`INSIGHTS.md` § "parent scoped, child assumed"); a service-level agent
+lookup is defence in depth, and defence in depth is exactly what makes the primary defence
+untestable from outside.
+**Fix.** Assert the repository directly, in the same `*.it.test.ts`, alongside the HTTP
+assertions — `test/eval-routes.it.test.ts` calls `new EvalRepository(pg.handle.db)` and checks
+`completedBatches`, `batchById`, `latestRunPerCase`, `runsForCases`, `getCase`, `listCases`,
+`caseCountsByOwner` and `updateRunEnvelopes` from BOTH workspaces: empty from this one, non-empty
+from the other. Removing any one of the four workspace filters now fails one assertion each,
+verified individually. **When a slice has two layers of tenancy, a route test only ever proves the
+outer one.**
+
+### Filtering inside the same `DISTINCT ON` that computes "latest" answers a different question than filtering after it
+
+**Symptom.** Building the skill-centric mirror of `latestRunPerCase` (`EvalRepository.casesForSkill`,
+2026-08-23) — "every case whose skill X actually shaped" — the first draft put the skill filter in
+the `WHERE` clause of the same `DISTINCT ON (r.case_id) ... ORDER BY r.case_id, r.ran_at DESC` that
+picks each case's latest run. It typechecked, ran, and returned plausible-looking rows.
+**Cause.** `WHERE skills @> '[...]'` INSIDE that query restricts the candidate rows BEFORE
+`DISTINCT ON` picks the newest survivor — so it answers "the newest run where this skill fired",
+not "this case's newest run, and did it have this skill". Those agree only when a case's skill
+history never regresses. A case run once with the skill bound, then again after the skill was
+unbound, has a latest run that CORRECTLY carries no skills — but the buggy query still returns the
+older, stale run and reports it as current. Proved with a live test: bind, run (pass), unbind,
+run again (skill absent from the true latest run) — the buggy version still listed the case;
+`git show` of the fix commit has the one-line diff.
+**Fix.** Compute "latest" in an unfiltered CTE first, THEN filter the CTE's output:
+```sql
+WITH latest AS (
+  SELECT DISTINCT ON (r.case_id) ... ORDER BY r.case_id, r.ran_at DESC  -- no skill filter here
+)
+SELECT ... FROM latest l WHERE l.skills @> '[{"id": "..."}]'::jsonb    -- filter AFTER
+```
+Any "latest per group, filtered by a condition that can change between runs" query needs this
+two-step shape — filtering inside the `DISTINCT ON` is the trap, and it will typecheck and mostly
+look right, which is exactly why it survived a first pass.
+
 ## Codebase Patterns
 
 ### The allowed-refs invariant is checkable in one line against a real PR
@@ -1567,6 +1614,37 @@ generation port is deliberately unable to read the index state at all
 widening the port would cost the property that this feature can never index.
 
 
+### A slice the container constructs may not import `Container` — even as a type
+
+**Symptom.** `platform/container.ts` memoises `EvalService`, so it imports
+`modules/eval/service.js`. Writing `constructor(container: Container, …)` in that service — the
+shape `onion-architecture` §3.3 prescribes and the plan's C4 restated — closes a two-file cycle
+that `no-circular` rejects. `.dependency-cruiser.cjs` sets `tsPreCompilationDeps: true` and
+`no-circular` has no `dependencyTypesNot`, so `import type` counts exactly like a value import.
+**Cause.** §3.3's `Container` is safe only for a service the composition root does NOT construct.
+`ReviewService` may name it because `container.ts` imports only `reviews/repository.js`. The four
+services the root builds — `intent`, `blast`, `brief`, `onboarding` — all avoid it, and each one's
+`types.ts` says so.
+**Fix.** Declare the slice of the root you need structurally in `modules/<m>/types.ts` and name
+that: `EvalContainer` lists `agentsRepo`, `reviewRepo`, `git` and `llm` as method shapes, and a
+`Container` satisfies it by construction so the root still passes `this`. The narrowing is a
+second benefit, not a cost — `EvalContainer.agentsRepo` names four methods, so this slice
+provably cannot reach the rest of `AgentsRepository`. Same reason `_shared/feature-models.ts`
+declares `SettingsReader` and `_shared/pr-diff.ts` declares `PrDiffSource`.
+
+### The 23-file integration suite fails ~2 random tests in parallel and 0 serially
+
+**Symptom.** `pnpm exec vitest run .it.test` failed 2 of 199 on 2026-08-23 — first in
+`reviews-context.it.test.ts`, then, on a re-run that EXCLUDED the file just added, in
+`reviews-skills.it.test.ts`. Both pass in isolation. The failure is always a `GET /runs/:id` that
+answers 404 because the run had not finished.
+**Cause.** Every `*.it.test.ts` starts its own Testcontainers Postgres, so the parallel run boots
+23 containers at once and the machine starves them. It is a load artefact, not a defect in the
+suite that happens to lose.
+**Fix.** `pnpm exec vitest run .it.test --no-file-parallelism` — 23 files, 199 tests, 90 s wall,
+all green. Use it before concluding that a change broke an integration test, and re-run any single
+failing file alone first; the file that fails moves between runs, which is the tell.
+
 ## Tool & Library Notes
 
 ### `break` out of a `for await` destroys the stream, so teardown errors land inside the `try`
@@ -1905,6 +1983,36 @@ resolution problem; read one that names a type mismatch inside a test file**, be
 tell you.
 
 ## Recurring Errors & Fixes
+
+### A hand-rolled "find the closing `` `; `` " prompt-sync script corrupts a constant that quotes its OWN template-literal syntax in prose
+
+**Symptom (2026-08-24).** Editing `security-reviewer.md` to add a worked example, then re-syncing
+`server/src/db/seed-prompts.ts` with a one-off Python script (`ts.index('`;', content_start)` to
+find where the OLD `SECURITY_REVIEWER_PROMPT` content ended), corrupted the file: `tsx watch` died
+immediately with `Unexpected "return"` and the dev server would not start.
+
+**Cause.** `security-reviewer.md`'s own Example 1 quotes a JS template literal in prose —
+`` `quote: "const query = \`SELECT * FROM users WHERE id = ${id}\`;"` `` — which, once escaped for
+embedding (`\\` → `\\\\`, `` ` `` → `` \` ``, `${` → `\${`), contains the literal two-character
+substring `` `; `` WAY BEFORE the true end of the constant. A naive `indexOf('`;', ...)` search
+stops there, not at the real closing delimiter — splicing the new content in, followed by whatever
+was left of the OLD content from that false match onward, both inside the same broken template
+literal. This same repo already has the CORRECT parser for this — `scripts/prompt-sync.mjs`'s
+`seedLiteral()` scans character-by-character and checks `\\` before `` \` `` / `\$` for exactly this
+reason (see the 2026-08-23 entry in `reviewer-core/INSIGHTS.md` about the same class of bug in an
+earlier, read-only version of that scanner) — but it is a COMPARISON tool, called by nothing that
+WRITES the seed file. Every prompt sync this session before this one happened not to trip it only
+because no other prompt's own text happened to quote an escaped-backtick-plus-semicolon sequence.
+
+**Fix.** Do not search prompt content for a delimiter. Find the boundary STRUCTURALLY instead: the
+seed file declares five constants back to back (`grep -n "^export const" server/src/db/seed-prompts.ts`),
+so the true end of one is bounded by the START of the next (or EOF for the last). Locate
+`` export const NEXT_CONSTANT = ` `` and take the LAST `` `; `` before it, not the first anywhere in
+the file — verified working, then re-verified with `node scripts/prompt-sync.mjs` (checks content),
+`pnpm typecheck` (checks the file parses as valid TS, which prompt-sync alone does NOT catch — it
+compares strings, not syntax), and a visual diff of the untouched neighboring constants. **A
+generalizable fix**, not yet done: give `seedLiteral()`'s scanner a WRITE-side twin (a small
+"replace this constant's literal, structurally" helper) so nobody hand-rolls this search again.
 
 ### A review run fails with `401 Missing Authentication header`
 
@@ -2282,6 +2390,315 @@ backtick or an early `*/`, not at the line it names.
 
 ## Session Notes
 
+### 2026-08-24 (Security Reviewer — a mis-cited TOCTOU eval case, and an honest miss)
+
+- User-added eval case `toctou-race-condition-in-clone-write-path-symlink-between-check-and-use`
+  (`server/src/adapters/git/simple-git.ts`) failed with recall 0. Root cause: the ORIGINAL
+  finding's own citation was wrong — `gpt-4o-mini` twice (across two separate review runs, two
+  separate accepts) said "the `writeTarget` method (line 256)" when line 256 is inside the
+  method's DOC COMMENT; the method itself starts at line 279, and the actual `lstat`-in-a-loop
+  check the finding describes is at lines 293-309. A second, near-duplicate case existed from a
+  SECOND accept of the same underlying observation (`be3f26f4…`, 2026-08-24), also mis-cited by
+  ~2 lines in the same wrong direction — the model made the SAME line-counting error twice,
+  independently. Corrected both citations to 293-309, then deleted the duplicate (one case is
+  enough once the location is right).
+- Even with the correct citation, `gpt-4o-mini` never once reproduced the finding: 0/12 across two
+  rounds of direct `reviewPullRequest` calls (bypassing the batch executor, which discards
+  everything but a dropped-count) — 9 before a prompt fix, 6 after. It consistently reports a
+  DIFFERENT, weaker concern instead ("Potential Path Traversal in `writeTarget` Method") even
+  though the code already defends against traversal via `join()` + a containment check — the model
+  is not blind to the area, it fixates on the wrong mechanism within it. Added a third worked
+  example to `security-reviewer.md` (a generic, non-eval-case-derived cross-method TOCTOU: a
+  `assertSafe` check in one method, the real write in a different method further down) — pushed,
+  verified (1325 unit tests green, `prompt-sync` clean), and it measurably changed the model's
+  OWN rationale text (later runs explicitly note "the method DOES check for symlinks") without
+  ever crossing into a matching citation. Left as an honest, documented miss rather than kept
+  chasing it — same shape as the Performance Reviewer 6-run findings on cross-method reasoning:
+  some real defects are just hard for a single-pass, diff-only review at this model's tier.
+- **Broke, then fixed, the live dev server while doing the prompt sync** — see the Recurring
+  Errors & Fixes entry above ("hand-rolled prompt-sync script corrupts a constant that quotes its
+  own template-literal syntax"). Caught immediately (`tsx watch` crash loop), fixed with a
+  structural rather than content-based boundary search, and re-verified with `prompt-sync.mjs` +
+  `pnpm typecheck` + the full unit suite before trusting the file again.
+
+### 2026-08-24 (continued — the other 6 failing cases, a mischaracterized "race condition", and a false regression scare)
+
+- Asked to improve the rest of the failing set (7 of 13 cases), found 5 shared ONE root cause: a
+  `must_not_flag`-only case's `input_diff` is the WHOLE new file (D5/D7 crediting is file+range —
+  see `scoring.ts`'s `creditFindings`), so ANY finding anywhere else in that file — not just one
+  overlapping the specific forbidden range — counts as uncredited noise and fails the case. A
+  `must_not_flag` case therefore tests "the model reports ZERO things about this whole file", a much
+  stricter bar than its own name implies ("don't re-report THIS ONE claim"). Confirmed by reading
+  every "extra" finding: `.trim()` on a possibly-`null` value claimed to "silently pass `undefined`"
+  (it would THROW, never reach the callback — the model asserted a mechanism it never traced), a
+  loose `case` substring match called "command injection" (real pattern, inflated label), a
+  hardcoded numeric config value called "unbounded input". Added Example 3 ("trace the claim, do not
+  assert it") to `security-reviewer.md`, targeting exactly this shape — pushed and verified.
+- **The `race-condition-in-skillsservice-update-allows-enabling-an-injection-body` `must_find` case
+  is very likely a mischaracterized finding, same class as the FileRef.tsx retirement earlier this
+  session.** Traced `SkillsService.update` (`server/src/modules/skills/service.ts:133-160`) against
+  the finding's own claimed mechanism ("the second request's check uses the stale body, so it allows
+  enabling") line by line: the method is a `for`-loop of `UPDATE_ATTEMPTS = 3` attempts, each
+  re-reading `existing` FRESH and re-running the injection check against THAT attempt's own read,
+  before a write gated on `eq(t.skills.version, existing.version)`
+  (`server/src/modules/skills/repository.ts`). Any write that could have raced sees its version
+  check fail, returns `undefined`, and the loop retries with a fresh read — no combination of
+  (body, enabled) can ever be COMMITTED without having been validated against consistent data at
+  write time. The described race requires a write to land using data staler than what it was
+  gated on, which this pattern specifically forecloses. Not retired yet — this overturns a real,
+  deliberate accept decision, which is not mine to make unilaterally; surfaced to the user with the
+  full trace for a call. **Resolved**: user confirmed, case deleted (`d015f277…`). 12 cases now.
+  The underlying `findings` row (`bf171e5e…`, still `accepted_at` set in the product's own review
+  history) was deliberately left untouched — D11 decouples eval cases from the finding they were
+  built from precisely so deleting one says nothing about the other, and reversing a real product
+  decision was never asked for, only removing it as a regression-test target.
+- **A "regression" on the previously-bulletproof `production-stripe-secret-key-hardcoded…` case
+  turned out to be pre-existing, not caused by anything this session touched.** The case started
+  additionally reporting "Unbounded Rate Limit Values" on two literal, hardcoded config numbers
+  (`anonymous: 60, authed: 1000`) — a confused claim, since these ARE the bound values, not
+  unbounded input — right after Example 3 (a different, now-removed cross-method TOCTOU example)
+  was added. Circumstantially looked caused by it. Isolated properly: temporarily stripped the LIVE
+  agent back to the exact prompt text from before ANY edit this session and re-ran the case 3
+  times — same "Unbounded Rate Limit Values" finding, 3/3. The behavior predates every prompt change
+  made today; it was simply never sampled enough times before to be seen. **Lesson: before crediting
+  or blaming a prompt edit for a change in a noisy model's behavior, get a same-case baseline sample
+  on the OLD prompt, not just a memory of one old passing run** — one old data point is not a
+  baseline, especially against a model already documented (this same file, 2026-08-23 entries above)
+  as unstable enough to flip outcomes run to run on a BYTE-IDENTICAL input.
+- Net effect of what was kept (Example 3, "trace the claim"): the TOCTOU example that had shown zero
+  benefit across 15 total attempts and this "unbounded rate limit" case's apparent regression were
+  both removed/exonerated: the TOCTOU example was deleted outright (proven ineffective, see the
+  entry above), and the "regression" was proven pre-existing rather than reverted. The one clean,
+  reproducible win: `intent-derivation-flow-is-not-a-lethal-trifecta` went from a consistent fail
+  (an "unbounded input in readPlanFiles" tangent every run) to passing. `traces_passed` across 4
+  batches on the full 13-case set: 6, 7, 8, 6 — noisy, no clear directional trend beyond the one
+  fixed case, consistent with a model whose baseline noise floor is comparable to the size of any
+  single prompt tweak's effect.
+
+### 2026-08-24 (continued again — 3 cases fixed, and a second honest-miss class discovered)
+
+- Asked once more to fix whatever was still failing. Isolated `sensitive-credit-card-data-logged-in-checkout`
+  (baseline 0/4, `logger.info('checkout started', { cart, card })` going unreported every time) by
+  stripping the just-added Example 3 ("trace the claim") from the live agent and re-sampling: 3/5 passed
+  without it vs 0/4 with it — enough of a gap over 9 total samples to act on, unlike the stripe-key
+  false alarm above. Root cause: Example 3's own "don't assert what you can't see" framing was making
+  the model demand the `Card` type's field list before it would call a `card` argument sensitive, when
+  the parameter's NAME and its use (`charge(card, ...)`) already say enough. Fixed by adding one paragraph
+  to Example 3 distinguishing tracing a MECHANISM (what Example 3 is actually for) from requiring full
+  type visibility to recognize sensitivity by name/context — not by removing the example, since it still
+  earns its keep elsewhere (intent-derivation, below). Recall after: 3/3 clean on immediate retest, 3/3 on
+  a later confirm pass (occasional precision noise from the separate padding issue below, not suppression
+  — recall never went back to 0).
+- `intent-derivation-flow-is-not-a-lethal-trifecta` and `production-stripe-secret-key…` share ONE
+  mechanism, previously diagnosed as two unrelated hallucinations: the model asserting a NEGATIVE
+  property (unbounded, unvalidated) of code it cannot see, not just a cost or a positive mechanism. The
+  existing "never assert a cost or implementation you cannot see" bullet only named positive claims
+  ("spawns a subprocess"). Extended it to cover a callee's own behavior explicitly, with the exact two
+  examples from these cases (`parsePlanRefs` imported but not shown; `{ anonymous: 60, authed: 1000 }` —
+  literal numbers ARE the bound, not evidence of a missing one). `intent-derivation` went 3/3 clean
+  immediately. `stripe-key`'s recall on the CRITICAL finding itself went to 11/11 across every sample
+  taken this session after this point — the hallucination stopped being about MISSING the real finding.
+- **What stripe-key's hallucination actually needed turned out to be a much harder, structural problem:
+  the model pads a second, speculative finding onto ANY diff that already contains one strong CRITICAL,
+  and re-targets a DIFFERENT line every time the specifically-named target is closed off.** Timeline
+  across four prompt versions, 3-4 samples each: re-wording away from the literal word "unbounded" — the
+  model just restated the identical guess as "does not specify bounds" (3/3 still padding, same target,
+  `rateLimit`). Adding a worked Example 4 naming this exact shape almost verbatim — 4/4 still padding,
+  but now on `redisUrl: process.env.REDIS_URL`, an UNCHANGED context line (no `+`) not even touched by
+  the diff. Adding a structural "one CRITICAL finding is a complete report, don't go looking for a
+  second" rule to Findings discipline — 1/4 clean, one real improvement, but 3/4 still padded (back to
+  `rateLimit`). Left at this partial state: recall on the real finding is now reliable, precision has a
+  visible but not eliminated ceiling. Whack-a-mole against a NAMED example does not generalize; whack-a-mole
+  against the STRUCTURAL trigger ("you already found one CRITICAL, stop") made measurable but incomplete
+  progress. Not chased further past this point — same call as the TOCTOU miss below, made explicit here so
+  the next session does not re-discover the ceiling by re-trying the same three moves.
+- **A second, distinct honest-miss class, found while checking for regressions:** `gate-sh-does-not-validate…`,
+  `wrapuntrusted-fence-can-be-broken…`, `report-sh-uses-jq-r…` and `scope-sh-s-flag-for-function…` — four
+  `must_not_flag` cases, all shell-script or shell-adjacent code, all failing the SAME way: the model calls
+  a `case`/pattern-match or a plain string-concatenation "injection" or "code execution" with no traced sink
+  (no `exec`, no `eval`, nothing that runs the string as code). This is the *exact* pattern Example 3 already
+  names verbatim ("do not call a loose `case` pattern-match 'command injection'") — and still happens, 100%
+  reproducing across dozens of samples this session (0/6 on two of the four, individually sampled). Tried one
+  more, maximally concrete intervention: a new "injection/code execution name a SINK, not a feeling" rule in
+  How to analyze, listing what counts as a sink and explicitly excluding a `case` match or a display-only
+  string build. Zero measured effect — 0/6 on its two named targets, both before and after. Reverted outright
+  (kept nothing "just in case") after confirming via a stripped-live-agent A/B that it wasn't even the cause
+  of report-sh/scope-sh's failures (they failed similarly with or without it) — this is a THIRD family in the
+  same failure mode discovered mid-check, not caused by the sink rule, just never sampled before today.
+  **Conclusion: this model has a durable prior that shell `case` pattern-matching and string-building near
+  security-relevant code IS an injection risk, and no wording tried so far — direct instruction, worked
+  example, or sink-definition — overrides it.** Treated as an honest miss, same discipline as TOCTOU: documented,
+  not chased indefinitely, prompt reverted to the state with no measured benefit removed.
+- Verification before calling this done: `node scripts/prompt-sync.mjs` clean, `pnpm typecheck` clean, full
+  1325-test unit suite green, live agent (now v35) matches the committed-to-be `security-reviewer.md` byte for
+  byte — no diagnostic/isolation script left uncommitted (all `server/scratch-*` deleted after use).
+
+### 2026-08-24 (Security Reviewer — model swap fixes the case-injection family, TOCTOU pinned down precisely)
+
+- Compared `openai/gpt-4o-mini` (the model this whole investigation had been run against —
+  corrected from an earlier assumption in this file that it was `deepseek/deepseek-v4-flash`,
+  which is Performance Reviewer's model, not this one) against `anthropic/claude-sonnet-4.5` and
+  `anthropic/claude-haiku-4.5` on the full 12-case set, several batches each. `gpt-4o-mini`: 4-5/12
+  per batch. `claude-sonnet-4.5`: 10/12, $0.457/batch, but introduced its OWN padding tendency on
+  `unauthenticated-rate-limit-reset…` (always finds the real CRITICAL, but consistently adds a
+  second speculative finding about `resetBucket`'s unseen internals — same failure shape as
+  gpt-4o-mini's stripe-key padding, just a different model, different target line: this looks like
+  a cross-model LLM tendency, not something specific to one model's weak reasoning).
+  `claude-haiku-4.5`: 10-11/12 across 3 batches, $0.157/batch (17x gpt-4o-mini, 1/3 of sonnet), and
+  the ONLY one of the three with clean precision=1.0 in 2 of 3 batches — it does not reproduce
+  sonnet's padding tendency on this set. **Adopted `claude-haiku-4.5` as Security Reviewer's
+  production model** (user-confirmed) — best accuracy AND lowest cost of the three real candidates.
+  Live agent pushed to v37; `src/db/seed.ts`'s `Security Reviewer` entry updated to
+  `'anthropic/claude-haiku-4.5'` (was silently inheriting `DEFAULT_MODEL` while the live DB agent
+  had already drifted to `gpt-4o-mini` sometime before this session — same "seed vs. live" drift
+  class as the prompt-sync problem, just on the `model` column instead of `systemPrompt`; nothing
+  in this repo diffs the two the way `prompt-sync.mjs` diffs prompts).
+- Switching models alone fixed the entire 4-case "case-pattern-match = injection" family
+  (`gate-sh`, `wrapuntrusted-fence`, `report-sh`, `scope-sh`) that three separate prompt
+  interventions on `gpt-4o-mini` (see the entry above) could not touch — all 4 went 3/3 clean on
+  both sonnet and haiku with the EXACT SAME prompt that scored 0/6 on gpt-4o-mini. Confirms the
+  2026-08-24 (continued again) entry's conclusion: this was `gpt-4o-mini`'s own prior, not
+  something a system prompt could override. Worth remembering the next time a prompt-only fix
+  plateaus after 3+ genuinely different interventions — check whether the model itself is the
+  ceiling before writing a 4th variant.
+- **TOCTOU (`toctou-race-condition-in-clone-write-path…`) is unfixed by any of the three models —
+  0/17 across the whole session, now including sonnet and haiku (0/4 combined, both silent, not
+  even a wrong finding this time).** Pinned down the exact mechanism a reviewer would need to trace
+  cross-method to find it: `SimpleGitClient.writeTarget` (`server/src/adapters/git/simple-git.ts:296-327`)
+  `lstat`s every EXISTING path segment for a symlink, but deliberately `break`s at the first
+  segment that does not exist yet (line 316-320's comment: "nothing here yet, so nothing below it
+  either") — so those segments are never checked. `writeFile` (`:349-370`), a SEPARATE method,
+  calls `writeTarget` for the check, then several lines later calls
+  `mkdir(dirname(target), { recursive: true })` (`:363`) — which is exactly what creates the
+  segments the check skipped. `mkdir recursive` does not itself refuse a symlink placed in that
+  gap; only the FINAL leaf is protected, by `open(…, 'wx')` in `writeExclusive`/`writeViaTemp`. The
+  code's own inline comment ("caught by `open(…, 'wx')`, which fails on a symlink") is easy to read
+  as covering the whole path when it only covers the last segment — finding the gap requires
+  connecting a deliberate early-exit in one method to a side effect in a different method several
+  lines below, while not being reassured by a comment that sounds like it already covers the case.
+  This is the concrete shape of "cross-method reasoning is hard for a single-pass diff review" —
+  not a vague difficulty rating, an actual traceable reason. Not chased further; recorded here so a
+  future session evaluating a stronger model (or a two-pass/whole-file review mode, if one ever
+  exists) has the precise mechanism to test against instead of re-deriving it.
+- Verification: `pnpm typecheck` clean after the `seed.ts` change, full 1325-test suite still green
+  (seed data is not exercised by the hermetic unit suite, so this specific edit had nothing to
+  break there — confirmed by reading `test/` for any test that imports `seed.ts`'s agent list: none
+  do). All `server/scratch-*` diagnostic scripts deleted after use, including the two written this
+  round (`scratch-switch-model.py`, plus the isolation scripts from the entry above).
+
+### 2026-08-25 (a fresh skills-lab fixture PR, harvested for 5 new Security Reviewer cases)
+
+- Added PR #107 ("Add self-service password reset") to `devdigest/skills-lab` — 4 new files,
+  `seed-fixtures.ts`'s existing `FIXTURE_PRS` pattern (hand-written `pr_files.patch` text, no real
+  clone needed, `diff-loader`'s fallback reconstructs the diff). 4 bug classes deliberately absent
+  from the existing 12-case corpus: path traversal (`join(AUDIT_LOG_DIR, filename)` with an
+  unsanitized query param — no containment check at all, unlike `SimpleGitClient.writeTarget`'s
+  careful version), weak password hashing (unsalted single-round SHA256), a predictable reset token
+  (`Date.now().toString(36) + Math.random()...`), and an unauthenticated lookup endpoint that leaks
+  a live reset token by id. Line counts for each hunk were generated from real source files by
+  script rather than hand-counted, specifically to not repeat the citation-miscounting mistake this
+  file already has two entries about.
+- Ran Security Reviewer (`claude-haiku-4.5`, live) against it for real — per this fixture set's own
+  rule, no finding is ever seeded, only real model output gets curated. It found all 4 planted bugs
+  cleanly cited, plus a 5th finding worth keeping for a different reason: "Missing authentication on
+  password reset endpoints" lumped the two INTENTIONALLY-public endpoints
+  (`postPasswordReset`/`postPasswordResetComplete` — a self-service reset flow is public by design)
+  together with the one genuinely unauthenticated endpoint it also flagged separately and correctly.
+  This is a live instance of the same overclaim-by-association shape documented earlier this file
+  (the "second finding padding" tendency) — accepted the 4 correct findings, DISMISSED this one as a
+  real, considered call (not fabricated — the model's own suggestion text half-contradicts its own
+  finding, saying `postPasswordResetComplete` needs "no authentication... it's a public endpoint").
+  All 5 turned into eval cases via `POST /findings/:id/eval-case`, matching D11.
+- Each new case's `input_diff` is correctly scoped to just the one file its finding is about (not
+  the whole 4-file PR), but recall-1/precision-0.5ish is still the norm on the 4 must-find cases:
+  `export-audit.ts` alone, isolated, still gets a second, defensible finding ("no auth on an admin
+  export route") most runs — a real secondary concern I did not plant, not a scoring bug. Left as
+  realistic noise rather than narrowing further; TP recall never drops on any of the 4 across
+  repeated runs, which is what actually matters for these cases.
+- Corpus is now 17 cases. Full batch after adding them: 10/17 pass, and the 5 new ones behave
+  exactly as predicted from the isolated per-case runs (all 4 must-find recall=1, the dismissed
+  must-not-flag one fails because the model does occasionally still produce a version of the
+  overclaim) — no surprises, nothing to chase further today.
+  - **Correction, same day, after switching Security Reviewer back to `claude-haiku-4.5` from the
+    `deepseek/deepseek-v4-flash` PR #23 test (it was left on deepseek by accident — 18s for one
+    tiny single-file case, ~4x haiku, and worse citation precision on the same case) and re-running
+    the full batch: `weak-password-hashing-using-sha256-without-salt` and
+    `weak-password-reset-token-generation` failed together, every time, and it was NOT model noise
+    — it was a self-inflicted scoring collision. Both bugs were deliberately planted in the SAME
+    file (`password-reset-service.ts`) when the fixture PR was written, and split into two separate
+    single-expectation `must_find` cases. The model correctly finds BOTH bugs on every run — that
+    is the right behavior — but each case's narrow single-expectation scoring only credits its OWN
+    bug and counts the model's correct discovery of the OTHER one as noise, capping precision at
+    0.25 on both cases regardless of how well the model actually did. **Fixed by merging**: one case
+    (renamed `weak-token-and-weak-hashing-in-password-reset-service`) now carries BOTH expectations
+    in its `expected_output` array; the other was deleted. Precision on the merged case measured
+    0.5 across 3 repeated runs (up from 0.25), recall stayed 1/1/1 — exactly the arithmetic
+    predicts: the twin bug now credits instead of counting as noise. Corpus is 16 cases.
+  - **The general lesson: a `must_find` case built from ONE accepted finding is only fair when
+    nothing else in scope is ALSO a real, findable issue.** A fixture (or a real PR) that
+    deliberately or accidentally packs more than one genuine defect into a single file needs either
+    one multi-expectation case covering all of them, or the defects split across files — never one
+    single-expectation case per defect in a shared file, which punishes exactly the thoroughness a
+    reviewer should be praised for. Worth checking before harvesting future finding-derived cases:
+    does this file have another real, already-accepted finding on it?
+
+### 2026-08-25 (a 166-file real PR 400'd every reviewer — the callers digest was unbounded)
+
+- Running any agent on a genuinely large real PR (`Holubinka/dev-digest` #23, 166 files, 20545
+  insertions — the branch this whole session's own work landed on) failed outright:
+  `400 This endpoint's maximum context length is 200000 tokens. However, you requested about
+  275558 tokens`. `reviewer-core`'s map-reduce mode exists exactly for this (chunks per file once a
+  diff exceeds `DEFAULT_MAP_THRESHOLD_LINES`), but **all 5 built-in agents were seeded with
+  `strategy: 'single-pass'` hardcoded**, so map-reduce never engaged for any of them regardless of
+  diff size — fixed by switching Security Reviewer to `strategy: 'auto'` via `PUT /agents/:id`
+  (`agents.strategy` was already a plain settable column; nothing to build).
+- Auto-mode still failed the same way once map-reduce was engaged, at almost the same size
+  (275246 tokens) — meaning the diff-per-chunk was NOT what was blowing the budget.
+  `buildCallersDigest` (`modules/reviews/run-executor.ts`) is the actual cause: it queries
+  `getCallerSignatures(repoId, changedFiles, 10)` with the diff's WHOLE file list (all 166), is
+  built ONCE for the whole diff, and gets embedded UNCHANGED into every map-reduce chunk's prompt —
+  so a 166-file PR pays the full 166-file callers digest on every single one of its 166 per-file
+  calls. `getCallerSignatures`'s own `limit` param only bounds callers PER SYMBOL
+  (`MAX_CALLERS_PER_SYMBOL`); nothing bounded the FILE COUNT feeding it. The doc comment on
+  `buildCallersDigest` claimed the section "stays under ~600 tokens even on heavy PRs" — that math
+  only worked if a PR had one symbol per file, and was never actually a real bound.
+- **Fix:** `MAX_CALLERS_DIGEST_FILES = 40` caps `changedFiles` before it reaches
+  `getCallerSignatures`; the cut is disclosed in the run's Live Log summary line ("N changed file(s)
+  past the 40-file cap were not queried"), matching this repo's existing disclosure convention
+  (`env_vars_truncated`, `package_scan.found`/`shown`). Re-ran the actual PR #23 review after the
+  fix: no more 400, though it then hit two DIFFERENT one-off failures near the end of its ~166-call
+  map-reduce run (a 600s per-call timeout, then a structured-output schema-validation failure on a
+  separate attempt) — each is its own finding (the schema-validation one is
+  `reviewer-core/INSIGHTS.md`'s `DEFAULT_REVIEW_MAX_RETRIES` entry, same day). Succeeded outright on
+  `deepseek/deepseek-v4-flash` (34 min, $0.155, 13 findings, 0 failures across all 166 calls).
+- **The general shape, worth remembering past this one fix:** a value built ONCE per diff and reused
+  unchanged across every map-reduce chunk pays its full cost on EVERY chunk, not once per diff — the
+  cost model for "is this digest cheap enough to attach" has to account for chunk count, not just
+  digest size. Any other per-diff enrichment added to the map-reduce path later (repo map, file
+  rank) should be checked against the same question before assuming a fixed budget is "obviously"
+  fine.
+
+### 2026-08-23 (L06 eval pipeline — server, plan 16 package P2)
+
+- Built `modules/eval/` (repository, scoring, diff-fragment, batch-executor, service, routes) plus
+  the three `_shared/` extractions the slice needed. Four entries above came out of it.
+- **`sliceDiff(diff, path)` returns the WHOLE `diff.raw` when `path` is absent**
+  (`reviewer-core/src/review/reduce.ts:70`). Every caller that means "exactly this file" must
+  assert the path is in `diff.files` first; `eval/diff-fragment.ts:fragmentFor` does, and
+  removing that check silently turns a one-file eval case into the entire PR diff with no error
+  anywhere. The fallback is right for the map-reduce caller it was written for and wrong for
+  every other one.
+- **`db.execute<T>` constrains `T` to `Record<string, unknown>`**, so a hand-written row interface
+  needs an `[column: string]: unknown` index signature or `tsc` fails with TS2344. Not a claim
+  that extra columns arrive — the SELECT lists them all.
+- The batch executor is `*-executor.ts`, so `no-service-to-adapter-impl` forbids it importing
+  `adapters/git/diff-parser.js`. The parse lives in `eval/diff-fragment.ts`, a plain module in the
+  same slice; the rule matches the DIRECT edge only, so the executor calling into that module is
+  legal and is the sanctioned escape.
+- Exercised through the running dev API rather than only through tests: two eval cases now exist
+  in the development database, created from real accepted/dismissed findings via
+  `POST /findings/:id/eval-case`. No batch was run — that is a real paid model call.
+
 ### 2026-08-03 (conventions extractor)
 
 - Built the conventions extractor. The lesson that transfers: **what PageRank calls important
@@ -2587,8 +3004,72 @@ backtick or an early `*/`, not at the line it names.
 - **Three tasks, not six.** `MAX_TASKS` is 6 and the model returned 3. The cap is not what bounds
   this screen on this repository; the model's own judgement is.
 
+### 2026-08-23
+
+- **An accepted finding's own title can misdescribe the vulnerability it was accepted for, and an
+  eval case built from it inherits the wrong target.** `SPEC-05-eval-pipeline.md`'s dataset
+  (AC-74) includes `open-redirect-via-finding-file-path`, built from an accepted finding on
+  `client/src/components/findings-preview/FileRef.tsx` (PR #5). `FileRef.tsx` only renders an
+  `href` prop — it does not construct one — so no amount of prompt tuning made any model report
+  on it, and reading why turned up the fix commit for the original finding, 18 minutes later in the
+  same PR (`1d5348d`): *"A review flagged the citation links as an open redirect... That part does
+  not hold: the origin is a literal prefix... so `//evil.com`, `https://phishing.com`... all
+  resolve to origin `https://github.com`... Still github.com, so not a redirect off site, but the
+  citation read as one repo and opened another."* The real defect was a dot-segment path traversal
+  in `client/src/lib/github-urls.ts` (fixed the same commit, `hasDotSegment`), not an open redirect,
+  and not in the file the eval case cited. The case was retired (`DELETE /eval-cases/:id`) rather
+  than patched: rebuilding it around `github-urls.ts`'s pre-fix state would need a fabricated diff
+  (no real PR introduced that file in isolation — it shipped in the initial squashed snapshot), and
+  the repo's stance is no fabricated eval data (`SPEC-05-eval-pipeline.md` D11). Set: 14 → 13, still
+  well over AC-74's 8. **Worth generalising**: an accepted finding's `title` is not proof its stated
+  mechanism was correct, only that a human agreed something in that region was worth fixing — the
+  fix commit's own message is a source worth reading before trusting a finding's framing into a
+  regression test, and this is the kind of drift a growing eval set will keep surfacing as the
+  codebase around an old accepted finding gets patched out from under it.
+
+### 2026-08-23 (skill's own Evals tab — the reciprocal view, L06 follow-up)
+
+- Built `GET /skills/:id/eval-cases` — the mirror of `GET /agents/:id/eval-cases`, but spanning
+  every agent: every case whose LATEST run had a given skill active, not the cases of one owner.
+  Full stack: `SkillEvalCaseRow`/`SkillEvalCaseSet` contracts (both vendored copies),
+  `EvalRepository.casesForSkill` (see the `DISTINCT ON` entry above — this method is what that
+  entry is about), `EvalService.listCasesForSkill`, the route, and a new `skillsRepo` port on
+  `EvalContainer` for the 404 check.
+- **`SkillsService` builds its own `SkillsRepository` inline** (`modules/skills/service.ts:60`,
+  `new SkillsRepository(container.db)` as a constructor default) rather than reading it off
+  `Container`, unlike `agentsRepo`/`reviewRepo`/`pullsRepo`, which are all lazy getters on
+  `platform/container.ts`. Reaching `SkillsRepository.existsInWorkspace` from another module's
+  `Container`-typed port needed adding `container.skillsRepo` as a getter FIRST
+  (`platform/container.ts:198`) — the getter did not already exist because nothing outside the
+  skills module had needed one yet.
+- Proved the query design with a real regression, not just a read: bind a skill, run a case
+  (passes, skill recorded), unbind the skill, run again (skill absent from the true latest run),
+  then assert the skill's list is empty. The naive filter-inside-`DISTINCT-ON` version keeps
+  listing the case off the stale first run; only a two-run scenario against real Postgres
+  distinguishes it from the correct version, since a single run can't expose the ordering bug —
+  see `test/eval-routes.it.test.ts`, "a case whose CURRENT latest run dropped the skill is absent".
 
 ## Open Questions
+
+- **Security Reviewer's `deepseek/deepseek-v4-flash` has a prompt-resistant prior: shell `case`
+  pattern-matching and plain string-building near security code reads as "injection"/"code
+  execution" to it, regardless of wording.** Four `must_not_flag` cases fail this way as of
+  2026-08-24 (`gate-sh-does-not-validate…`, `wrapuntrusted-fence-can-be-broken…`,
+  `report-sh-uses-jq-r…`, `scope-sh-s-flag-for-function…`), 0/6 to 0/2 individually sampled, before
+  AND after a maximally-explicit "name the sink or drop it" rule that had zero measured effect (see
+  Session Notes above). Also true of the TOCTOU cross-method case from earlier the same day (0/17
+  total). Two candidates not yet tried: a different model tier for this agent specifically (the
+  Performance Reviewer investigation found `deepseek` outperforming `gpt-4o-mini` and even
+  `claude-sonnet-4.5` on ITS cases, but that was never re-checked against Security Reviewer's
+  specific failure shape), or accepting these four as permanently-flaky `must_not_flag` cases and
+  excluding them from the pass/fail gate while keeping them for manual spot-checks. Whichever way
+  this goes, don't re-attempt the three prompt-only moves already tried and measured ineffective
+  (rewording the label, a worked example naming the pattern, a sink-definition rule) without new
+  evidence they'd behave differently this time.
+  - **Resolved same day, by the first candidate suggested above.** Switching Security Reviewer's
+    model from `gpt-4o-mini` to `claude-haiku-4.5` (same unmodified prompt) fixed all 4 cases, 3/3
+    clean each. See the Session Notes entry "model swap fixes the case-injection family". The
+    prompt-only interventions were never the wrong lever — the model was.
 
 - Onboarding Tour, 2026-08-18: moving `project_docs` above `file_samples` made the documents'
   worst case dangerous where it used to be harmless. Before, an over-large document block was
@@ -2752,3 +3233,38 @@ backtick or an early `*/`, not at the line it names.
   rank candidates and none of them was junk (2026-08-18). The unit case in
   `test/repo-intel-critical-paths.test.ts` pins the behaviour, but no real repository has yet shown
   the filter changing an answer — a monorepo with a large test tree would be the one to check.
+
+- **A cheap model reports one real issue as several adjacent findings, and the eval harness was
+  penalising it for its own correct answer.** Running `plans/16`'s eval pipeline for real
+  (`gpt-4o-mini`, `claude-haiku-4.5`, 14 real cases, a dozen live batches) surfaced a pattern no
+  unit test had: a single vulnerability — one SSRF `fetch` call, one route handler — regularly
+  comes back as 2-3 `Finding` objects with slightly different, overlapping `start_line`/`end_line`.
+  `creditFindings` (AC-40) only credits the first; the rest became "noise" the case could never
+  shed, so a model that had genuinely found the right thing still failed the case on precision.
+  **Two prompt-side fixes were tried first, and both made the metrics WORSE, not better**: an
+  instruction to count lines exactly from the hunk header made the model more cautious overall and
+  recall collapsed (57%→14%); an instruction to "merge overlapping findings into one" made the
+  model compute the merged range itself, and it sometimes got that arithmetic wrong (`end_line` <
+  `start_line`, or a "merge" that silently widened to the whole file — the exact whole-file-noise
+  failure mode being avoided). Both are the same shape of mistake: asking a cheap model to do a
+  harder meta-task on its own output spends the attention budget the review itself needed. The fix
+  that held was in code, not the prompt — `dedupeOverlapping` in
+  `server/src/modules/eval/scoring.ts` collapses findings that overlap EACH OTHER on the same file
+  into one (union of their range) before crediting; `citation_accuracy` still reads the raw,
+  pre-dedup count, so this touches precision and `pass` only. Findings that do not touch stay
+  separate noise — that is what still catches a prompt told to report more (D7/AC-73). Recorded
+  as `SPEC-05-eval-pipeline.md` D5a.
+
+- **Ground-truth `expected_output` citations inherited whatever line the ORIGINAL finding cited,
+  and several were themselves wrong.** Building the eval set from real accept/dismiss decisions
+  (per D11 — no seeded cases) carries forward whatever `start_line`/`end_line` the first review run
+  put on the finding. Hand-counting from the hunk header (`@@ -a,b +c,d @@`, every non-`-` line
+  increments) turned up five cases citing the wrong line by 1-4, in inconsistent directions, and
+  two `must_not_flag` cases whose range was nearly the whole file (`gate.sh` 1-156, `report.sh`
+  1-414) because the original finding's own citation was that broad — a range that broad passes
+  only when the model finds NOTHING anywhere in the file, a much harsher bar than "don't re-flag
+  this one spot." Fixing the five citations narrowed the run-to-run spread on repeated batches
+  noticeably (three repeats after the fix landed within one case of each other; before, three
+  repeats on the unfixed set had spanned 4/14 to 8/14) — an imprecise ground truth doesn't just bias
+  the average, it widens the variance, because two independently-imprecise citations (the original
+  finding's and the model's on replay) miss each other in different directions on different runs.

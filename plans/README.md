@@ -52,3 +52,4 @@ with, `LNN-` included; a new plan takes the next free `NN`.
 | [`13-onboarding-tour-server-api.md`](13-onboarding-tour-server-api.md) | server | multi-agent | Implemented 2026-08-18 |
 | [`14-onboarding-tour-client.md`](14-onboarding-tour-client.md) | client | multi-agent | Implemented 2026-08-18 |
 | [`15-onboarding-tour-depth.md`](15-onboarding-tour-depth.md) | server · client | multi-agent | Implemented 2026-08-19 |
+| [`16-eval-pipeline.md`](16-eval-pipeline.md) | server · client | multi-agent | Implemented 2026-08-23 |

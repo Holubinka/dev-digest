@@ -1,19 +1,43 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
-import { render, screen, cleanup, fireEvent } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import type { FindingRecord } from "@devdigest/shared";
 import messages from "../../../../../../../../messages/en/prReview.json";
 
 // Hoisted so a test can assert the shortcut did (or did not) fire an action.
 const mutate = vi.hoisted(() => vi.fn());
+// The «Turn into eval case» control lands on the owning agent's Evals tab, so
+// the panel reads the router. jsdom has no App Router mounted.
+const nav = vi.hoisted(() => ({ push: vi.fn() }));
+// `isPending`/`variables` are mutable so a test can put the mutation in flight
+// for ONE finding — which finding it is in flight for is the whole rule.
+const evalCase = vi.hoisted(() => ({
+  mutate: vi.fn(),
+  isPending: false,
+  variables: undefined as string | undefined,
+}));
 
 vi.mock("../../../../../../../lib/hooks/reviews", () => ({
   useFindingAction: () => ({ mutate, isPending: false }),
 }));
+vi.mock("../../../../../../../lib/hooks/eval", () => ({
+  useEvalCaseFromFinding: () => ({
+    mutate: evalCase.mutate,
+    isPending: evalCase.isPending,
+    variables: evalCase.variables,
+  }),
+}));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: nav.push }) }));
 
 import { FindingsPanel } from "./FindingsPanel";
 
-beforeEach(() => mutate.mockReset());
+beforeEach(() => {
+  mutate.mockReset();
+  nav.push.mockReset();
+  evalCase.mutate.mockReset();
+  evalCase.isPending = false;
+  evalCase.variables = undefined;
+});
 afterEach(cleanup);
 
 const FINDINGS: FindingRecord[] = [
@@ -102,6 +126,41 @@ describe("FindingsPanel (smoke)", () => {
     renderWithIntl(<FindingsPanel findings={FINDINGS} prId="pr1" severity={null} />);
     expect(screen.getByText("Hardcoded secret")).toBeInTheDocument();
     expect(screen.getByText("N+1 query in user list")).toBeInTheDocument();
+  });
+});
+
+/**
+ * Both outcomes of `useEvalCaseFromFinding` (a brand-new case, and AC-10's
+ * repeat-click reopening an existing one) land on the same place — the owning
+ * agent's Evals tab, with the case open — because `turnIntoEvalCase`'s
+ * `onSuccess` navigates on `case.owner_id`/`case.id` alone, never on
+ * `created`. jsdom has no App Router, so `next/navigation` is mocked above.
+ */
+describe("FindingsPanel — turn into eval case navigates on success", () => {
+  const DECIDED: FindingRecord = {
+    ...FINDINGS[0]!,
+    id: "f-decided",
+    accepted_at: "2026-05-29T09:14:00.000Z",
+  };
+
+  it("navigates to the owning agent's Evals tab with the case open", () => {
+    renderWithIntl(<FindingsPanel findings={[DECIDED]} prId="pr1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Turn into eval case" }));
+
+    expect(evalCase.mutate).toHaveBeenCalledWith(
+      "f-decided",
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+    const { onSuccess } = evalCase.mutate.mock.calls[0]![1];
+    onSuccess({ case: { id: "case-1", owner_id: "agent-9" } });
+
+    expect(nav.push).toHaveBeenCalledWith("/agents/agent-9?tab=evals&case=case-1");
+  });
+
+  it("does not navigate before the mutation resolves", () => {
+    renderWithIntl(<FindingsPanel findings={[DECIDED]} prId="pr1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Turn into eval case" }));
+    expect(nav.push).not.toHaveBeenCalled();
   });
 });
 
@@ -232,5 +291,56 @@ describe("FindingsPanel keyboard ownership", () => {
     unmount();
     renderWithIntl(<FindingsPanel findings={FINDINGS} prId="pr1" active={false} />);
     expect(screen.queryByText("j/k to move · a accept · d dismiss")).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * `toEvalCase.isPending` is panel-wide: it says a case is being created, not
+ * WHICH finding it is being created from. The `variables === f.id` half is what
+ * turns that into a per-card state — drop it and every decided card on screen
+ * shows «Creating eval case…» at once, which no existing assertion notices
+ * because they all mock the mutation idle.
+ */
+describe("FindingsPanel — only the finding in flight looks busy", () => {
+  const decided = (id: string, title: string): FindingRecord => ({
+    ...FINDINGS[0]!,
+    id,
+    title,
+    accepted_at: "2026-05-29T09:14:00.000Z",
+  });
+
+  it("marks the in-flight card busy and leaves the other one clickable", () => {
+    evalCase.isPending = true;
+    evalCase.variables = "f-busy";
+    renderWithIntl(
+      <FindingsPanel
+        findings={[decided("f-busy", "Hardcoded secret"), decided("f-idle", "Missing Retry-After")]}
+        prId="pr1"
+      />,
+    );
+    // Only the first card is expanded by default, and the actions live in the
+    // body — the second one has to be opened before it can be compared.
+    fireEvent.click(screen.getByText("Missing Retry-After"));
+
+    const busy = document.querySelector<HTMLElement>('[data-finding-id="f-busy"]')!;
+    const idle = document.querySelector<HTMLElement>('[data-finding-id="f-idle"]')!;
+
+    expect(within(busy).getByRole("button", { name: "Creating eval case…" })).toBeDisabled();
+    expect(within(idle).getByRole("button", { name: "Turn into eval case" })).toBeEnabled();
+    expect(
+      within(idle).queryByRole("button", { name: "Creating eval case…" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("marks nothing busy while the mutation is idle", () => {
+    // The other half of the conjunction: `variables` outlives the mutation in
+    // TanStack Query, so a check that read it alone would leave the last card
+    // used stuck on «Creating eval case…».
+    evalCase.isPending = false;
+    evalCase.variables = "f-busy";
+    renderWithIntl(<FindingsPanel findings={[decided("f-busy", "Hardcoded secret")]} prId="pr1" />);
+
+    expect(screen.queryByRole("button", { name: "Creating eval case…" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Turn into eval case" })).toBeEnabled();
   });
 });
