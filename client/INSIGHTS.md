@@ -1042,6 +1042,19 @@ string)` beside it for the frames a test wants malformed. The only non-event fra
 `data:`, so `EventSource` never dispatches it to the handler at all.
 
 
+### A `≥` floor mark does not generalise from a total to a ratio
+
+`page.costPartial` renders `≥ $0.20` when a run reported no cost, and the instinct when the
+fan-out speedup hit the same partial-data case (2026-08-28) was to reuse it: sum the agent
+durations that exist, mark the result a floor. It is wrong. A cost floor is monotone — "at least
+this much" stays true and stays readable however loose the bound. A speedup floor is
+`sum(duration_ms) / total_duration_ms`, and dropping one agent from a two-agent numerator takes the
+ratio under 1.0, where `≥ 0.4× faster than one at a time` is not a weaker version of the same claim
+but the opposite one. 4 of 93 dev `agent_runs` rows carry a null `duration_ms`, so this is reached.
+`parallelSpeedup` in `app/repos/[repoId]/multi-agent/[multiRunId]/_components/MultiRunView/helpers.ts`
+hides on incomplete data instead. Before copying the `≥` pattern onto a new number, ask whether its
+bound can cross a value that flips the sentence's meaning.
+
 ## Codebase Patterns
 
 ### A security predicate gets exported, not restated — `hasDotSegment` is the dot-segment rule
@@ -2904,6 +2917,28 @@ imports and stopped intercepting — the component then called the real `useRunT
 hit to the `@/` alias, tests included. A plan that says the moved test is "not edited" is describing
 its ASSERTIONS: a mock specifier is a path, and a path that no longer resolves is not the same test.
 
+
+### `localhost:3001` from a worktree serves a different checkout's code
+
+**Symptom.** `GET /multi-agent-runs/:id` answered `Route not found` on 2026-08-28 while the route
+was plainly registered in this worktree, and `/health` on both 3001 and 3002 answered `ok`.
+**Cause.** The API holding 3001 had been started from `~/WebstormProjects/dev-digest/server`, not
+from the worktree — `lsof -ti :3001 | xargs -I{} ps -o args= -p {}` prints the path. Every worktree
+shares the 5434 Postgres, so the data looked right while the code was another branch's.
+**Fix.** Check the serving path before believing a 404, then start this checkout's API on a free
+port. The variable is `API_PORT`, not `PORT`: `server/.env` sets `API_PORT=3201` per worktree, so
+`PORT=3002 pnpm exec tsx src/server.ts` silently tries 3201, dies of `EADDRINUSE`, and an unrelated
+process on 3002 goes on answering `/health` as if the start had worked.
+
+### Round-tripping `messages/en/*.json` through `json.dumps` rewrites lines you did not touch
+
+**Symptom.** Adding two keys to `client/messages/en/runs.json` produced a third `git diff` hunk, on
+an untouched `finding.replyWarnAgentText`.
+**Cause.** That value is stored with a `\u2014` escape and at a shallower indent than its siblings;
+`json.load` → `json.dumps(indent=2, ensure_ascii=False)` normalises both. The JSON is semantically
+identical and the diff still makes a reviewer ask what else moved.
+**Fix.** Insert new keys textually, or diff after writing and restore any line you did not mean to
+change. `git diff --stat` on the message file should report exactly the keys you added.
 
 ## Open Questions
 

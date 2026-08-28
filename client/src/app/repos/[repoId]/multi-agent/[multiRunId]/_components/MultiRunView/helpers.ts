@@ -1,4 +1,10 @@
-import type { AgentColumn, AgentColumnStatus, Conflict, ConflictTake } from "@devdigest/shared";
+import type {
+  AgentColumn,
+  AgentColumnStatus,
+  Conflict,
+  ConflictTake,
+  MultiAgentRun,
+} from "@devdigest/shared";
 import type { ColumnStreamState } from "@/lib/hooks/multi-agent";
 import { githubBlobUrl } from "@/lib/github-urls";
 import { formatCost, NO_DATA } from "@/components/run-cost-badge";
@@ -251,4 +257,51 @@ export function agentKey(c: Pick<AgentColumn, "agent_id" | "agent_name">): strin
  *  `NO_DATA` for a cost that has not. */
 export function durationCostLabel(durationMs: number | null, costUsd: number | null): string {
   return `${durationMs != null ? formatSeconds(durationMs) : NO_DATA} · ${formatCost(costUsd)}`;
+}
+
+/**
+ * What the fan-out bought: the agents' own durations summed — what running them
+ * one after another would have cost — over the wall clock actually observed.
+ * `null` whenever that ratio would be on screen and wrong.
+ *
+ * THE NUMERATOR IS COMPUTED, NOT OBSERVED. There is no `concurrency = 1`
+ * multi-run anywhere in the data to compare against, so nobody ever timed the
+ * sequential case. Whatever renders this owes the reader that qualification —
+ * `page.speedupHint` carries it, the way `costPartialHint` carries what `≥`
+ * means. A bare "2.4× faster" claims a second stopwatch run that was never made.
+ *
+ * The three guards, each a measured case from `docs/multi-agent-review.md`
+ * § "What the fan-out bought, measured" rather than a hypothetical:
+ *
+ * FEWER THAN TWO AGENTS — nothing overlapped. The doc's one-agent row reads
+ * 0.85×, below 1.0, because wall clock includes the shared pre-work step (diff,
+ * intent, repo-intel — about six seconds) that no agent's own `duration_ms`
+ * counts. "0.85× faster" reads as a bug, and it would be reporting the floor the
+ * comparison starts from as if it were a result.
+ *
+ * ONLY `measured` — `elapsed` is a run still going, so the ratio would climb as
+ * the reader watched it, and `interrupted` has no span at all (the number would
+ * measure downtime after a restart, not work).
+ *
+ * ONLY WHEN EVERY COLUMN IS TIMED, and this one HIDES rather than marking a
+ * floor the way cost does. A missing `duration_ms` shrinks the numerator, so the
+ * ratio is a lower bound — but unlike a cost floor, a loose bound here crosses
+ * 1.0 and flips the claim from "faster" to "slower". `≥ 0.4×` is not a weaker
+ * version of the same statement, it is the opposite one, so the mark cannot
+ * rescue it. 4 of 93 dev run rows carry a null.
+ *
+ * Counted over `columns` rather than `agent_count` because `columns` is what is
+ * summed, which keeps the guard and the numerator in step by construction.
+ */
+export function parallelSpeedup(multiRun: MultiAgentRun): number | null {
+  const { columns, total_duration_ms: wallMs, total_duration_kind: kind } = multiRun;
+  if (columns.length < 2) return null;
+  if (kind !== "measured" || wallMs == null || wallMs <= 0) return null;
+
+  let sequentialMs = 0;
+  for (const c of columns) {
+    if (c.duration_ms == null) return null;
+    sequentialMs += c.duration_ms;
+  }
+  return Math.round((sequentialMs / wallMs) * 10) / 10;
 }

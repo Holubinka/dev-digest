@@ -137,6 +137,8 @@
     "meta": "{count, plural, one {# agent} other {# agents}} · in-process fan-out, up to {concurrency} at a time · {durationKind, select, elapsed {{duration} elapsed so far} interrupted {{duration} total · run interrupted} other {{duration} total}} · {cost}",
     "costPartial": "≥ {cost}",
     "costPartialHint": "At least this much — one or more runs reported no cost.",
+    "speedup": "≈ {speedup}× faster than one at a time",
+    "speedupHint": "Computed, not observed — the agents' own durations added up, against the measured wall clock. No one-at-a-time run was timed.",
     "deleted": "deleted",
     "view": {
       "columns": "columns",

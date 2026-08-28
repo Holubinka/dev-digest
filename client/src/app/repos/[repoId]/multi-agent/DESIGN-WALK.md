@@ -66,6 +66,7 @@ acceptance criterion (`AC-…`), or a human decision dated 2026-08-26.
 | Meta row, left | `#482` mono muted, then the PR title in bold | same (AC-40) | matches |
 | Meta row, right | Cpu icon + `4 agents · fan-out via worktrees · 8.2s total · $0.20` | `{n} agents · in-process fan-out, up to {c} at a time · {t} total · {cost}`, `{c}` from `MultiAgentRun.concurrency` | **differs** — D9, and named divergence #1 of `SPEC-05 § П'ять розходжень з макетом`: there is no `git worktree` anywhere in `modules/reviews` |
 | Meta row, partial cost | not drawn | `≥ $0.20` with a title saying at least one run reported no cost | absent — AC-42 |
+| Meta row, fan-out speedup | not drawn | `≈ 2.4× faster than one at a time`, with a title saying the figure is computed rather than observed | **absent** — owner request of 2026-08-28, not an AC and not in the mockup. The numerator is the agents' own durations summed, so it is inferred, not a second stopwatch run (`docs/multi-agent-review.md` § *What the fan-out bought, measured*); the title carries that the way `costPartialHint` carries `≥`. Hidden entirely below two agents, while a run is still going, and when any column is untimed — a partial sum crosses 1.0 and flips the claim, so `≥` cannot rescue it here |
 | Multi-run not found | not drawn | an error state on the page, not an empty comparison | absent — AC-95 |
 
 ## 3. Results — Columns — `…-columns.png`

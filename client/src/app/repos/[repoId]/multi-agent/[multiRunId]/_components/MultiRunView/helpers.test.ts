@@ -1,11 +1,12 @@
 import { describe, it, expect } from "vitest";
-import type { AgentColumn, ConflictTake } from "@devdigest/shared";
+import type { AgentColumn, ConflictTake, MultiAgentRun } from "@devdigest/shared";
 import type { ColumnStreamState } from "@/lib/hooks/multi-agent";
 import {
   emptyReason,
   fileRefHref,
   isConflict,
   liveColumns,
+  parallelSpeedup,
   runCounts,
   runStateKey,
   visiblePositions,
@@ -255,5 +256,51 @@ describe("fileRefHref", () => {
     expect(fileRefHref("acme/repo", "abc123", ref)).toBe(
       "https://github.com/acme/repo/blob/abc123/src/index.ts#L10-L12",
     );
+  });
+});
+
+/* The fan-out measurement. Each guard below is a case where the ratio would be
+   on screen and wrong, not a hypothetical — `docs/multi-agent-review.md`
+   § "What the fan-out bought, measured" states all three. */
+describe("parallelSpeedup", () => {
+  const timed = (durationMs: number | null, runId: string): AgentColumn => ({
+    ...column("done", runId),
+    duration_ms: durationMs,
+  });
+
+  const multiRun = (over: Partial<MultiAgentRun>): MultiAgentRun =>
+    ({
+      total_duration_ms: 10_000,
+      total_duration_kind: "measured",
+      columns: [timed(12_000, "a"), timed(12_000, "b")],
+      ...over,
+    }) as MultiAgentRun;
+
+  it("divides the summed agent durations by the observed wall clock", () => {
+    expect(parallelSpeedup(multiRun({}))).toBe(2.4);
+  });
+
+  /* The one-agent row of the doc's table reads 0.85×, because wall clock counts
+     the shared pre-work no agent's own duration does. Nothing overlapped, so
+     there is no comparison to draw. */
+  it("says nothing when there was only one agent to overlap", () => {
+    expect(parallelSpeedup(multiRun({ columns: [timed(8_000, "a")] }))).toBeNull();
+  });
+
+  it("says nothing while the run is still going", () => {
+    expect(parallelSpeedup(multiRun({ total_duration_kind: "elapsed" }))).toBeNull();
+  });
+
+  it("says nothing when the multi-run's own span was never recorded", () => {
+    expect(
+      parallelSpeedup(multiRun({ total_duration_kind: "interrupted", total_duration_ms: null })),
+    ).toBeNull();
+  });
+
+  /* 4 of 93 dev run rows carry a null. Summing round it makes the numerator a
+     floor, and a floor here can fall BELOW 1.0 — which inverts the claim rather
+     than loosening it, so `≥` would not rescue it the way it rescues cost. */
+  it("says nothing when any agent's own duration is missing", () => {
+    expect(parallelSpeedup(multiRun({ columns: [timed(12_000, "a"), timed(null, "b")] }))).toBeNull();
   });
 });
