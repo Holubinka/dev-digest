@@ -1042,6 +1042,22 @@ Any "latest per group, filtered by a condition that can change between runs" que
 two-step shape — filtering inside the `DISTINCT ON` is the trap, and it will typecheck and mostly
 look right, which is exactly why it survived a first pass.
 
+### An integration test cannot leave an `agent_run` `running` across `buildApp`
+
+**Symptom.** A `performance.it.test.ts` fixture inserted two runs with `status` `running` and
+`queued` to prove they are NOT counted; every assertion came back counting them (2026-08-29).
+
+**Cause.** `buildApp` reaps on boot — a run still `running` or `queued` belonged to a process
+that is gone, so the engine closes it into a terminal status
+(`modules/reviews/repository.ts`, `ReviewService.reapOrphanedRuns`). The fixture was inserted
+before the app was built, so by the first request both rows were terminal, and terminal is
+exactly what the query counts.
+
+**Fix.** Build the app FIRST, then insert anything that has to stay in flight — and build it
+once for the suite rather than per test, which is also three seconds faster. The same trap
+waits for any test asserting on in-flight state.
+
+
 ## Codebase Patterns
 
 ### The allowed-refs invariant is checkable in one line against a real PR
@@ -2843,6 +2859,24 @@ booted is not being watched, so registering it changes nothing until a real rest
 **Fix.** Do not read a 404 from a long-running dev server as a routing defect. Start a throwaway
 instance on a spare port and curl that — it needs no `.env` (see two entries above) and leaves
 whatever the human is running untouched.
+
+
+### A drizzle `sql` expression used in both SELECT and GROUP BY must not carry a bound parameter
+
+**Symptom.** `GET /agents/performance` answered 500 with
+`column "agent_runs.ran_at" must appear in the GROUP BY clause or be used in an aggregate
+function`, for a query whose SELECT and GROUP BY were written from the *same* `sql` template
+literal (2026-08-29).
+
+**Cause.** Drizzle appends each chunk's parameters where the chunk is rendered, so one
+`sql`floor(extract(epoch from ${ranAt}) / ${seconds})`` came out as `… / $1` in the SELECT and
+`… / $2` in the GROUP BY. Postgres matches GROUP BY expressions structurally, and two different
+parameter nodes are not the same expression — so nothing grouped `ran_at`.
+
+**Fix.** Inline the value with `sql.raw(String(Math.trunc(n)))` when the same expression has to
+appear twice (`modules/performance/repository.ts`). Truncating first is what keeps a computed
+number from becoming an injection surface. `GROUP BY 1` also works and is more fragile — it
+breaks silently when someone reorders the projection.
 
 
 ## Session Notes

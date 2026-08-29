@@ -59,3 +59,4 @@ the header alone. `Modules` is the same list the spec carries in its `**Modules:
 | [`SPEC-05-multi-agent-review.md`](SPEC-05-multi-agent-review.md) | server, client | Approved 2026-08-26 |
 | [`SPEC-05-eval-pipeline.md`](SPEC-05-eval-pipeline.md) | server, client | Approved 2026-08-22 |
 | [`SPEC-06-eval-harness.md`](SPEC-06-eval-harness.md) | evals, .claude, .github/workflows | Approved 2026-08-27 · written after the harness landed, see its header |
+| [`SPEC-07-agent-performance.md`](SPEC-07-agent-performance.md) | server, client | Implemented 2026-08-29 |

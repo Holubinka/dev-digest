@@ -55,3 +55,4 @@ with, `LNN-` included; a new plan takes the next free `NN`.
 | [`16-export-to-ci.md`](16-export-to-ci.md) | server · client · agent-runner | multi-agent | Planned 2026-08-26 |
 | [`16-multi-agent-review.md`](16-multi-agent-review.md) | server · client | multi-agent | Planned 2026-08-26 |
 | [`16-eval-pipeline.md`](16-eval-pipeline.md) | server · client | multi-agent | Implemented 2026-08-23 |
+| [`17-agent-performance.md`](17-agent-performance.md) | server · client | single-agent | Implemented 2026-08-29 |

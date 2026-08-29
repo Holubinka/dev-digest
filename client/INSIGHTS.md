@@ -1176,6 +1176,32 @@ and the regeneration is left doing only what it is for: replacing `files`. The g
 `.catch()` is empty, ask what the success path was going to clean up — that is exactly what the
 failure path now keeps.
 
+### Two `NAV` groups with the same `section` render the heading twice
+
+**Symptom.** The sidebar showed `GLOBAL` twice, each above one row (2026-08-29).
+
+**Cause.** `vendor/ui/nav.ts` had `multi-agent` and `ci-runs` in two separate `NavGroup`
+objects that both said `section: "GLOBAL"`, and `Sidebar.tsx` renders one heading per group
+rather than grouping by name. With one row each it read as an odd gap; Agent Performance made
+the first group two rows and the duplicate became obvious.
+
+**Fix.** One group per section name. `nav.test.ts` now asserts
+`NAV.filter((g) => g.section === "GLOBAL")` has length 1, so a third row cannot reintroduce it.
+
+### `toLocaleDateString(undefined, …)` puts the browser's locale inside an English sentence
+
+**Symptom.** The Agent Performance empty state read `5 agents have not run between 1 січ. and
+8 січ..` on a machine set to Ukrainian — mixed language, and the abbreviation's own dot beside
+the sentence's full stop (2026-08-29).
+
+**Cause.** `undefined` as the locale argument means "whatever the browser is set to". This app
+serves one locale and every other string comes from `messages/en`.
+
+**Fix.** Pass `"en"` explicitly (`components/agent-stats/format.ts`). `LOCALE` from
+`src/i18n/request.ts` is NOT importable from a client component — that module reads `node:fs`
+at load and would follow the import into the bundle.
+
+
 ## Codebase Patterns
 
 ### A security predicate gets exported, not restated — `hasDotSegment` is the dot-segment rule
@@ -3141,6 +3167,24 @@ must FIND something, and a plain field on the response (`CiExport.removals`, AC-
 client must NAME something. `MAX_DOC_CHARS` shows the third case — importing the value from
 `@devdigest/shared` is already an established pattern here, so a client-side literal is rarely
 the only option.
+
+
+### `pnpm build` against a running `next dev` leaves the dev server serving 404s for its own chunks
+
+**Symptom.** After running `pnpm build` in `client/` to regenerate `.next/types` (a stale
+route validator was failing `pnpm typecheck`), every screen rendered its server HTML — sidebar,
+headings, skeletons — and then did nothing. No data request was ever made, so it read exactly
+like a broken query hook. `main-app.js` and `app-pages-internals.js` were 404 in the network
+panel (2026-08-29).
+
+**Cause.** Both commands write `.next/`. The production build replaced the dev server's chunks,
+and `next dev` went on serving the manifest it had in memory. React never hydrates, so no effect
+runs and no hook fetches — while SSR output keeps the page looking alive.
+
+**Fix.** Stop the dev server, `rm -rf .next`, start it again. To regenerate the route validator
+without this, stop the dev server BEFORE building. First check on a page that renders but never
+loads: open the network panel and look for a 404 on `_next/static/chunks/main-app.js` before
+suspecting the hook.
 
 
 ## Open Questions

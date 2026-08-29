@@ -1,32 +1,86 @@
 {
   "title": "Agent Performance",
-  "subtitle": "Accept-rate is the headline quality signal · cost shown as a breakdown",
+  "subtitle": "Which agents earn their keep — accept rate is the quality signal",
+  "crumb": "Agent Performance",
   "loadError": "Could not load agent performance.",
-  "summary": {
-    "totalRuns": "Total runs",
-    "avgAcceptRate": "Avg accept-rate",
-    "totalCost": "Total cost",
-    "mostActive": "Most active"
+  "period": {
+    "1d": "1 day",
+    "30d": "30 days",
+    "custom": "Custom range",
+    "customShort": "Custom",
+    "pick": "Change the period",
+    "from": "From",
+    "to": "To",
+    "apply": "Apply",
+    "invalid": "Pick a start before the end.",
+    "showing": "{from} – {to}",
+    "cancel": "Cancel"
   },
-  "costByAgent": "Cost by agent",
-  "costByModel": "Cost by model",
-  "noCost": "No cost recorded yet.",
-  "sort": {
-    "acceptRate": "accept-rate",
-    "runs": "runs",
-    "cost": "cost"
+  "summary": {
+    "totalRuns": "TOTAL RUNS ({period})",
+    "totalCost": "TOTAL COST ({period})",
+    "avgAcceptRate": "AVG ACCEPT RATE",
+    "mostActive": "MOST-ACTIVE AGENT",
+    "decisions": "{judged} decisions",
+    "noDecisions": "No decisions yet",
+    "noCost": "No cost recorded",
+    "uncosted": "{count, plural, one {# run with no recorded cost} other {# runs with no recorded cost}}",
+    "deletedAgentRuns": "{count, plural, one {# run from a deleted agent} other {# runs from deleted agents}}",
+    "mostActiveNone": "No agent ran in this period",
+    "mostActiveMeta": "{runs} runs · {accept} accept",
+    "mostActiveNoAccept": "{runs} runs · no decisions yet"
   },
   "table": {
-    "agent": "Agent",
-    "accept": "Accept",
-    "runs": "Runs",
+    "agent": "AGENT",
+    "runs": "RUNS {period}",
+    "avgCost": "AVG COST",
+    "avgDuration": "AVG DUR.",
+    "accept": "ACCEPT",
+    "lastRun": "LAST RUN",
+    "view": "View",
+    "viewAgent": "Open the Stats tab for {name}",
+    "sortBy": "Sort by {column}",
+    "expand": "Show the detail for {name}",
+    "collapse": "Hide the detail for {name}",
+    "lowSample": "low sample",
+    "lowSampleTitle": "Fewer than {min} decisions — shown, but not ranked",
+    "none": "—",
+    "acceptOf": "{accepted}/{judged}",
+    "sortedAsc": "Sorted by {column}, lowest first. Click to reverse.",
+    "sortedDesc": "Sorted by {column}, highest first. Click to reverse."
+  },
+  "detail": {
     "findings": "Findings",
+    "accepted": "Accepted",
+    "dismissed": "Dismissed",
+    "pending": "Not acted on",
+    "severity": "By severity",
     "cost": "Cost",
-    "trend": "Trend"
+    "costOf": "{total} over {counted} of {runs} runs",
+    "noCost": "No run in this period recorded a cost",
+    "model": "Model"
+  },
+  "cost": {
+    "heading": "COST BREAKDOWN",
+    "byAgent": "By agent",
+    "byModel": "By model",
+    "deletedAgents": "Deleted agents",
+    "unknownModel": "Unknown model",
+    "noCost": "No cost recorded yet.",
+    "estimated": "Estimated by DevDigest from the model price book. No provider billing data is reconciled.",
+    "estimatedShort": "DevDigest estimate"
   },
   "empty": {
-    "title": "No agent runs yet",
-    "body": "Run a review (manually) to populate per-agent performance."
+    "noAgentsTitle": "No agents yet",
+    "noAgentsBody": "Create an agent and run a review; this screen counts what it does.",
+    "noAgentsCta": "Go to Agents",
+    "noRunsTitle": "No runs in this period",
+    "noRunsBody": "{count, plural, one {# agent has} other {# agents have}} not run between {from} and {to}. Widen the period to look further back."
   },
-  "perAgent": "Per-agent"
+  "stats": {
+    "heading": "Stats",
+    "hint": "Counted from stored runs and findings — the same aggregation the Agent Performance dashboard uses.",
+    "loadError": "Could not load this agent's stats.",
+    "openDashboard": "Compare with every agent"
+  }
 }
