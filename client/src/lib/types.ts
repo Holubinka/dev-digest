@@ -180,6 +180,25 @@ export type {
   CiRunStatus,
 } from "@devdigest/shared";
 
+/**
+ * Agent Performance (SPEC-07) — the global dashboard and the agent's Stats tab.
+ *
+ * `AgentPerfRow` is the shape BOTH screens render: the dashboard puts one per
+ * table row, the Stats tab renders exactly one. Types only, as everywhere here.
+ */
+export type {
+  AgentPerf,
+  AgentPerfDetail,
+  AgentPerfRow,
+  AgentPerfSummary,
+  PerfAgentCostSegment,
+  PerfCostBasis,
+  PerfCostSegment,
+  PerfPeriod,
+  PerfRange,
+  PerfTrendPoint,
+} from "@devdigest/shared";
+
 /** UI-only view model for a PR list row (derives display fields from PrMeta). */
 export interface PrRowView {
   number: number;

@@ -16,6 +16,7 @@ import brief from './brief/routes.js';
 import context from './context/routes.js';
 import onboarding from './onboarding/routes.js';
 import ci from './ci/routes.js';
+import performance from './performance/routes.js';
 // `import eval from …` is a SyntaxError, not a style choice: every ES module is
 // strict mode, and strict mode forbids `eval` and `arguments` as binding names.
 // The object PROPERTY below is legal — only the binding is not.
@@ -52,5 +53,6 @@ export const modules: Record<string, FastifyPluginAsync> = {
   context,
   onboarding,
   ci,
+  performance,
   eval: evalModule,
 };

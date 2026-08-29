@@ -30,7 +30,8 @@ flowchart TD
   ONB["/onboarding<br/>add repo"] -->|"POST /repos"| API[("Fastify API")]
   PULLS --> PR["/pulls/:number<br/>review detail<br/>(overview · diff · findings)"]
 
-  AGENTS["/agents"] --> AGENT["/agents/:id<br/>editor (config · skills)"]
+  AGENTS["/agents"] --> AGENT["/agents/:id<br/>editor (config · skills · stats)"]
+  PERF["/agent-performance<br/>every agent: runs · cost · accept rate"] -->|"View"| AGENT
   SKILLS["/skills"] --> SKILL["/skills/:id<br/>editor (config · versions · stats)"]
   CONV["/repos/:repoId/conventions<br/>extract · accept/reject · merge"] -->|"POST /skills"| SKILL
   SETTINGS["/settings/:section<br/>API keys · models"]
@@ -38,6 +39,7 @@ flowchart TD
   PULLS -->|"GET /repos/:id/pulls · /repos/:id/index-state"| API
   PR -->|"GET /pulls/:id · /reviews · /pulls/:id/comments<br/>POST /pulls/:id/review · /findings/:id/(accept|dismiss)"| API
   AGENTS -->|"/agents · /agents/:id · /agents/:id/skills"| API
+  PERF -->|"GET /agents/performance · /agents/:id/stats (reads only, no LLM)"| API
   SKILLS -->|"/skills · /skills/:id · /skills/import/*"| API
   CONV -->|"GET /repos/:id/conventions<br/>POST /repos/:id/conventions/extract · PATCH /conventions/:id"| API
   SETTINGS -->|"/settings · /providers"| API

@@ -79,6 +79,7 @@ flowchart TB
   subgraph Agents["Agents & skills"]
     agents["agents<br/>/agents · /agents/:id · /agents/:id/skills (bindings)"]
     skills["skills<br/>/skills · /skills/:id · /skills/:id/versions"]
+    performance["performance<br/>GET /agents/performance (dashboard, all agents)<br/>GET /agents/:id/stats (the same row, one agent)<br/>reads stored runs and findings — zero LLM calls"]
   end
   subgraph Intel["Repo intelligence"]
     repoIntel["repo-intel<br/>/repos/:id/index-state · /resync"]
@@ -94,6 +95,17 @@ flowchart TB
   end
   HEALTH["/health (liveness) · /health/ready (DB ping → 200/503)"]
 ```
+
+**`performance` never leaves the database.** Both routes read `agent_runs`, `reviews` and
+`findings` and aggregate them; there is no LLM port in that module and no way to reach one from it,
+which is what makes reloading the dashboard, sorting it or expanding a row free (`SPEC-07 AC-43`).
+They take `?range=1d|30d|custom`; a custom range needs `from` and `to`, and one without them — or
+with `from` at or after `to` — is a `422` rather than a screen of numbers for a window nobody asked
+for. A run is COUNTED when its `ran_at` falls in the half-open `[from, to)` window and its status is
+terminal (`done`, `failed`, `cancelled`): a `queued` or `running` run has no cost, no duration and
+no findings yet, while a `failed` one may well have burned tokens. `GET /agents/:id/stats` returns
+the row `GET /agents/performance` puts in its table, taken out of the same computation rather than
+queried again.
 
 **`ci` reaches the GitHub Actions API only downstream of a request a person made** — the
 CI Runs page opening or its Refresh button. There is no timer, no schedule and no

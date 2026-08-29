@@ -10,6 +10,9 @@ export function MetricCard({
   color,
   trend,
   suffix,
+  deltaGood = "up",
+  deltaPrefix,
+  corner,
 }: {
   label: string;
   value: React.ReactNode;
@@ -17,10 +20,28 @@ export function MetricCard({
   color?: string;
   trend?: number[];
   suffix?: string;
+  /**
+   * WHICH DIRECTION IS GOOD NEWS. Defaults to "up", which is what every caller
+   * before Agent Performance meant. Cost, latency and error counts are the other
+   * kind: a falling cost drawn in `--crit` is not a styling preference, it is the
+   * tile telling the reader the opposite of what happened.
+   */
+  deltaGood?: "up" | "down";
+  /** Unit in front of the delta — "$" for money. The arrow already carries the sign. */
+  deltaPrefix?: string;
+  /**
+   * Anything to put in the label row instead of the sparkline — a gauge, a badge.
+   * `trend` is ignored when this is set: they are the same slot.
+   */
+  corner?: React.ReactNode;
 }) {
   const up = (delta ?? 0) > 0;
   const flat = delta === 0;
-  const dc = flat ? "var(--text-muted)" : up ? "var(--ok)" : "var(--crit)";
+  const favourable = up === (deltaGood === "up");
+  const dc = flat ? "var(--text-muted)" : favourable ? "var(--ok)" : "var(--crit)";
+  // The ARROW follows the direction the number moved; the COLOUR follows whether
+  // that direction is good. On a cost tile they point opposite ways, and both
+  // facts are ones the reader needs.
   const DeltaIcon = flat ? Icon.Slash : up ? Icon.ArrowUp : Icon.ArrowDown;
   return (
     <div
@@ -43,7 +64,7 @@ export function MetricCard({
         >
           {label}
         </span>
-        {trend && <Sparkline data={trend} color={color || "var(--accent)"} w={56} h={20} />}
+        {corner ?? (trend && <Sparkline data={trend} color={color || "var(--accent)"} w={56} h={20} />)}
       </div>
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 12 }}>
         <span className="tnum" style={{ fontSize: 32, fontWeight: 700, letterSpacing: "-0.02em" }}>
@@ -62,7 +83,10 @@ export function MetricCard({
             }}
           >
             <DeltaIcon size={12} />
-            <span className="tnum">{Math.abs(delta).toFixed(2)}</span>
+            <span className="tnum">
+              {deltaPrefix}
+              {Math.abs(delta).toFixed(2)}
+            </span>
           </span>
         )}
       </div>

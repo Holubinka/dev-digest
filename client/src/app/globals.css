@@ -431,11 +431,15 @@
     flex: 1;
   }
   /* Four metric tiles in one row give each about 200px, which the 32px value
-     plus its delta overflows. Two-up keeps every number on one line. */
-  .dd-eval-metric-row {
+     plus its delta overflows. Two-up keeps every number on one line.
+     `.dd-perf-tiles` is the Agent Performance summary row — same four tiles,
+     same arithmetic, so it shares the rule rather than repeating it. */
+  .dd-eval-metric-row,
+  .dd-perf-tiles {
     flex-wrap: wrap;
   }
-  .dd-eval-metric-row > * {
+  .dd-eval-metric-row > *,
+  .dd-perf-tiles > * {
     flex: 1 1 calc(50% - 7px);
   }
 }
@@ -443,6 +447,11 @@
 @media (max-width: 680px) {
   .dd-page {
     padding: 20px 16px 40px;
+  }
+  /* Two donuts with their legends side by side leave each about 150px, which the
+     ring alone fills. Stacked, both legends keep their figures on one line. */
+  .dd-perf-cost {
+    flex-direction: column;
   }
   .dd-page-header {
     flex-direction: column;

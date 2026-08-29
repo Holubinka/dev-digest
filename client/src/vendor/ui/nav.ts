@@ -56,10 +56,10 @@ export const NAV: NavGroup[] = [
     ],
   },
   {
-    // GLOBAL carries ONE row, not the four the mockup draws
-    // (`specs/assets/SPEC-05-multi-agent-review-configure-run.png` also shows
-    // Memory, Agent Performance and CI Runs). AC-90 asks for the single row and
-    // SPEC-05 § N7 puts the other three out of scope — they lead nowhere yet.
+    // GLOBAL carries TWO rows of the four the mockup draws
+    // (`specs/assets/SPEC-05-multi-agent-review-configure-run.png` shows Memory,
+    // Multi-Agent Review, Agent Performance and CI Runs). CI Runs is the group
+    // below; Memory is still out of scope (SPEC-05 § N7) and would lead nowhere.
     section: "GLOBAL",
     items: [
       // `key: "multi-agent"` is not a free choice: `activeKeyFor()`
@@ -69,19 +69,36 @@ export const NAV: NavGroup[] = [
       // other key renders an untranslated row that never lights (AC-91). `g m`
       // because p, o, d, s, a, c and , are taken.
       { key: "multi-agent", label: "Multi-Agent Review", icon: "Users", href: "/repos/:repoId/multi-agent", gKey: "m" },
+      // `key: "agent-performance"` is not a free choice: `activeKeyFor()`
+      // (`components/app-shell/helpers.ts:42`) already returns "agent-performance"
+      // for a /agent-performance path and `messages/en/shell.json` already holds
+      // `nav.agent-performance`, while the sidebar label is `t(`nav.${it.key}`)`.
+      // Any other key renders an untranslated row that never lights (SPEC-07 AC-2).
+      //
+      // NO `gKey`, for the same reason as CI Runs below: every `gKey` owes a row
+      // in `SHORTCUTS`, and no criterion in SPEC-07 asks for a shortcut.
+      //
+      // It sits after Multi-Agent Review and before CI Runs because the mockup
+      // (`specs/assets/SPEC-07-agent-performance-dashboard.jpg`) fixes that order,
+      // and this array is the order the sidebar renders in.
+      { key: "agent-performance", label: "Agent Performance", icon: "Activity", href: "/agent-performance" },
+      // `key: "ci-runs"` is not a free choice: `activeKeyFor()` already returns
+      // "ci-runs" for a /ci-runs path (`components/app-shell/helpers.ts:43`) and
+      // `messages/en/shell.json` already holds `nav.ci-runs`, which the command
+      // palette reads as `t(`nav.${key}`)`. Any other key leaves the row
+      // unhighlighted and the palette entry untranslated.
+      //
+      // NO `gKey`. The comment above `SHORTCUTS` makes every `gKey` owe a row in
+      // that array, and no criterion in SPEC-05 asks for a shortcut here.
+      //
+      // It moved INTO this group on 2026-08-29. It shipped as a second group
+      // also called `GLOBAL`, which the sidebar renders as a second heading of
+      // the same name — invisible while each group held one row, and plainly
+      // wrong once Agent Performance made the first group two. The mockups draw
+      // one GLOBAL section (`specs/assets/SPEC-07-agent-performance-dashboard.jpg`,
+      // `specs/assets/SPEC-05-multi-agent-review-configure-run.png`).
+      { key: "ci-runs", label: "CI Runs", icon: "Workflow", href: "/ci-runs" },
     ],
-  },
-  {
-    // `key: "ci-runs"` is not a free choice: `activeKeyFor()` already returns
-    // "ci-runs" for a /ci-runs path (`components/app-shell/helpers.ts:43`) and
-    // `messages/en/shell.json` already holds `nav.ci-runs`, which the command
-    // palette reads as `t(`nav.${key}`)`. Any other key leaves the row
-    // unhighlighted and the palette entry untranslated.
-    //
-    // NO `gKey`. The comment above `SHORTCUTS` makes every `gKey` owe a row in
-    // that array, and no criterion in SPEC-05 asks for a shortcut here.
-    section: "GLOBAL",
-    items: [{ key: "ci-runs", label: "CI Runs", icon: "Workflow", href: "/ci-runs" }],
   },
 ];
 

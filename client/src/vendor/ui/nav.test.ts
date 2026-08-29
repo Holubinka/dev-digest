@@ -122,14 +122,22 @@ describe("nav — Multi-Agent Review", () => {
   const global = NAV.find((g) => g.section === "GLOBAL")?.items ?? [];
   const row = navItems.find((item) => item.key === "multi-agent");
 
-  it("gives GLOBAL exactly one row, the one AC-90 names", () => {
+  it("gives GLOBAL exactly the rows that lead somewhere", () => {
     // Presence AND count. The mockup
     // (`specs/assets/SPEC-05-multi-agent-review-configure-run.png`) draws four
-    // GLOBAL rows — Memory, Agent Performance and CI Runs beside this one — and
-    // SPEC-05 § N7 puts all three out of scope. "Contains the row" passes with a
-    // dead link shipped next to it; this does not.
-    expect(global.map((i) => i.key)).toEqual(["multi-agent"]);
+    // GLOBAL rows — Memory, Agent Performance and CI Runs beside this one.
+    // Agent Performance arrived with SPEC-07 and CI Runs is the group below;
+    // Memory is still out of scope (SPEC-05 § N7). "Contains the row" passes
+    // with a dead link shipped next to it; this does not.
+    expect(global.map((i) => i.key)).toEqual(["multi-agent", "agent-performance", "ci-runs"]);
     expect(row?.label).toBe("Multi-Agent Review");
+  });
+
+  it("puts every GLOBAL row under ONE heading", () => {
+    // Two groups both named GLOBAL render as two identical headings. It went
+    // unnoticed while each held a single row; Agent Performance is what made it
+    // visible, and the mockups draw one section.
+    expect(NAV.filter((g) => g.section === "GLOBAL")).toHaveLength(1);
   });
 
   it("uses the key `activeKeyFor` and shell.json already fixed", () => {

@@ -1,8 +1,9 @@
 /* AgentEditor — the agent's Config, the skills bound to it, its project context,
-   its eval case set and its CI deployment. Stats arrives with the lesson that
-   fills it. Tab state lives in ?tab=; the Evals tab additionally reads ?case= so
-   «Turn into eval case» on a PR finding can land straight on the case it just
-   made. */
+   its eval case set, its CI deployment and its Stats. Tab state lives in ?tab=;
+   the Evals tab additionally reads ?case= so «Turn into eval case» on a PR
+   finding can land straight on the case it just made, and the Stats tab reads
+   ?range= so the Agent Performance dashboard's «View» opens it on the same
+   window the row was counted over (SPEC-07 AC-47). */
 "use client";
 
 import React from "react";
@@ -14,6 +15,7 @@ import { ConfigTab } from "./_components/ConfigTab";
 import { ContextTab } from "./_components/ContextTab";
 import { EvalsTab } from "./_components/EvalsTab";
 import { SkillsTab } from "./_components/SkillsTab";
+import { StatsTab } from "./_components/StatsTab";
 import { TABS } from "./constants";
 import { s } from "./styles";
 
@@ -34,6 +36,8 @@ export function AgentEditor({ agent, tab, onTab }: { agent: Agent; tab: string; 
           <EvalsTab agent={agent} />
         ) : tab === "ci" ? (
           <CITab agent={agent} />
+        ) : tab === "stats" ? (
+          <StatsTab agent={agent} />
         ) : (
           <ConfigTab agent={agent} />
         )}
