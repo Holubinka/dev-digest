@@ -6,6 +6,7 @@ import { parseRepoUrl, withGitHubToken, toRepoDto } from './helpers.js';
 import {
   CLONE_JOB_KIND,
   CLONE_DEPTH,
+  CLONE_JOB_TIMEOUT_MS,
   GITHUB_TOKEN_SECRET,
 } from './constants.js';
 import {
@@ -43,9 +44,13 @@ export class RepoService {
    * then persists the resulting path + last_polled_at.
    */
   registerCloneJobHandler(): void {
-    this.container.jobs.register(CLONE_JOB_KIND, async (payload) => {
-      await this.runCloneJob(payload as CloneJobPayload);
-    });
+    this.container.jobs.register(
+      CLONE_JOB_KIND,
+      async (payload) => {
+        await this.runCloneJob(payload as CloneJobPayload);
+      },
+      { timeoutMs: CLONE_JOB_TIMEOUT_MS },
+    );
   }
 
   async runCloneJob(payload: CloneJobPayload): Promise<void> {
