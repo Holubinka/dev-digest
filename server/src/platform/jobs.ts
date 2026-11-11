@@ -29,7 +29,7 @@ export interface EnqueuedJob {
 
 export class JobRunner {
   private queue: PQueue;
-  private handlers = new Map<string, JobHandler>();
+  private handlers = new Map<string, { handler: JobHandler; timeoutMs: number }>();
   private timeoutMs: number;
   private retries: number;
 
@@ -42,19 +42,20 @@ export class JobRunner {
     this.retries = opts.retries ?? 2;
   }
 
-  register(kind: string, handler: JobHandler): void {
-    this.handlers.set(kind, handler);
+  register(kind: string, handler: JobHandler, opts: { timeoutMs?: number } = {}): void {
+    this.handlers.set(kind, { handler, timeoutMs: opts.timeoutMs ?? this.timeoutMs });
   }
 
   async enqueue(workspaceId: string, kind: string, payload: unknown): Promise<EnqueuedJob> {
-    const handler = this.handlers.get(kind);
-    if (!handler) throw new Error(`No job handler registered for kind '${kind}'`);
+    const registered = this.handlers.get(kind);
+    if (!registered) throw new Error(`No job handler registered for kind '${kind}'`);
 
     const [row] = await this.db
       .insert(t.jobs)
       .values({ workspaceId, kind, payload: payload as object, status: 'queued' })
       .returning({ id: t.jobs.id });
     const jobId = row!.id;
+    const { handler, timeoutMs } = registered;
 
     const done = this.queue.add(async () => {
       await this.db
@@ -64,7 +65,7 @@ export class JobRunner {
       try {
         await withRetry(
           () =>
-            withTimeout(handler(payload, { jobId }), this.timeoutMs).then(async () => {
+            withTimeout(handler(payload, { jobId }), timeoutMs).then(async () => {
               await this.db
                 .update(t.jobs)
                 .set({ attempts: 1 })
@@ -96,6 +97,11 @@ export class JobRunner {
         throw err;
       }
     }) as Promise<void>;
+
+    // The failure is already recorded on the `jobs` row. Callers that don't
+    // await `done` (fire-and-forget enqueue) must not turn it into an
+    // unhandledRejection, which kills the process. Awaiting callers still see it.
+    done.catch(() => {});
 
     return { id: jobId, done };
   }

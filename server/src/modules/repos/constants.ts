@@ -5,6 +5,9 @@
 /** JobRunner kind for the asynchronous `git clone` job. */
 export const CLONE_JOB_KIND = 'clone';
 
+/** Clone job timeout — a large private repo does not fit the 120s default. */
+export const CLONE_JOB_TIMEOUT_MS = 600_000;
+
 /** Clone depth — shallow clone (latest commit only) keeps imports fast. */
 export const CLONE_DEPTH = 1;
 
